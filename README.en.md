@@ -13,6 +13,14 @@
 
 [![In-engine view of a six-wheeled lunar rover at a field station, with Earth above the horizon.](./media/lunar-field-station.jpg)](https://audrey-cn.github.io/lunar-field-station/)
 
+## Gameplay demo
+
+<a href="https://audrey-cn.github.io/lunar-field-station/media/expedition-demo.mp4"><img src="./media/expedition-demo.jpg" width="560" alt="Play the clip of the rover's sampling arm drilling a crystal core"></a>
+
+[▶ Watch gameplay (13 seconds, with game audio)](https://audrey-cn.github.io/lunar-field-station/media/expedition-demo.mp4)
+
+Drive up to a crystal, drill and stow a core, then set off again. The piano, wheels and drill use the game’s own mix.
+
 **Lunar Field Station** is a single-player browser demo made with Three.js. Follow your companion drone Zhideng across cratered terrain, collect crystal cores and survey readings, then use the field workshop to build a relay, a survey station, and a solar charging post. Return to the landing zone to send your expedition log.
 
 ## Play

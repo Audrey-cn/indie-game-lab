@@ -18,6 +18,10 @@
 
 The terrain, rover, facilities, interface and lunar effects were made for this project. The title loop and README cover were captured in-engine. The far-UV observation mode is a procedural false-color simulation, with the credited Apollo image provided for historical comparison.
 
+README 实机演示保留了游戏内混音，收录 Scott Buckley 的《In This Moment》（CC BY 4.0）片段。
+
+The README gameplay clip uses an excerpt of Scott Buckley’s “In This Moment” (CC BY 4.0) in the in-game mix.
+
 Kenney 原始文件 · Kenney source files: `impactMining_000.ogg`, `impactPlate_medium_000.ogg`, `impactPlate_light_002.ogg`. [样本文件对应 · Sample mapping](https://github.com/manuel-palacio/brickstorm/blob/main/CREDITS.md)
 
 ## 参考与发行范围 · References and distribution

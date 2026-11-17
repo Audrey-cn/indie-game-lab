@@ -13,6 +13,14 @@
 
 [![游戏实机画面，六轮月球车停在野外工作站前，地球挂在月面地平线之上。](./media/lunar-field-station.jpg)](https://audrey-cn.github.io/lunar-field-station/)
 
+## 实机演示
+
+<a href="https://audrey-cn.github.io/lunar-field-station/media/expedition-demo.mp4"><img src="./media/expedition-demo.jpg" width="560" alt="点击播放，月球车的机械臂正在钻取晶样"></a>
+
+[▶ 播放实机演示（13 秒，含游戏原声）](https://audrey-cn.github.io/lunar-field-station/media/expedition-demo.mp4)
+
+驶近晶石、钻取岩芯、收样后再出发。保留钢琴、车轮和钻头的游戏内混音。
+
 《月面采集站》是一款用 Three.js 制作的单人浏览器试玩。跟着随行无人机「枝灯」穿过环形山，钻取晶样、读取仪器，到工坊制造并部署中继站、地形观测站和太阳能补给站。最后回到着陆区，回传任务记录。
 
 ## 开始试玩
