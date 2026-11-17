@@ -4,12 +4,12 @@
 
 <p align="center">
   <a href="https://audrey-cn.github.io/lunar-field-station/"><strong>Play in browser</strong></a> ·
-  <a href="https://github.com/Audrey-cn/lunar-field-station/releases/download/v0.1.0/lunar-field-station.html">Download HTML</a> ·
+  <a href="https://github.com/Audrey-cn/lunar-field-station/releases/download/v0.1.1/lunar-field-station.html">Download HTML</a> ·
   <a href="./docs/controls.md">Field manual</a> ·
   <a href="./README.md">简体中文</a>
 </p>
 
-<p align="center"><sub>Preview 0.1.0 · Three.js r182 · WebGL 2 · 5.6 MB standalone HTML</sub></p>
+<p align="center"><sub>Preview 0.1.1 · Three.js r182 · WebGL 2 · 5.6 MB standalone HTML</sub></p>
 
 [![In-engine view of a six-wheeled lunar rover at a field station, with Earth above the horizon.](./media/lunar-field-station.jpg)](https://audrey-cn.github.io/lunar-field-station/)
 
@@ -17,7 +17,7 @@
 
 ## Play
 
-Open the [browser demo](https://audrey-cn.github.io/lunar-field-station/) or [download the HTML](https://github.com/Audrey-cn/lunar-field-station/releases/download/v0.1.0/lunar-field-station.html) for offline play. Use a browser with WebGL 2 support and choose **Start expedition**. The game, graphics, and sound are bundled into the [single HTML file](./index.html), with no install or build step.
+Open the [browser demo](https://audrey-cn.github.io/lunar-field-station/) or [download the HTML](https://github.com/Audrey-cn/lunar-field-station/releases/download/v0.1.1/lunar-field-station.html) for offline play. Use a browser with WebGL 2 support and choose **Start expedition**. The game, graphics, and sound are bundled into the [single HTML file](./index.html), with no install or build step.
 
 On a keyboard, drive with **WASD** or the **arrow keys**, brake with **Space**, and boost with **Shift**. Stop close to an objective and hold **E** to take a sample or use a survey instrument. Press **R** at the workshop to fabricate a kit, then at the build site to preview and deploy it. On a touchscreen, use the left joystick to drive, swipe the right side to look around, and tap the on-screen prompt to interact. [Full desktop and touch controls](./docs/controls.md)
 
