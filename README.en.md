@@ -13,8 +13,6 @@
 </p>
 <p align="center"><sub>Preview 0.1.1 · Three.js r182 · WebGL 2 · 5.6 MB standalone HTML</sub></p>
 
-![A six-wheeled lunar rover at a field station, with Earth above the horizon](./media/lunar-field-station.jpg)
-
 ## Gameplay demo
 
 https://github.com/user-attachments/assets/b35aa8f3-f045-4200-9282-ae3757f8c6ed

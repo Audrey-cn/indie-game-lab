@@ -13,8 +13,6 @@
 </p>
 <p align="center"><sub>试玩版 0.1.1 · Three.js r182 · WebGL 2 · 5.6 MB 单文件</sub></p>
 
-![六轮月球车停在野外工作站前，地球挂在月面地平线之上](./media/lunar-field-station.jpg)
-
 ## 实机演示
 
 https://github.com/user-attachments/assets/b35aa8f3-f045-4200-9282-ae3757f8c6ed
