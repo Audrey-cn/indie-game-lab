@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>半夜扫地机：客厅摸金 · Roomba Raid</title>
+  <style>
+    :root {
+      --bg: #0b0d1b;
+      --panel: rgba(18, 22, 42, 0.94);
+      --border: rgba(255, 255, 255, 0.12);
+      --cyan: #38f3ff;
+      --gold: #ffd54a;
+      --green: #39ff88;
+      --pink: #ff4c76;
+      --text: #f4f7ff;
+      --muted: #98a4c7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #070812;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+      touch-action: none;
+    }
+    #app {
+      position: relative;
+      width: 100%; height: 100dvh;
+      max-width: 480px;
+      margin: 0 auto;
+      background: #16182e;
+      overflow: hidden;
+      box-shadow: 0 0 60px rgba(0, 0, 0, 0.75);
+    }
+    @media (min-width: 560px) {
+      #app {
+        height: min(94dvh, 880px);
+        margin-top: max(0px, calc((100dvh - min(94dvh, 880px)) / 2));
+        border-radius: 26px;
+        border: 2px solid rgba(255,255,255,0.1);
+      }
+    }
+    canvas#game-canvas {
+      display: block; width: 100%; height: 100%;
+    }
+
+    /* Minimal Commercial Top HUD (Concept Sheet 03) */
+    #hud {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: max(10px, env(safe-area-inset-top)) 12px 6px;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #hud[hidden] { display: none; }
+    .hud-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .hp-wrap {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(14, 18, 36, 0.85);
+      border: 2px solid rgba(57, 255, 136, 0.45);
+      border-radius: 12px; padding: 4px 7px;
+      min-width: 108px;
+    }
+    .hp-label { font-size: 11px; font-weight: 900; color: var(--green); }
+    .hp-bar { flex: 1; height: 10px; background: #1e243d; border-radius: 6px; overflow: hidden; }
+    .hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #22c55e, #4ade80); transition: width 0.12s; }
+
+    .val-pill {
+      font-size: 19px; font-weight: 900; color: var(--gold);
+      text-shadow: 0 2px 0 #141122, 0 0 12px rgba(255, 213, 74, 0.45);
+      letter-spacing: -0.02em; white-space: nowrap;
+    }
+    .hud-right { display: flex; align-items: center; gap: 6px; }
+    .safe-pill {
+      background: rgba(20, 24, 46, 0.88); border: 2px solid rgba(255, 213, 74, 0.45);
+      border-radius: 10px; padding: 4px 7px; font-size: 12px; font-weight: 800; color: #ffe58f;
+      white-space: nowrap;
+    }
+    .timer-pill {
+      background: rgba(20, 24, 46, 0.88); border: 2px solid rgba(56, 243, 255, 0.55);
+      border-radius: 10px; padding: 4px 8px; font-size: 12px; font-weight: 900; color: var(--cyan);
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .timer-pill.urgent { border-color: var(--pink); color: #ff85a2; animation: pulse 0.6s infinite alternate; }
+    @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.06); } }
+
+    .xp-track {
+      margin-top: 6px; height: 6px; background: rgba(12, 16, 30, 0.8);
+      border-radius: 99px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12);
+    }
+    .xp-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #38f3ff, #60a5fa); transition: width 0.12s; }
+    .hud-sub {
+      margin-top: 5px; display: flex; justify-content: space-between; align-items: center;
+      font-size: 11px; font-weight: 800; color: #cbd5e1;
+      text-shadow: 0 1px 2px #000;
+    }
+    .hud-btn {
+      pointer-events: auto; background: rgba(18, 22, 42, 0.78);
+      border: 1px solid rgba(255,255,255,0.2); color: #fff;
+      border-radius: 8px; padding: 3px 8px; font-size: 11px; font-weight: 700; cursor: pointer;
+    }
+
+    /* Non-intrusive Onboarding & Event Toast */
+    #toast {
+      position: absolute; top: 82px; left: 50%; transform: translateX(-50%);
+      max-width: 90%; padding: 8px 14px; border-radius: 999px;
+      background: rgba(16, 22, 46, 0.92); border: 2px solid var(--cyan);
+      color: #fff; font-size: 12px; font-weight: 800; text-align: center;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      z-index: 15; pointer-events: none; transition: opacity 0.25s;
+    }
+    #toast[hidden] { display: none; }
+    #toast.gold { border-color: var(--gold); color: #fff4c2; }
+    #toast.green { border-color: var(--green); color: #b8ffda; }
+    #toast.pink { border-color: var(--pink); color: #ffd0dc; }
+
+    /* Fullscreen Overlays */
+    .overlay {
+      position: absolute; inset: 0; z-index: 30;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 20px; background: rgba(9, 11, 24, 0.82); backdrop-filter: blur(8px);
+    }
+    .overlay[hidden] { display: none; }
+    .card {
+      width: 100%; max-width: 390px; max-height: 88dvh; overflow-y: auto;
+      background: var(--panel); border: 2px solid rgba(255,255,255,0.14);
+      border-radius: 22px; padding: 20px; text-align: center;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.6);
+    }
+    .eyebrow {
+      font-size: 11px; font-weight: 900; letter-spacing: 0.14em; color: var(--cyan);
+      text-transform: uppercase; margin-bottom: 6px;
+    }
+    h1 { font-size: 28px; font-weight: 900; line-height: 1.15; margin-bottom: 8px; }
+    h2 { font-size: 21px; font-weight: 900; margin-bottom: 8px; }
+    .sub { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 14px; }
+
+    .stat-strip {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px;
+    }
+    .stat-box {
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+      border-radius: 12px; padding: 8px 6px;
+    }
+    .stat-box .k { font-size: 10px; color: var(--muted); font-weight: 700; }
+    .stat-box .v { font-size: 15px; font-weight: 900; color: var(--gold); margin-top: 2px; }
+
+    .mode-switch {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;
+    }
+    .mode-btn {
+      padding: 10px 8px; border-radius: 12px; border: 2px solid var(--border);
+      background: rgba(255,255,255,0.04); color: var(--muted);
+      font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .mode-btn.active {
+      border-color: var(--cyan); background: rgba(56, 243, 255, 0.14); color: #fff;
+    }
+
+    .btn {
+      width: 100%; padding: 13px 16px; border-radius: 14px; border: none;
+      font-size: 15px; font-weight: 900; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      transition: transform 0.12s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary {
+      background: linear-gradient(135deg, #38f3ff, #39ff88); color: #06181c;
+      box-shadow: 0 6px 20px rgba(56, 243, 255, 0.32);
+    }
+    .btn-gold {
+      background: linear-gradient(135deg, #ffd54a, #ff9f1c); color: #241300;
+    }
+    .btn-pink {
+      background: linear-gradient(135deg, #ff5c8a, #ff3366); color: #fff;
+    }
+    .btn-ghost {
+      background: rgba(255,255,255,0.08); color: var(--text); border: 1px solid var(--border);
+    }
+    .btn-stack { display: flex; flex-direction: column; gap: 9px; margin-top: 10px; }
+
+    /* 3-Card Level Up */
+    .choice-list { display: flex; flex-direction: column; gap: 9px; margin: 12px 0; text-align: left; }
+    .choice-card {
+      display: flex; align-items: center; gap: 12px; padding: 12px;
+      border-radius: 14px; background: rgba(255,255,255,0.06);
+      border: 2px solid rgba(255,255,255,0.12); cursor: pointer; color: #fff; text-align: left;
+    }
+    .choice-card:hover { border-color: var(--cyan); background: rgba(56, 243, 255, 0.12); }
+    .choice-icon {
+      width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center; font-size: 22px;
+      background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.14);
+    }
+    .choice-title { font-size: 14px; font-weight: 900; }
+    .choice-tag { font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(56,243,255,0.18); color: var(--cyan); margin-left: 6px; }
+    .choice-desc { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+    /* Shop Tabs */
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+    .tab-btn {
+      padding: 8px 4px; border-radius: 10px; border: 1px solid var(--border);
+      background: rgba(255,255,255,0.05); color: var(--muted); font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .tab-btn.active { background: rgba(255,213,74,0.18); border-color: var(--gold); color: #fff; }
+    .shop-grid { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 12px; }
+    .shop-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+    }
+    .shop-item .meta { flex: 1; }
+    .shop-item .name { font-size: 13px; font-weight: 800; }
+    .shop-item .desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .shop-btn {
+      padding: 7px 11px; border-radius: 10px; border: none; font-size: 12px; font-weight: 900;
+      cursor: pointer; white-space: nowrap; background: var(--gold); color: #241300;
+    }
+    .shop-btn.owned { background: rgba(57, 255, 136, 0.2); color: var(--green); border: 1px solid var(--green); }
+    .shop-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .ghost-banner {
+      background: rgba(255, 92, 225, 0.16); border: 1.5px solid #ff5ce1;
+      border-radius: 12px; padding: 8px 10px; font-size: 12px; font-weight: 800;
+      color: #ffc2f4; margin-bottom: 12px;
+    }
+    #receipt-img {
+      width: 100%; border-radius: 12px; border: 2px solid rgba(255,255,255,0.18);
+      margin-top: 10px; display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Minimal Top HUD -->
+    <div id="hud" hidden>
+      <div class="hud-row">
+        <div class="hp-wrap">
+          <span class="hp-label">HP</span>
+          <div class="hp-bar"><div class="hp-fill" id="hud-hp"></div></div>
+        </div>
+        <div class="val-pill" id="hud-val">¥0</div>
+        <div class="hud-right">
+          <div class="safe-pill" id="hud-safe">🔒0/1</div>
+          <div class="timer-pill" id="hud-timer">00:35</div>
+        </div>
+      </div>
+      <div class="xp-track"><div class="xp-fill" id="hud-xp"></div></div>
+      <div class="hud-sub">
+        <span id="hud-wave">第 1 波 · 估值 ×1.0</span>
+        <span id="hud-lv">LV 1</span>
+        <button class="hud-btn" id="btn-mute">🔊</button>
+      </div>
+    </div>
+
+    <div id="toast" hidden></div>
+
+    <!-- Title Screen -->
+    <div class="overlay" id="screen-title">
+      <div class="card">
+        <div class="eyebrow">ROOMBA RAID · 零带入轻度搜打撤</div>
+        <h1>半夜扫地机：客厅摸金</h1>
+        <p class="sub">人类睡着了！单指操控大眼扫地机狂吸沙发底大金，赶在电量耗尽前冲回充电桩撤离！</p>
+
+        <div id="title-ghost-banner" class="ghost-banner" hidden></div>
+
+        <div class="stat-strip">
+          <div class="stat-box"><div class="k">小金库</div><div class="v" id="st-coins">¥0</div></div>
+          <div class="stat-box"><div class="k">最高单局</div><div class="v" id="st-best">¥0</div></div>
+          <div class="stat-box"><div class="k">连撤连胜</div><div class="v" id="st-streak">0连</div></div>
+        </div>
+
+        <div class="mode-switch">
+          <button class="mode-btn active" id="mode-free">🎲 自由客厅摸金</button>
+          <button class="mode-btn" id="mode-daily">📅 今日同图榜</button>
+        </div>
+
+        <div class="btn-stack">
+          <button class="btn btn-primary" id="btn-play">⚡ 1 秒开吸 · 进入第 1 关</button>
+          <button class="btn btn-ghost" id="btn-shop">🔧 机身工坊 / 安全箱 / 藏宝展柜</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3-Card Level Up -->
+    <div class="overlay" id="screen-levelup" hidden>
+      <div class="card">
+        <div class="eyebrow">LEVEL UP · 战术外挂三选一</div>
+        <h2>挑一件离谱装备焊头上！</h2>
+        <div class="choice-list" id="choice-list"></div>
+        <button class="btn btn-gold" id="btn-take-all">📺 我全都要（模拟激励视频 IAA）</button>
+      </div>
+    </div>
+
+    <!-- Result & Shareable Receipt -->
+    <div class="overlay" id="screen-result" hidden>
+      <div class="card">
+        <div class="eyebrow" id="res-eyebrow">RAID COMPLETE</div>
+        <h2 id="res-title">✅ 安全撤离！</h2>
+        <p class="sub" id="res-sub"></p>
+
+        <div class="stat-strip">
+          <div class="stat-box"><div class="k" id="res-k1">带出估值</div><div class="v" id="res-v1">¥0</div></div>
+          <div class="stat-box"><div class="k">波次 / 击杀</div><div class="v" id="res-v2">1 / 0</div></div>
+          <div class="stat-box"><div class="k">安全箱保底</div><div class="v" id="res-v3">¥0</div></div>
+        </div>
+
+        <div class="btn-stack">
+          <button class="btn btn-gold" id="btn-res-ad" hidden>📺 看广告翻倍 / 急救复活</button>
+          <button class="btn btn-primary" id="btn-res-again">⚡ 再吸一局</button>
+          <button class="btn btn-pink" id="btn-res-share">🔗 复制翻车/摸金挑战链接（群友可来舔包）</button>
+          <button class="btn btn-ghost" id="btn-res-receipt">🧾 生成摸金小票海报</button>
+          <button class="btn btn-ghost" id="btn-res-shop">🔧 去工坊花钱改装</button>
+        </div>
+        <img id="receipt-img" alt="摸金小票海报">
+      </div>
+    </div>
+
+    <!-- Workshop & Museum Shop -->
+    <div class="overlay" id="screen-shop" hidden>
+      <div class="card">
+        <div class="eyebrow">WORKSHOP &amp; MUSEUM</div>
+        <h2>🔧 扫地机工坊 · <span id="shop-coins" style="color:var(--gold)">¥0</span></h2>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="skins">🎨 机身皮肤</button>
+          <button class="tab-btn" data-tab="upgrades">🔒 安全箱/黑市</button>
+          <button class="tab-btn" data-tab="museum">🏆 藏宝展柜</button>
+        </div>
+        <div class="shop-grid" id="shop-content"></div>
+        <button class="btn btn-primary" id="btn-shop-close">返回客厅</button>
+      </div>
+    </div>
+
+    <!-- Simulated IAA Rewarded Ad Modal -->
+    <div class="overlay" id="ad-sim-overlay" hidden style="z-index:50">
+      <div class="card">
+        <div class="eyebrow">IAA REWARDED AD SLOT</div>
+        <h2 id="ad-sim-title">📺 模拟激励视频</h2>
+        <p class="sub" id="ad-sim-timer">加载中...</p>
+        <button class="btn btn-gold" id="ad-sim-done" disabled>等待中</button>
+      </div>
+    </div>
+  </div>
+  <!-- GAME_BUNDLE -->
+</body>
+</html>

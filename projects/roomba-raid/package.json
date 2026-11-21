@@ -1,0 +1,13 @@
+{
+  "name": "roomba-raid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Roomba Raid — Mobile-first casual roguelite extraction mini-game (Canvas 2D, WeChat Mini Game & Web ready)",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
