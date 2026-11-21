@@ -1,0 +1,364 @@
+.earth-observatory {
+  --earth-top: max(16px, calc(8px + env(safe-area-inset-top, 0px)));
+  --earth-right: max(clamp(14px, 3vw, 49px), calc(8px + env(safe-area-inset-right, 0px)));
+  --earth-bottom: max(18px, calc(10px + env(safe-area-inset-bottom, 0px)));
+  --earth-left: max(clamp(14px, 3vw, 49px), calc(8px + env(safe-area-inset-left, 0px)));
+  --earth-ink: #edf3f3;
+  --earth-muted: #9eafb9;
+  --earth-glass: #16252f9e;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--earth-ink);
+  background: #020509;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  isolation: isolate;
+}
+.earth-observatory::backdrop { background: #020509; }
+#earth-viewfinder,
+.earth-view-shade {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+#earth-viewfinder { touch-action: none; cursor: grab; }
+#earth-viewfinder:active { cursor: grabbing; }
+#earth-viewfinder[data-capturing="true"] { cursor: progress; }
+.earth-view-shade {
+  pointer-events: none;
+  background: linear-gradient(180deg, #02050983, transparent 19%, transparent 70%, #02050994);
+}
+.earth-reticle {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 49px;
+  height: 49px;
+  border: 1px solid #dce5ea45;
+  border-radius: 50%;
+  opacity: .72;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: opacity 400ms ease;
+}
+.earth-reticle span::before,
+.earth-reticle span::after {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 12px;
+  height: 1px;
+  background: #dae6eeb0;
+  transform: translate(-50%, -50%);
+  content: "";
+}
+.earth-reticle span::after { width: 1px; height: 12px; }
+.earth-observatory[data-aligned="true"] .earth-reticle { opacity: .43; }
+.earth-observatory[data-channel="overview"] .earth-reticle { opacity: 0; }
+
+.earth-header {
+  position: absolute;
+  inset: var(--earth-top) var(--earth-right) auto var(--earth-left);
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+  pointer-events: none;
+}
+.earth-mode {
+  min-width: 100px;
+  padding: 8px 12px 9px;
+  border-radius: 5px;
+  background: #14202b78;
+  text-shadow: 0 1px 9px #020509;
+}
+.earth-mode h2 {
+  margin: 0;
+  color: var(--earth-muted);
+  font-size: 10px;
+  font-weight: 590;
+  letter-spacing: .1em;
+}
+.earth-mode p {
+  margin: 4px 0 0;
+  font-size: clamp(13px, 1.35vw, 17px);
+  font-weight: 580;
+  line-height: 1.25;
+}
+.earth-mode-control {
+  position: absolute;
+  inset: 50% var(--earth-right) auto var(--earth-left);
+  display: flex;
+  justify-content: space-between;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.earth-observatory .earth-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--earth-ink);
+  background: var(--earth-glass);
+  touch-action: manipulation;
+  pointer-events: auto;
+  transition: background-color 180ms ease, opacity 180ms ease, color 180ms ease;
+}
+.earth-icon svg {
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.earth-mode-control .earth-icon {
+  color: #dbe7efae;
+  background: #16252f63;
+}
+.earth-observatory .earth-icon:is(:hover, :focus-visible) {
+  color: #fff;
+  background: #273b49e0;
+  opacity: 1;
+}
+.earth-observatory .earth-icon:focus-visible,
+.earth-observatory .earth-text-button:focus-visible { outline: 2px solid #d5e8fa; outline-offset: 3px; }
+.earth-observatory .earth-icon:disabled { opacity: .36; cursor: default; }
+
+.earth-toolbar {
+  position: absolute;
+  inset: auto var(--earth-right) var(--earth-bottom) var(--earth-left);
+  display: grid;
+  grid-template-columns: 1fr 44px 60px 44px 1fr;
+  align-items: center;
+  column-gap: clamp(8px, 2vw, 21px);
+  pointer-events: none;
+}
+.earth-hint {
+  grid-column: 2 / 5;
+  grid-row: 1;
+  justify-self: center;
+  width: max-content;
+  max-width: min(78vw, 420px);
+  margin: 0 0 9px;
+  padding: 4px 9px;
+  border-radius: 5px;
+  color: #d1dce0;
+  background: #12202b83;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
+  text-shadow: 0 1px 9px #020407;
+}
+.earth-hint:empty { display: none; }
+#earth-exposure {
+  grid-column: 2 / 5;
+  grid-row: 2;
+  width: 100%;
+  height: 2px;
+  margin: 0 0 7px;
+  border: 0;
+  border-radius: 3px;
+  background: #ffffff28;
+  accent-color: #e3edf3;
+}
+.earth-zoom {
+  grid-column: 1;
+  grid-row: 3;
+  display: grid;
+  justify-items: center;
+  justify-self: start;
+  color: #d2dee4;
+  font: 11px/1.3 var(--mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+.earth-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  border-radius: 27px;
+  background: #12202b8a;
+}
+.earth-zoom-controls .earth-icon { background: transparent; }
+#earth-zoom-value {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+#earth-zoom-value:focus-visible { outline: 2px solid #d5e8fa; outline-offset: -2px; }
+.earth-view-scale {
+  color: var(--earth-muted);
+  font-size: 10px;
+  text-shadow: 0 1px 8px #020407;
+}
+#earth-align { grid-column: 2; grid-row: 3; }
+#earth-capture {
+  grid-column: 3;
+  grid-row: 3;
+  width: 60px;
+  height: 60px;
+  color: #ecf3f6;
+  background: #2637468a;
+}
+.earth-shutter {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e7f0f7a0;
+  border-radius: 50%;
+  transition: transform 180ms ease;
+}
+.earth-shutter::before {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 20px #d0e7fa30;
+  content: "";
+}
+#earth-capture:active .earth-shutter { transform: scale(.9); }
+#earth-review-open { grid-column: 4; grid-row: 3; }
+
+.earth-observatory[data-quiet="true"] :is(.earth-mode, .earth-hint, .earth-zoom, .earth-mode-control button, .earth-toolbar > button, #earth-close) { opacity: .33; }
+.earth-observatory[data-quiet="true"] :is(.earth-zoom:focus-within, button:hover, button:focus-visible) { opacity: 1; }
+.earth-observatory[data-reviewing="true"] :is(.earth-mode-control, .earth-toolbar) { visibility: hidden; }
+
+.earth-review {
+  position: absolute;
+  inset: calc(var(--earth-top) + 57px) var(--earth-right) auto auto;
+  width: min(360px, calc(100% - var(--earth-left) - var(--earth-right)));
+  max-height: calc(100% - var(--earth-bottom) - var(--earth-top) - 57px);
+  padding: 12px 17px 14px;
+  border-radius: 14px;
+  background: #101b23eb;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  box-shadow: 0 14px 48px #0005;
+}
+.earth-review:not([hidden]) { animation: earth-review-in 260ms ease-out; }
+@keyframes earth-review-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.earth-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  min-height: 44px;
+  margin: 0 0 7px;
+}
+#earth-log-status { margin: 0; font-size: 13px; font-weight: 610; }
+#earth-review-close { margin-inline-end: -3px; background: transparent; }
+.earth-review-image {
+  display: grid;
+  height: clamp(94px, 23vh, 190px);
+  overflow: hidden;
+  border-radius: 7px;
+  background: #03070c99;
+}
+.earth-review-image img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+.earth-interpretation { margin: 11px 0 2px; }
+.earth-interpretation strong { color: #e2edf2; font-size: 13px; font-weight: 620; }
+.earth-interpretation p { margin: 5px 0 0; color: #b5c3cb; font-size: 12px; line-height: 1.5; }
+.earth-text-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  color: #d4e3ec;
+  background: transparent;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  touch-action: manipulation;
+}
+.earth-downloads, .earth-sources { display: flex; flex-wrap: wrap; gap: 0 13px; margin: 0; }
+.earth-downloads a, .earth-sources a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: #c3dce8;
+  font-size: 12px;
+  text-underline-offset: 3px;
+}
+.earth-sources a { color: var(--earth-muted); font-size: 10px; }
+.radar-legend span:nth-child(4)::before { background: #ff765b; }
+.radar-legend span.earth-radar-legend::before { border-radius: 0; background: #c8acff; transform: rotate(45deg); }
+
+@media (orientation: portrait) and (max-width: 650px) {
+  .earth-toolbar { grid-template-columns: 1fr 60px 1fr; }
+  .earth-zoom { grid-column: 1 / 4; grid-row: 1; justify-self: center; margin-bottom: 10px; }
+  .earth-hint { grid-column: 1 / 4; grid-row: 2; }
+  #earth-exposure { grid-column: 2; grid-row: 3; }
+  #earth-align { grid-column: 1; grid-row: 4; justify-self: end; margin-inline-end: 7px; }
+  #earth-capture { grid-column: 2; grid-row: 4; }
+  #earth-review-open { grid-column: 3; grid-row: 4; justify-self: start; margin-inline-start: 7px; }
+  .earth-review {
+    inset: auto var(--earth-right) var(--earth-bottom) var(--earth-left);
+    width: auto;
+    max-height: calc(100% - var(--earth-bottom) - var(--earth-top) - 57px);
+    padding-inline: 14px;
+  }
+  .earth-review:not([hidden]) { animation-name: earth-review-in-up; }
+  @keyframes earth-review-in-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+@media (orientation: landscape) and (max-height: 480px) {
+  .earth-observatory {
+    --earth-top: max(8px, calc(env(safe-area-inset-top, 0px) + 2px));
+    --earth-bottom: max(10px, calc(env(safe-area-inset-bottom, 0px) + 4px));
+  }
+  .earth-review {
+    width: min(510px, calc(100% - var(--earth-left) - var(--earth-right)));
+    padding-block: 7px;
+    border-radius: 10px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    grid-template-areas:
+      "header header"
+      "image interpretation"
+      "image history"
+      "image downloads"
+      "sources sources";
+    column-gap: 13px;
+  }
+  .earth-review-header { grid-area: header; }
+  .earth-review-image { grid-area: image; height: clamp(82px, 30vh, 148px); }
+  .earth-interpretation { grid-area: interpretation; margin-block-start: 0; }
+  #earth-history-toggle { grid-area: history; justify-self: start; }
+  .earth-downloads { grid-area: downloads; }
+  .earth-sources { grid-area: sources; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .earth-observatory *, .earth-observatory *::before, .earth-observatory *::after {
+    animation-duration: 0s !important;
+    transition-duration: 0s !important;
+  }
+}

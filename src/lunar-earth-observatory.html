@@ -1,0 +1,70 @@
+<dialog id="earth-observatory" class="earth-observatory" aria-labelledby="earth-observatory-title">
+  <canvas id="earth-viewfinder" width="640" height="480" aria-label="望远镜全景取景器" data-en-aria="Panoramic telescope viewfinder"></canvas>
+  <div class="earth-view-shade" aria-hidden="true"></div>
+  <div class="earth-reticle" aria-hidden="true"><span></span></div>
+
+  <header class="earth-header">
+    <div class="earth-mode">
+      <h2 id="earth-observatory-title" tabindex="-1" autofocus data-en="Optical Observation">光学观测</h2>
+      <p id="earth-view-label" aria-live="polite"></p>
+    </div>
+    <button type="button" id="earth-close" class="earth-icon" aria-label="返回驾驶" title="返回驾驶" data-en-aria="Return to driving" data-en-title="Return to driving">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+  </header>
+
+  <nav class="earth-mode-control" aria-label="观测模式" data-en-aria="Observation modes">
+    <button type="button" id="earth-mode-prev" class="earth-icon" aria-label="上一个观测模式" title="上一个观测模式" data-en-aria="Previous observation mode" data-en-title="Previous observation mode">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>
+    </button>
+    <button type="button" id="earth-mode-next" class="earth-icon" aria-label="下一个观测模式" title="下一个观测模式" data-en-aria="Next observation mode" data-en-title="Next observation mode">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+    </button>
+  </nav>
+
+  <footer class="earth-toolbar">
+    <p id="earth-aim" class="earth-hint" role="status"></p>
+    <progress id="earth-exposure" aria-label="曝光进度" data-en-aria="Exposure progress" max="1" value="0" hidden></progress>
+    <div class="earth-zoom">
+      <div class="earth-zoom-controls" role="group" aria-label="缩放" data-en-aria="Zoom">
+        <button type="button" id="earth-zoom-out" class="earth-icon" aria-label="缩小" title="缩小" data-en-aria="Zoom out" data-en-title="Zoom out">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12"/></svg>
+        </button>
+        <button id="earth-zoom-value" type="button" aria-label="恢复 1 倍并居中" title="恢复全景" data-en-aria="Reset zoom and center" data-en-title="Reset view">1.00×</button>
+        <button type="button" id="earth-zoom-in" class="earth-icon" aria-label="放大" title="放大" data-en-aria="Zoom in" data-en-title="Zoom in">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12h12m-6-6v12"/></svg>
+        </button>
+      </div>
+      <span id="earth-view-scale" class="earth-view-scale" aria-label="视场" data-en-aria="Field of view">4.8°</span>
+    </div>
+    <button type="button" id="earth-align" class="earth-icon" aria-label="校准指向" title="校准指向" data-en-aria="Align the telescope" data-en-title="Align the telescope" disabled>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 3v6m0 6v6M3 12h6m6 0h6"/></svg>
+    </button>
+    <button type="button" id="earth-capture" class="earth-icon" aria-label="拍摄" title="拍摄" data-en-aria="Capture image" data-en-title="Capture image" aria-describedby="earth-aim" disabled>
+      <span class="earth-shutter" aria-hidden="true"></span>
+    </button>
+    <button type="button" id="earth-review-open" class="earth-icon" aria-label="打开观测归档" title="打开观测归档" data-en-aria="Open observation archive" data-en-title="Open observation archive" aria-controls="earth-review" hidden>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m4 16 4-4 4 4 3-2 5 4m-3.5-8.5h.01"/></svg>
+    </button>
+  </footer>
+
+  <section id="earth-review" class="earth-review" aria-label="观测归档" data-en-aria="Observation archive" hidden>
+    <header class="earth-review-header">
+      <p id="earth-log-status" role="status"></p>
+      <button type="button" id="earth-review-close" class="earth-icon" aria-label="返回取景" title="返回取景" data-en-aria="Return to viewfinder" data-en-title="Return to viewfinder">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="earth-review-image">
+      <img id="earth-photo-preview" alt="本次拍摄的地球影像" data-en-alt="Image of Earth captured in this observation" hidden>
+      <img id="earth-history-image" alt="阿波罗 16 从月面拍摄的地球远紫外照片，NASA 假彩色版" data-en-alt="NASA false-color image of Earth in far ultraviolet, taken from the Moon by Apollo 16" hidden>
+    </div>
+    <div class="earth-interpretation">
+      <strong id="earth-reading"></strong>
+      <p id="earth-explanation"></p>
+    </div>
+    <button type="button" id="earth-history-toggle" class="earth-text-button" aria-pressed="false" aria-controls="earth-history-image" hidden>对照阿波罗 16</button>
+    <div class="earth-downloads" id="earth-downloads" aria-label="下载照片" data-en-aria="Download images"></div>
+    <p class="earth-sources"><a id="earth-photo-source" target="_blank" rel="noopener noreferrer"></a></p>
+  </section>
+</dialog>

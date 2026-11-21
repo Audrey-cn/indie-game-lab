@@ -1,0 +1,1331 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="月面采集站 · Lunar Field Station. Drive a lunar rover, collect crystal cores, and build a station for the next crew.">
+  <title>月面采集站</title>
+  <!--
+  Bundled third-party material / 内置第三方素材
+  Three.js r182, © three.js authors, MIT. The full license is at the end of this file.
+  "In This Moment" by Scott Buckley, CC BY 4.0. Converted to AAC and looped in play.
+  https://www.scottbuckley.com.au/library/in-this-moment/
+  https://creativecommons.org/licenses/by/4.0/
+  Impact Sounds by Kenney, CC0 1.0. Edited and resampled.
+  https://kenney.nl/assets/impact-sounds
+  https://creativecommons.org/publicdomain/zero/1.0/
+  NASA Earth Observatory / NASA Goddard: Blue Marble 2002 (Reto Stöckli, with Robert Simmon),
+  MODIS cloud composite, and Blue Marble Next Generation (Reto Stöckli, August 2004).
+  https://science.nasa.gov/resource/blue-marble-2002/
+  https://science.nasa.gov/earth/earth-observatory/the-blue-marble-true-color-global-imagery-at-1km-resolution/
+  https://science.nasa.gov/earth/earth-observatory/blue-marble-next-generation/base-topography-bathymetry/
+  NASA, Earth in Far-Ultraviolet (Apollo 16, John W. Young, S72-36972).
+  https://www.nasa.gov/image-article/earth-in-far-ultraviolet/
+  NASA imagery is resized, cropped, or composited to fit the in-game views.
+  https://www.nasa.gov/nasa-brand-center/images-and-media/
+  -->
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      color: #f2eee3;
+      background: #080b10;
+      --ivory: #f2eee3;
+      --cyan: #94edeb;
+      --muted: #afbac0;
+      --amber: #ffb18d;
+      --line: #a8b4bd36;
+      --panel: #0a1017b8;
+      --edge: clamp(18px, 4vw, 66px);
+      --top: max(24px, calc(env(safe-area-inset-top) + 10px));
+      --bottom: max(23px, calc(env(safe-area-inset-bottom) + 10px));
+      --mono: "IBM Plex Mono", "SF Mono", Consolas, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+
+    body {
+      position: relative;
+      margin: 0;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      isolation: isolate;
+      overscroll-behavior: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #viewport {
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      overflow: hidden;
+      background: radial-gradient(ellipse at 68% 48%, #202d3d, #0b101a 58%, #06090d);
+    }
+
+    #viewport canvas { display: block; width: 100%; height: 100%; }
+    :is(#title-poster, #title-cinematic) {
+      display: none;
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: 67% 48%;
+    }
+    body[data-phase="ready"] #title-poster[src^="data:"] { display: block; }
+    body[data-phase="ready"] #title-poster[src^="data:"] + #viewport canvas { opacity: 0; }
+    body[data-phase="ready"][data-title-motion="true"] #title-poster { visibility: hidden; }
+    body[data-phase="ready"][data-title-motion="true"] #title-cinematic { display: block; }
+
+    body::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at 59% 45%, transparent 48%, #02040957 100%),
+        linear-gradient(180deg, #05080db3, transparent 23%, transparent 75%, #05080dc2);
+    }
+
+    #hud {
+      position: absolute;
+      inset: var(--top) var(--edge) auto;
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 18px;
+      pointer-events: none;
+    }
+
+    .hud-place {
+      display: flex;
+      min-height: 44px;
+      align-items: center;
+      gap: 10px;
+      color: var(--ivory);
+      font-size: 12px;
+      font-weight: 640;
+      letter-spacing: .15em;
+      text-shadow: 0 1px 10px #06090d;
+    }
+
+    .hud-place::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      flex: none;
+      transform: rotate(45deg);
+      background: var(--cyan);
+      box-shadow: 0 0 10px #a1fff8a8;
+    }
+
+    .mission-context { display: grid; justify-items: start; gap: 2px; }
+
+    .telemetry {
+      position: relative;
+      min-width: 306px;
+      border: 1px solid var(--line);
+      border-top-color: #c3cdd554;
+      background: var(--panel);
+      box-shadow: 0 12px 32px #0005;
+    }
+
+    .hud-metrics { display: flex; margin: 0; }
+    .metric { flex: 1 1 0; padding: 9px 13px; }
+    .metric + .metric { border-left: 1px solid var(--line); }
+    .metric dt { color: var(--muted); font-size: 10px; letter-spacing: .12em; white-space: nowrap; }
+    .metric dd {
+      margin: 4px 0 0;
+      color: var(--ivory);
+      font: 21px/1.05 var(--mono);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    #score { color: var(--cyan); }
+    .sample-quality {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font: 9px/1.05 var(--mono);
+      white-space: nowrap;
+    }
+    #timer[data-urgent="true"] { color: var(--amber); }
+    .metric-unit { color: var(--muted); font: 9px system-ui, sans-serif; }
+    .meter-row {
+      display: grid;
+      gap: 6px;
+      align-items: center;
+      margin: 0;
+      padding: 7px 13px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+
+    .energy-readout { grid-template-columns: auto minmax(35px, 1fr) auto; }
+    #energy-percent { color: var(--ivory); min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; }
+
+    progress {
+      width: 100%;
+      height: 4px;
+      appearance: none;
+      border: 0;
+      border-radius: 1px;
+      background: #b6c8d83a;
+      accent-color: var(--cyan);
+    }
+
+    progress::-webkit-progress-bar { background: #b6c8d83a; border-radius: 1px; }
+    progress::-webkit-progress-value { background: var(--cyan); border-radius: 1px; }
+    progress::-moz-progress-bar { background: var(--cyan); border-radius: 1px; }
+    #energy-meter { accent-color: #9ab5aa; }
+    #energy-meter::-webkit-progress-value { background: #9ab5aa; }
+    #energy-meter::-moz-progress-bar { background: #9ab5aa; }
+    #energy-meter[data-low="true"]::-webkit-progress-value { background: #ffbf84; }
+    #energy-meter[data-low="true"]::-moz-progress-bar { background: #ffbf84; }
+
+    body:not([data-phase="playing"]) .hud-status,
+    body:not([data-phase="playing"]) .navigation { display: none; }
+    body[data-phase="ready"] #hud { display: none; }
+
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: end;
+      padding: calc(var(--top) + 60px) var(--edge) calc(var(--bottom) + clamp(65px, 11vh, 114px));
+      pointer-events: none;
+      background:
+        linear-gradient(70deg, #080c14a8, #080c1400 59%),
+        linear-gradient(0deg, #070b13b5, #070b1300 53%);
+    }
+
+    body[data-phase="playing"]:not([data-paused="true"]) #overlay { display: none; }
+    body[data-paused="true"] #overlay {
+      z-index: 2;
+      align-items: center;
+      background: linear-gradient(75deg, #05070ce3, #080c145a 78%);
+    }
+
+    body:not([data-phase="playing"]) #pause,
+    body[data-paused="true"] #pause,
+    body[data-paused="true"] .touch-action,
+    body:not([data-phase="playing"]) .touch-action { display: none; }
+    .briefing { width: min(100%, 550px); }
+
+    .briefing::before {
+      content: "";
+      display: block;
+      width: 45px;
+      height: 2px;
+      margin-bottom: 19px;
+      background: var(--cyan);
+      box-shadow: 0 0 13px #64ded485;
+    }
+
+    #status {
+      margin: 0 0 11px;
+      color: var(--ivory);
+      font-size: clamp(40px, 5.2vw, 76px);
+      line-height: 1.04;
+      font-weight: 760;
+      letter-spacing: -.068em;
+      text-wrap: balance;
+      text-shadow: 0 6px 30px #000d;
+    }
+
+    #brief {
+      max-width: 33em;
+      margin: 0;
+      color: #dee3e2;
+      font-size: clamp(14px, 1.25vw, 17px);
+      line-height: 1.74;
+      text-wrap: pretty;
+      text-shadow: 0 2px 12px #000;
+    }
+    #mission-debrief {
+      margin: 12px 0 0;
+      color: #b7c5c6;
+      font: 550 11px/1.5 var(--mono);
+      letter-spacing: .055em;
+    }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+
+    button {
+      appearance: none;
+      min-height: 44px;
+      border: 1px solid transparent;
+      border-radius: 2px;
+      font: inherit;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+
+    button:active { transform: translateY(1px); }
+    button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
+    .actions button {
+      display: inline-flex;
+      min-width: 158px;
+      min-height: 48px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 22px;
+      padding: 10px 15px 10px 17px;
+      border-color: #f7f1e8;
+      background: var(--ivory);
+      color: #101820;
+      font-size: 14px;
+      font-weight: 740;
+      box-shadow: 0 8px 18px #0006;
+    }
+
+    .actions button::after {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-top: 1.5px solid currentColor;
+      border-right: 1.5px solid currentColor;
+      transform: translateX(-2px) rotate(45deg);
+    }
+
+    .actions button:hover { background: var(--cyan); }
+    .actions #main-menu, body[data-paused="true"] .actions #restart {
+      color: var(--ivory);
+      background: #15212be8;
+      border-color: #c9d3d15c;
+    }
+    .actions #main-menu:hover, body[data-paused="true"] .actions #restart:hover { background: #283c45; }
+
+    .landing-context { display: none; }
+    .menu-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .menu-tools .utility-button { min-width: 94px; margin: 0; }
+
+    .navigation {
+      position: absolute;
+      right: var(--edge);
+      bottom: calc(var(--bottom) + 53px);
+      display: grid;
+      gap: 6px;
+      width: 132px;
+      margin: 0;
+      pointer-events: none;
+    }
+
+    #radar {
+      display: block;
+      width: 132px;
+      height: 132px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: radial-gradient(circle, #0f1922a3, #081017d6);
+      box-shadow: 0 6px 24px #0008;
+    }
+
+    .radar-legend {
+      display: flex;
+      justify-content: center;
+      gap: 7px;
+      width: max-content;
+      justify-self: end;
+      padding: 4px 6px;
+      color: var(--muted);
+      background: #090e15df;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    .radar-legend span { display: flex; align-items: center; gap: 3px; }
+    .radar-legend span::before {
+      content: "";
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--ivory);
+    }
+
+    .radar-legend span:first-child::before { background: var(--cyan); }
+    .radar-legend span:nth-child(2)::before { background: #ffd597; }
+    .radar-legend span:nth-child(3)::before { background: none; border: 1px solid #dbca95; }
+    .radar-legend span:last-child::before { background: #ff765b; }
+    #radar-toggle { display: none; }
+
+    .controls {
+      position: absolute;
+      inset: auto var(--edge) var(--bottom);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      color: #e0e3de;
+      font-size: 11px;
+      text-shadow: 0 1px 12px #000;
+      pointer-events: none;
+    }
+    #look-lock {
+      position: fixed;
+      inset: auto auto calc(var(--bottom) + 9px) 50%;
+      transform: translateX(-50%);
+      margin: 0;
+      padding: 5px 8px;
+      color: #e2ecee;
+      background: #101a24df;
+      font-size: 11px;
+      white-space: nowrap;
+      pointer-events: none;
+      display: none;
+    }
+    body[data-input="keyboard"][data-phase="playing"][data-paused="false"]:not([data-camera-lock="true"]) #look-lock {
+      display: block;
+    }
+
+    .keyboard-controls, .mobile-controls {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px 10px;
+    }
+
+    .mobile-controls, .construction-key-hint { display: none; }
+    body[data-mission="construction"] .construction-key-hint { display: inline-flex; align-items: center; gap: 5px; }
+    body[data-mission="construction"] .survey-key-hint { display: none; }
+    .survey-key-hint { display: inline-flex; align-items: center; gap: 5px; }
+    .joystick {
+      --stick-x: 0px;
+      --stick-y: 0px;
+      position: relative;
+      display: grid;
+      place-items: center;
+      border: 1px solid #abc2cc86;
+      border-radius: 50%;
+      width: var(--joystick-size);
+      height: var(--joystick-size);
+      background:
+        radial-gradient(circle at 50% 38%, #22354078, #0a141cd9 64%, #0a111bfa 100%);
+      box-shadow: inset 0 0 0 4px #91bacb17, 0 6px 28px #0008;
+      pointer-events: auto;
+      touch-action: none;
+      user-select: none;
+    }
+    .joystick::before {
+      position: absolute;
+      inset: 17%;
+      border: 1px dashed #c2dde348;
+      border-radius: 50%;
+      content: "";
+      pointer-events: none;
+    }
+    .joystick-puck {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 43%;
+      aspect-ratio: 1;
+      border: 1px solid #b6d7df;
+      border-radius: 50%;
+      background: radial-gradient(circle at 34% 29%, #7299a6, #3e6371 50%, #243d4a 100%);
+      box-shadow: inset 0 0 0 3px #abc7ce28, 0 4px 9px #050a10bd;
+      transform: translate(calc(-50% + var(--stick-x)), calc(-50% + var(--stick-y)));
+      transition: transform 120ms ease-out;
+      pointer-events: none;
+    }
+    .joystick[data-active="true"] { border-color: #b8f3f2; }
+    .joystick[data-active="true"] .joystick-puck { transition: none; }
+    .joystick-caption { position: absolute; bottom: 8%; color: #e4eef0; font-size: 10px; pointer-events: none; }
+    .touch-buttons { display: grid; grid-template-columns: repeat(2, minmax(48px, 1fr)); gap: 7px; align-content: end; }
+    .touch-buttons .touch-action { min-width: 0; min-height: 48px; white-space: nowrap; }
+    .touch-buttons #brake-touch { grid-area: 3 / 1; }
+    .touch-buttons #boost { grid-area: 3 / 2; }
+    .key-group { display: inline-flex; align-items: center; gap: 3px; }
+    kbd {
+      display: inline-grid;
+      place-items: center;
+      min-width: 20px;
+      min-height: 21px;
+      padding: 2px 4px;
+      border: 1px solid #c1c9cc55;
+      border-bottom-color: #c1c9cc8a;
+      border-radius: 3px;
+      background: #0c121acc;
+      color: var(--ivory);
+      font: 10px var(--mono);
+      white-space: nowrap;
+    }
+
+    .utility-button, .touch-action {
+      flex: none;
+      min-width: 54px;
+      padding: 5px 9px;
+      border-color: var(--line);
+      background: #0b121bcc;
+      color: var(--ivory);
+      font-size: 11px;
+      letter-spacing: .06em;
+    }
+
+    .utility-button:hover, .touch-action:hover { background: #14202a; }
+    .touch-action {
+      color: var(--cyan);
+      touch-action: none;
+      user-select: none;
+    }
+
+    #boost { color: #ffbf84; }
+    #brake-touch { color: var(--ivory); }
+    #build-action { color: #ffdbb2; }
+    .touch-action:active, .touch-action[aria-pressed="true"] { background: #24404f; }
+    :is(#audio-toggle, #music-toggle)[aria-pressed="false"] { color: var(--muted); }
+
+    .companion-portrait {
+      --portrait-size: 32px;
+      position: relative;
+      display: block;
+      width: var(--portrait-size);
+      height: var(--portrait-size);
+      border-radius: 3px;
+      background: radial-gradient(ellipse at 50% 49%, #31575e99, transparent 67%), #09151d;
+      box-shadow: inset 0 0 0 1px #a4d9d13c;
+    }
+    .companion-portrait::before, .companion-portrait::after {
+      content: "";
+      position: absolute;
+    }
+    .companion-portrait::before {
+      inset: 26% 9% 23%;
+      clip-path: polygon(0 39%, 18% 14%, 41% 1%, 72% 8%, 92% 28%, 100% 58%, 82% 81%, 58% 100%, 31% 88%, 7% 68%);
+      background: linear-gradient(156deg, #e2dfcc 7%, #bdc1b4 30%, #5b7477 31% 48%, #222f38 49% 70%, #434d4e 71%);
+    }
+    .companion-portrait::after {
+      inset: 42% 25% 35% 51%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 46% 42%, #d8fff3 10%, #9ae8d5 25%, #417778 46%, #132b36 56%, #091015 67%);
+      box-shadow: 0 0 4px #8cefd766;
+    }
+    .companion-call-sign {
+      display: block;
+      color: #a9c0c2;
+      font: 600 9px/1.2 var(--mono);
+      letter-spacing: .08em;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 700px) {
+      :root { --edge: 17px; --top: max(14px, calc(env(safe-area-inset-top) + 8px)); }
+      #hud { gap: 8px; }
+      .hud-place { min-height: 43px; gap: 7px; font-size: 10px; letter-spacing: .03em; }
+      .telemetry { min-width: 0; }
+      .metric { padding: 7px 8px; }
+      .metric dt { font-size: 8px; letter-spacing: 0; }
+      .metric dd { font-size: 15px; }
+      .metric-unit { font-size: 8px; }
+      .meter-row { padding: 6px 8px; font-size: 10px; }
+      #overlay {
+        padding-bottom: calc(var(--bottom) + 70px);
+        background: linear-gradient(0deg, #070b13ed, #070b136d 37%, #070b1300 64%);
+      }
+      .briefing::before { width: 36px; margin-bottom: 12px; }
+      #status { font-size: clamp(35px, 10.5vw, 54px); }
+      .actions { margin-top: 16px; }
+      .navigation { width: 96px; bottom: calc(var(--bottom) + 45px); }
+      #radar { width: 96px; height: 96px; }
+      .radar-legend { gap: 5px; padding: 3px 4px; font-size: 8px; }
+    }
+
+    @media (max-width: 365px) {
+      .hud-place { max-width: 85px; }
+      .metric { padding-inline: 6px; }
+      .mobile-controls { gap: 5px; }
+      .touch-action { min-width: 48px; padding-inline: 6px; }
+    }
+
+    @media (max-height: 530px) and (min-width: 701px) {
+      #status { font-size: clamp(33px, 8vh, 55px); }
+      .briefing::before { margin-bottom: 10px; }
+      .actions { margin-top: 13px; }
+      .navigation { width: 101px; }
+      #radar { width: 101px; height: 101px; }
+    }
+
+    body[data-input="touch"] .controls { display: block; }
+    body[data-input="touch"][data-phase="playing"][data-paused="false"] .mobile-controls {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    body[data-input="touch"] .mobile-controls .touch-action { padding: 5px 12px; }
+    body[data-input="touch"] .actions { gap: 7px; }
+    body[data-input="touch"] #overlay { padding-inline: var(--edge); }
+
+    @media (orientation: landscape) and (max-height: 480px) {
+      :root { --joystick-size: clamp(94px, 29vh, 123px); --top: max(8px, env(safe-area-inset-top)); }
+      #overlay { padding-block: calc(var(--top) + 40px) calc(var(--bottom) + 49px); }
+      body[data-phase="won"] #overlay { padding-block: var(--top) calc(var(--bottom) + 11px); }
+      #mission-debrief { margin-top: 8px; }
+      #status { margin-bottom: 7px; font-size: clamp(32px, 11vh, 52px); }
+      #brief { max-width: 42em; font-size: 13px; line-height: 1.45; }
+      .briefing::before { margin-bottom: 10px; }
+      .actions { margin-top: 10px; max-width: 424px; }
+      .radar-legend { gap: 5px; padding: 3px 4px; font-size: 8px; }
+    }
+
+    #initializing {
+      position: fixed;
+      inset: 0;
+      z-index: 12;
+      display: grid;
+      place-items: center;
+      padding: max(22px, env(safe-area-inset-left));
+      background: #090e15;
+    }
+
+    .boot-readout { width: min(100%, 350px); }
+    .boot-readout h2 { margin: 0 0 15px; font-size: clamp(25px, 5vw, 37px); letter-spacing: -.05em; }
+    .boot-readout progress { display: block; height: 5px; }
+    #boot-status { min-height: 21px; margin: 10px 0; color: var(--muted); font-size: 13px; }
+    #boot-retry { min-height: 44px; }
+
+    body:not([data-boot="ready"]) #overlay,
+    body:not([data-boot="ready"]) #hud,
+    body:not([data-boot="ready"]) .controls { visibility: hidden; }
+
+    :is(#manual, #settings) {
+      width: min(calc(100% - 34px), 475px);
+      max-height: 85dvh;
+      overflow: auto;
+      color: var(--ivory);
+      background: #121c27;
+      border: 1px solid #809eaa80;
+      border-radius: 4px;
+      padding: clamp(16px, 4vw, 25px);
+    }
+
+    :is(#manual, #settings)::backdrop { background: #020609ad; }
+    :is(#manual, #settings) h2 { margin: 0 0 10px; font-size: 24px; }
+    #settings { width: min(340px, calc(100% - 30px)); }
+    #manual h3 { margin: 16px 0 5px; font-size: 14px; color: var(--cyan); }
+    #manual p { margin: 0; color: #d1dce0; font-size: 13px; line-height: 1.6; }
+    .manual-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 9px;
+      margin-top: 20px;
+    }
+
+    .manual-actions button, #manual-open { min-height: 44px; }
+    .hud-status {
+      display: grid;
+      gap: 5px;
+      width: clamp(226px, 20vw, 286px);
+      margin-right: 48px;
+      min-width: 0;
+    }
+    #guide {
+      --guide-accent: #9be5d6a6;
+      --guide-ink: #e2f3ed;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 0 8px;
+      min-width: 0;
+      padding: 6px 8px;
+      border: 1px solid #a8bdc43d;
+      border-inline-start-color: var(--guide-accent);
+      border-radius: 3px;
+      background: linear-gradient(112deg, #11252de8, #0c1720eb 64%);
+    }
+    #guide[data-mode="guide"] { grid-template-columns: auto minmax(0, 1fr) auto; }
+    #guide .companion-portrait { align-self: start; }
+    #guide[data-mode="notice"][data-tone="caution"] { --guide-accent: #e9af76; --guide-ink: #ffe0ba; }
+    #guide[data-mode="notice"][data-tone="strike"] { --guide-accent: #ff9b87; --guide-ink: #ffcebf; }
+    #objective {
+      margin: 3px 0 0;
+      color: #c2e0d8;
+      font-size: 12px;
+      font-weight: 630;
+      line-height: 1.3;
+    }
+    #guide:not([data-mode="objective"]) #objective { color: #a6bec3; font-weight: 520; }
+    #guide :is(#guide-tip, #mission-notice) {
+      display: none;
+      grid-column: 1 / -1;
+      padding-top: 5px;
+      margin-top: 4px;
+      border-top: 1px solid #b0cdd430;
+      color: var(--guide-ink);
+      font-size: 12px;
+      line-height: 1.42;
+    }
+    #guide[data-mode="guide"] #guide-tip,
+    #guide[data-mode="notice"] #mission-notice { display: block; }
+    #guide-heading { margin: 0; font-size: 12px; line-height: 1.28; color: var(--cyan); }
+    #guide-copy { margin: 2px 0 0; }
+    #mission-notice { opacity: 0; transition: opacity 260ms ease-out; }
+    #mission-notice[data-visible="true"] { opacity: 1; }
+    #guide-dismiss {
+      display: none;
+      min-width: 28px;
+      min-height: 28px;
+      padding: 0;
+      border-color: transparent;
+      background: transparent;
+      color: #b4c9ca;
+      font: 18px/1 system-ui, sans-serif;
+      touch-action: manipulation;
+    }
+    #guide[data-mode="guide"] #guide-dismiss { display: grid; place-items: center; }
+    #guide-dismiss:is(:hover, :focus-visible) { color: var(--ivory); background: #25424a8f; }
+    body[data-paused="true"] #guide { visibility: hidden; }
+
+    @media (orientation: landscape) and (max-height: 480px) {
+      #manual-open { min-height: 40px; }
+      #manual h3 { margin-top: 10px; }
+    }
+
+    #pause {
+      position: fixed;
+      right: var(--edge);
+      top: var(--top);
+      display: grid;
+      place-items: center;
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      z-index: 3;
+    }
+
+    #pause span {
+      width: 15px;
+      height: 19px;
+      border-inline: 4px solid #f1f1e5;
+      filter: drop-shadow(0 1px 2px #050709);
+    }
+
+    #pause:is(:hover,:focus-visible) { background: #0b131ccc; }
+    .locale-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      color: var(--ivory);
+      font-size: 13px;
+    }
+    #language-select {
+      min-height: 44px;
+      min-width: 110px;
+      padding-inline: 10px;
+      border: 1px solid #809eaa80;
+      border-radius: 3px;
+      color: var(--ivory);
+      background: #0b1721;
+      font: inherit;
+    }
+    #language-select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+    .pause-audio { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .music-credit { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .music-credit a { color: var(--cyan); }
+    .view-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    :is(.pause-audio, .view-options) button { min-height: 44px; }
+    #action-camera-toggle[aria-pressed="false"] { color: var(--muted); }
+    .telemetry {
+      min-width: 0;
+      border-color: #b9ccd546;
+      background: #0b141dd2;
+      box-shadow: 0 3px 16px #0003;
+    }
+    .metric { padding: 6px 10px; }
+    .sample-quality { display: none; }
+    .meter-row { padding: 4px 10px; gap: 3px; }
+    .energy-readout { font-size: 10px; }
+
+    .mission-marker {
+      position: absolute;
+      z-index: 2;
+      transform: translate(-50%, -100%);
+      display: grid;
+      justify-items: center;
+      gap: 4px;
+      color: #ffe4a8;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    #marker-arrow {
+      width: 13px;
+      height: 11px;
+      background: currentColor;
+      clip-path: polygon(0 0, 100% 0, 50% 100%);
+      filter: drop-shadow(0 1px 1px #04080d);
+    }
+
+    #marker-text {
+      border: 1px solid #b9ccd53f;
+      background: #101921e8;
+      color: #f3f1e8;
+      padding: 4px 7px;
+      font-size: 12px;
+      border-radius: 2px;
+      text-shadow: 0 1px 4px #010305;
+    }
+
+    .mission-marker[data-kind="edge"] #marker-arrow {
+      transform: rotate(var(--bearing));
+    }
+    .mission-marker[data-kind="near"] #marker-arrow { display: none; }
+    .mission-marker[data-ready="true"] #marker-text { border-color: #9ed5c687; color: #c8f5e6; }
+    #context-prompt {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 8px 4px 4px;
+      color: #eaf6ee;
+      background: #111c24ed;
+      border: 1px solid #a3bdb05c;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    #context-prompt kbd {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 23px;
+      color: #0b201e;
+      background: #b3e3d5;
+      border-radius: 3px;
+      font: 700 14px var(--mono);
+      animation: context-cue 1s ease-in-out 2;
+    }
+    @keyframes context-cue {
+      50% { background: #e1fff5; box-shadow: 0 0 7px #b6ebd580; }
+    }
+    #context-progress {
+      --completion: 0%;
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: conic-gradient(#b3e3d5 var(--completion), #9ab1ae3a 0);
+      box-shadow: 0 2px 6px #0009;
+    }
+    #context-progress span {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      color: #edfff7;
+      background: #111c24;
+      font: 700 10px var(--mono);
+    }
+    body[data-input="touch"] {
+      --left: max(12px, calc(env(safe-area-inset-left) + 6px));
+      --right: max(12px, calc(env(safe-area-inset-right) + 6px));
+      --edge: max(var(--left), var(--right));
+      --top: max(10px, calc(env(safe-area-inset-top) + 6px));
+      --bottom: max(13px, calc(env(safe-area-inset-bottom) + 8px));
+      --joystick-size: clamp(87px, 26vw, 118px);
+      --radar-size: clamp(64px, 21vw, 86px);
+      --pause-size: 44px;
+      --corner-gap: 8px;
+    }
+
+    body[data-input="touch"] #hud { inset: var(--top) auto auto var(--left); }
+    body[data-input="touch"] .hud-place { display: none; }
+    body[data-input="touch"] .mission-context { display: contents; }
+    body[data-input="touch"] .hud-status {
+      width: min(246px, calc(100vw - var(--left) - var(--right) - var(--radar-size) - var(--corner-gap)));
+      margin: 0;
+    }
+    body[data-input="touch"][data-phase="playing"] .telemetry {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #b0cdd445;
+      border-radius: 5px;
+      background: #0a131bd9;
+      box-shadow: 0 2px 10px #03060948;
+    }
+    body[data-input="touch"] #guide { gap: 0 6px; padding: 4px 7px; }
+    body[data-input="touch"] #guide .companion-portrait { --portrait-size: 25px; }
+    body[data-input="touch"] #guide :is(#guide-tip, #mission-notice) { font-size: 11px; }
+    body[data-input="touch"] #guide-dismiss { min-width: 44px; min-height: 44px; }
+    body[data-input="touch"] .metric { padding: 3px 7px 4px; }
+    body[data-input="touch"] .metric dt { font-size: 9px; letter-spacing: 0; }
+    body[data-input="touch"] .metric dd { margin-top: 2px; font-size: 13px; }
+    body[data-input="touch"] .metric-unit { font-size: 8px; }
+    body[data-input="touch"] .meter-row { padding: 3px 8px; font-size: 10px; }
+    body[data-input="touch"] .energy-readout { grid-template-columns: auto minmax(18px, 1fr) auto; gap: 6px; }
+
+    body[data-input="touch"] #pause {
+      right: var(--right);
+      width: var(--pause-size);
+      height: var(--pause-size);
+      border: 1px solid #b0cdd451;
+      border-radius: 6px;
+      background: #0a141cd9;
+      pointer-events: auto;
+    }
+    body[data-input="touch"] #pause span { width: 12px; height: 15px; border-inline-width: 3px; }
+    body[data-input="touch"] #pause:active { background: #203a46; }
+    body[data-input="touch"] .navigation {
+      inset: calc(var(--top) + var(--pause-size) + var(--corner-gap)) var(--right) auto auto;
+      width: var(--radar-size);
+      z-index: 3;
+    }
+    body[data-input="touch"] #radar { width: var(--radar-size); height: var(--radar-size); }
+    body[data-input="touch"] #radar-toggle {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      align-items: end;
+      justify-items: center;
+      width: 100%;
+      height: var(--radar-size);
+      padding: 0 0 3px;
+      border: 1px solid transparent;
+      border-radius: 50%;
+      background: transparent;
+      pointer-events: auto;
+      touch-action: manipulation;
+    }
+    body[data-input="touch"] #radar-toggle:is(:focus-visible, [aria-expanded="true"]) { border-color: var(--cyan); }
+    #radar-toggle::after {
+      content: "";
+      width: 5px;
+      height: 5px;
+      border: solid #c4dddf;
+      border-width: 0 1px 1px 0;
+      transform: rotate(45deg);
+    }
+    #radar-toggle[aria-expanded="true"]::after { transform: rotate(225deg); }
+    body[data-input="touch"] .radar-legend {
+      position: absolute;
+      top: calc(var(--radar-size) + 5px);
+      right: 0;
+      display: none;
+      grid-template-columns: repeat(2, auto);
+      justify-content: start;
+      gap: 5px 9px;
+      padding: 6px 8px;
+      border: 1px solid #b0cdd441;
+      border-radius: 5px;
+      color: #d6e4e7;
+      background: #0a131bf2;
+      font-size: 10px;
+      pointer-events: auto;
+    }
+    body[data-input="touch"] #radar-toggle[aria-expanded="true"] + .radar-legend { display: grid; }
+    body[data-input="touch"][data-paused="true"] :is(#hud, .navigation) { visibility: hidden; }
+    body[data-input="touch"] .controls { inset-inline: var(--left) var(--right); }
+    body[data-input="touch"] #marker-text { font-size: 11px; }
+    .object-action {
+      min-width: 92px;
+      min-height: 52px;
+      border: 1px solid #9bded0bb;
+      border-radius: 24px;
+      padding: 5px 15px;
+      background: #193d43ee;
+      color: #ebfff8;
+      font-weight: 650;
+      font-size: 13px;
+      pointer-events: auto;
+      touch-action: none;
+      user-select: none;
+    }
+    .object-action:is(:active, [data-held="true"]) { background: #275d62; }
+    #build-action { border-color: #efc37cbf; background: #4c3721ed; color: #fff2d6; }
+    #build-action:active { background: #69481f; }
+    body[data-input="touch"] .touch-buttons {
+      display: flex;
+      align-items: flex-end;
+      gap: 7px;
+      padding: 0 2px;
+    }
+    body[data-input="touch"] .touch-buttons .touch-action {
+      width: 54px;
+      min-width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      padding: 0;
+      touch-action: none;
+      font-size: 11px;
+    }
+    body[data-input="touch"] #brake-touch {
+      order: 2;
+      width: 60px;
+      min-width: 60px;
+      height: 60px;
+      color: #d8f1fa;
+      background: #142932db;
+      border-color: #9dbac792;
+    }
+    body[data-input="touch"] #boost {
+      order: 1;
+      margin-bottom: 19px;
+      color: #ffdfab;
+      background: #40301bdb;
+      border-color: #dab180af;
+    }
+    body[data-input="touch"] #brake-touch:is(:active, [data-held="true"]) { background: #315969; }
+    body[data-input="touch"] #boost:active { background: #715628; }
+
+    @media (orientation: landscape) {
+      body[data-input="touch"] {
+        --joystick-size: clamp(82px, 27dvh, 108px);
+        --radar-size: clamp(62px, 22dvh, 80px);
+      }
+      body[data-input="touch"] .hud-status { width: clamp(170px, 35vw, 256px); }
+      body[data-input="touch"] .navigation {
+        top: var(--top);
+        right: calc(var(--right) + var(--pause-size) + var(--corner-gap));
+      }
+    }
+
+    @media (orientation: landscape) and (max-height: 360px) {
+      body[data-input="touch"] #guide .companion-portrait { --portrait-size: 22px; }
+      body[data-input="touch"] #guide {
+        grid-template-rows: auto minmax(0, 1fr);
+        max-block-size: max(65px, calc(100dvh - var(--top) - var(--bottom) - var(--joystick-size) - 72px));
+      }
+      body[data-input="touch"] #guide-tip {
+        overflow-y: auto;
+        pointer-events: auto;
+        touch-action: pan-y;
+      }
+    }
+
+    body[data-phase="ready"] #overlay {
+      --menu-gold: #edc586;
+      --menu-inline: max(var(--edge), clamp(28px, 7.6vw, 112px));
+      align-items: center;
+      padding: max(24px, var(--top)) max(var(--edge), env(safe-area-inset-right)) var(--bottom)
+        max(var(--menu-inline), env(safe-area-inset-left) + 20px);
+      background:
+        linear-gradient(90deg, #080c11f5 1%, #080c11e8 19%, #080c118f 36%, #080c1117 63%, transparent 78%),
+        linear-gradient(0deg, #05080c8f, transparent 39%);
+    }
+    body[data-phase="ready"] .briefing { width: min(100%, 31em); }
+    body[data-phase="ready"] .briefing::before { display: none; }
+
+    body[data-phase="ready"] .landing-context {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 clamp(11px, 2vh, 19px);
+      color: var(--menu-gold);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: .19em;
+      text-shadow: 0 2px 12px #000;
+    }
+    .landing-context::before {
+      content: "";
+      display: block;
+      width: 24px;
+      height: 1px;
+      background: currentColor;
+    }
+    body[data-phase="ready"] #status {
+      margin: 0 0 clamp(11px, 1.8vh, 17px);
+      font-size: clamp(48px, 6.1vw, 92px);
+      font-weight: 730;
+      letter-spacing: .025em;
+      line-height: 1.06;
+      white-space: nowrap;
+      text-shadow: 0 4px 26px #000b;
+    }
+    body[data-phase="ready"] #brief {
+      max-width: 29em;
+      color: #d9d9d2;
+      font-size: clamp(13px, 1.15vw, 16px);
+      line-height: 1.75;
+      text-wrap: balance;
+    }
+    body[data-phase="ready"] .actions {
+      width: min(100%, 320px);
+      margin-top: clamp(20px, 4.1vh, 34px);
+    }
+    body[data-phase="ready"] #start-campaign {
+      width: 100%;
+      min-height: 58px;
+      padding: 10px 18px 10px 20px;
+      border: 1px solid #f2d6a2;
+      border-radius: 3px;
+      color: #1d1b16;
+      background: linear-gradient(104deg, #f0d8ae 0%, #f5e8d0 89%);
+      box-shadow: 0 6px 30px #0204066e, inset 0 1px #fffae88f;
+      font-size: 15px;
+      font-weight: 740;
+      letter-spacing: .075em;
+    }
+    body[data-phase="ready"] #start-campaign:hover { background: #fff0d5; }
+    body[data-phase="ready"] #start-campaign::after { width: 8px; height: 8px; }
+    body[data-phase="ready"] .menu-tools {
+      display: grid;
+      gap: 0;
+      width: min(100%, 320px);
+      margin-top: 10px;
+    }
+    body[data-phase="ready"] .menu-tools .utility-button {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      min-width: 0;
+      min-height: 44px;
+      padding: 0 12px;
+      border: 0;
+      border-bottom: 1px solid #cdd0cc36;
+      border-radius: 0;
+      background: transparent;
+      color: #e2e2da;
+      font-size: 13px;
+      font-weight: 560;
+      letter-spacing: .07em;
+      text-align: start;
+      text-shadow: 0 2px 10px #000;
+    }
+    body[data-phase="ready"] .menu-tools .utility-button:hover { background: #cec7b21a; color: #fff3df; }
+    body[data-phase="ready"] .menu-tools .utility-button::after {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-top: 1px solid currentColor;
+      border-right: 1px solid currentColor;
+      opacity: .64;
+      transform: rotate(45deg);
+    }
+    body[data-phase="ready"] :is(#start-campaign, .menu-tools button):focus-visible {
+      outline: 2px solid var(--menu-gold);
+      outline-offset: 3px;
+    }
+
+    @media (orientation: portrait) {
+      body[data-phase="ready"] #overlay {
+        --menu-side: clamp(20px, 7vw, 57px);
+        align-items: end;
+        padding: var(--top) max(var(--menu-side), env(safe-area-inset-right) + 16px) calc(var(--bottom) + 15px)
+          max(var(--menu-side), env(safe-area-inset-left) + 16px);
+        background: linear-gradient(0deg, #080c11 3%, #080c11ed 24%, #080c1150 55%, transparent 76%);
+      }
+      body[data-phase="ready"] .briefing { width: min(100%, 440px); }
+      body[data-phase="ready"] #status { font-size: clamp(38px, 12vw, 75px); }
+      body[data-phase="ready"] #brief { max-width: 25em; }
+      body[data-phase="ready"] :is(.actions, .menu-tools) { width: 100%; }
+      body[data-phase="ready"] .menu-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      body[data-phase="ready"] .menu-tools .utility-button { padding-inline: 7px; }
+      :is(#title-poster, #title-cinematic) {
+        height: min(72%, 740px);
+        object-position: 93% 51%;
+        mask-image: linear-gradient(black 67%, transparent 100%);
+      }
+    }
+    @media (orientation: landscape) and (max-height: 480px) {
+      body[data-phase="ready"] #overlay {
+        --menu-inline: clamp(25px, 5vw, 72px);
+        padding-block: max(16px, var(--top)) var(--bottom);
+        background: linear-gradient(90deg, #080c11fa, #080c11ed 22%, #080c118c 41%, transparent 76%);
+      }
+      body[data-phase="ready"] .briefing { width: clamp(216px, 39vw, 340px); }
+      body[data-phase="ready"] .landing-context { margin-bottom: 9px; font-size: 10px; }
+      body[data-phase="ready"] #status { margin-bottom: 10px; font-size: clamp(34px, 9.2vh, 52px); }
+      body[data-phase="ready"] #brief { font-size: 12px; line-height: 1.5; }
+      body[data-phase="ready"] .actions { margin-top: clamp(11px, 4vh, 21px); }
+      body[data-phase="ready"] #start-campaign { min-height: 46px; }
+      body[data-phase="ready"] .menu-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; margin-top: 6px; }
+      body[data-phase="ready"] .menu-tools .utility-button { padding-inline: 8px; }
+      :is(#title-poster, #title-cinematic) { object-position: 67% 75%; }
+    }
+    html[lang="en"] body[data-phase="ready"] #status {
+      max-width: 11ch;
+      font-size: clamp(40px, 5.8vw, 84px);
+      letter-spacing: -.025em;
+      white-space: normal;
+      text-wrap: balance;
+    }
+    html[lang="en"] #marker-text {
+      max-width: min(80vw, 310px);
+      white-space: normal;
+      text-align: center;
+    }
+    @media (orientation: landscape) and (max-height: 480px) {
+      html[lang="en"] body[data-phase="ready"] #status { font-size: clamp(30px, 8.2vh, 47px); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button, .joystick-puck { transition: none; }
+      #context-prompt kbd { animation: none; }
+      #mission-notice { transition: none; }
+    }
+  </style>
+</head>
+<body data-boot="loading" data-phase="ready" data-paused="false">
+  <img id="title-poster" src="__LUNAR_POSTER_DATA__" alt="" draggable="false">
+  <div id="viewport" aria-hidden="true"></div>
+  <video id="title-cinematic" muted loop playsinline preload="none" aria-hidden="true"></video>
+  <script id="title-media-data" type="application/octet-stream">__LUNAR_TITLE_VIDEO_DATA__</script>
+  <audio id="lunar-music" loop preload="none"></audio>
+  <script id="lunar-music-data" type="application/octet-stream">__LUNAR_MUSIC_DATA__</script>
+  <section id="initializing" aria-label="初始化" data-l10n-aria-label="Loading" aria-busy="true">
+    <div class="boot-readout">
+      <h2 data-l10n="Lunar Field Station">月面采集站</h2>
+      <progress id="boot-meter" max="100" value="0" aria-label="初始化进度" data-l10n-aria-label="Loading progress"></progress>
+      <p id="boot-status" role="status">准备启动</p>
+      <button type="button" id="boot-retry" class="utility-button" data-l10n="Reload" hidden>重新加载</button>
+    </div>
+  </section>
+
+  <header id="hud" aria-label="任务读数" data-l10n-aria-label="Mission telemetry">
+    <div class="mission-context">
+      <div class="hud-place" data-l10n="Lunar South Pole">月球南极勘探区</div>
+      <button type="button" id="pause" class="utility-button" aria-label="暂停" data-l10n-aria-label="Pause" title="暂停（Esc）" data-l10n-title="Pause (Esc)"><span aria-hidden="true"></span></button>
+    </div>
+    <div class="hud-status">
+      <div class="telemetry">
+        <dl class="hud-metrics">
+          <div class="metric">
+            <dt data-l10n="Samples">晶样</dt>
+            <dd>
+              <output id="score" aria-live="off">0 / 5</output>
+              <span class="sample-quality"><span data-l10n="Intact">完整</span> <output id="quality-count" aria-label="完整晶样" data-l10n-aria-label="Intact samples" aria-live="off">0</output></span>
+              <span class="sample-quality"><span data-l10n="Surveys">勘测</span> <output id="survey-count" aria-label="勘测记录" data-l10n-aria-label="Survey logs" aria-live="off">0 / 2</output></span>
+            </dd>
+          </div>
+          <div class="metric">
+            <dt data-l10n="Time left">剩余时间</dt>
+            <dd><output id="timer" aria-live="off">150</output> <span class="metric-unit" data-l10n="s">秒</span></dd>
+          </div>
+          <div class="metric">
+            <dt data-l10n="Speed">车速</dt>
+            <dd><output id="speed" aria-live="off">00</output> <span class="metric-unit">km/h</span></dd>
+          </div>
+        </dl>
+        <label class="meter-row energy-readout" for="energy-meter"><span id="energy-label">车载电量</span>
+          <progress id="energy-meter" max="1" value="1">100%</progress>
+          <output id="energy-percent" aria-live="off">100%</output>
+        </label>
+      </div>
+      <aside id="guide" aria-labelledby="guide-name" data-mode="objective" hidden>
+        <span class="companion-portrait" aria-hidden="true"></span>
+        <div>
+          <span id="guide-name" class="companion-call-sign" data-l10n="M-07 · Zhideng">M-07 · 枝灯</span>
+          <p id="objective" role="status">前往采样点</p>
+        </div>
+        <button type="button" id="guide-dismiss" class="utility-button" aria-label="关闭随行引导" title="关闭随行引导" data-l10n-aria-label="Turn off field guidance" data-l10n-title="Turn off field guidance">×</button>
+        <div id="guide-tip">
+          <h2 id="guide-heading"></h2>
+          <p id="guide-copy" aria-live="polite"></p>
+        </div>
+        <div id="mission-notice" role="status" data-visible="false">
+          <span id="mission-notice-copy"></span>
+        </div>
+      </aside>
+    </div>
+  </header>
+
+  <main id="overlay" aria-labelledby="status">
+    <div class="briefing">
+      <p class="landing-context" data-l10n="Lunar South Pole">月球南极</p>
+      <h1 id="status" aria-live="polite">月面采集站</h1>
+      <p id="brief">驾驶月球车，勘测南极地形或扩建基地。</p>
+      <p id="mission-debrief" hidden></p>
+      <div class="actions">
+        <button type="button" id="start-campaign" data-l10n="Start expedition">开始完整任务</button>
+        <button type="button" id="resume" data-l10n="Resume mission" hidden>继续任务</button>
+        <button type="button" id="restart" data-l10n="Restart mission" hidden>重新出发</button>
+        <button type="button" id="main-menu" data-l10n="Main menu" hidden>返回首页</button>
+      </div>
+      <nav class="menu-tools" aria-label="游戏菜单" data-l10n-aria-label="Game menu">
+        <button type="button" id="start-arcade" class="utility-button" data-l10n="60s Arcade">60秒极速采集</button>
+        <button type="button" id="settings-open" class="utility-button" data-l10n="Settings">设置</button>
+        <button type="button" id="manual-open" class="utility-button" data-l10n="Field manual">操作手册</button>
+      </nav>
+    </div>
+  </main>
+
+  <dialog id="settings" aria-labelledby="settings-title">
+    <h2 id="settings-title" data-l10n="Settings">游戏设置</h2>
+    <label class="locale-option" for="language-select">
+      <span data-l10n="Language">界面语言 / Language</span>
+      <select id="language-select">
+        <option value="zh-CN" lang="zh-CN">简体中文</option>
+        <option value="en" lang="en">English</option>
+      </select>
+    </label>
+    <div class="pause-audio">
+      <button type="button" id="music-toggle" class="utility-button" aria-label="音乐" data-l10n-aria-label="Music" aria-pressed="true"><span aria-hidden="true">♪</span> <span class="toggle-copy">音乐开</span></button>
+      <button type="button" id="audio-toggle" class="utility-button" aria-label="音效" data-l10n-aria-label="Sound effects" aria-pressed="true"><span class="toggle-copy">音效开</span></button>
+    </div>
+    <p class="music-credit">
+      <a href="https://www.scottbuckley.com.au/library/in-this-moment/" target="_blank" rel="noopener">In This Moment</a>
+      <span data-l10n="by Scott Buckley ·">— Scott Buckley ·</span>
+      <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>
+      <span data-l10n="· Re-encoded to AAC, looped in play.">· 转码为 AAC，游戏内循环播放。</span>
+    </p>
+    <div class="view-options">
+      <button type="button" id="action-camera-toggle" class="utility-button" aria-pressed="true">动作特写开</button>
+      <button type="button" id="debug-toggle" class="utility-button" aria-pressed="false" data-l10n="Render debug (F2)">渲染调试 (F2)</button>
+      <button type="button" id="fullscreen-toggle" class="utility-button" hidden>进入全屏</button>
+    </div>
+    <form method="dialog" class="manual-actions"><button class="utility-button" data-l10n="Back">返回</button></form>
+  </dialog>
+
+  <dialog id="manual" aria-labelledby="manual-title">
+    <h2 id="manual-title" data-l10n="Lunar field manual">月面操作手册</h2>
+    <h3 data-l10n="Driving and braking">驾驶与刹车</h3>
+    <p id="manual-drive" data-l10n="Drive with WASD or the arrow keys. Press Space to brake and Shift to boost. Move the mouse to look around. Esc pauses and releases the mouse. Click the scene to regain camera control.">WASD 或方向键驾驶，空格刹车，Shift 推进。移动鼠标观察，Esc 暂停并释放鼠标。如鼠标已释放，点击画面即可继续控制镜头。</p>
+    <h3 data-l10n="Sampling and surveying">采样与勘测</h3>
+    <p id="manual-sample" data-l10n="Stop and hold E to collect a sample. Use E near a survey instrument to take a reading. Look for solid dots on the radar for crystals and hollow dots for instruments.">停车后长按 E 取样。靠近仪器也用 E 完成读数。用雷达上的实心点找矿，空心点找勘测仪。</p>
+    <h3 data-l10n="Fabricating and installing equipment">在工作台制造</h3>
+    <p id="manual-build" data-l10n="Return to the landing zone with two samples and two survey logs. Stop at the workshop and press R to fabricate and load the kit. Stop at the build site, press R to preview the footing, then press R again to install. Hold E to calibrate the observatory after it powers up. Once the solar station is online, stop there to recharge.">完整任务先带两份晶样和两份勘测记录回着陆区。在工坊停车按 R 制造并装车。到施工点停车，按 R 预览地基，再按 R 启动安装。观测站通电后长按 E 校准。太阳能补给站建成后，停车即可补电。</p>
+    <h3 data-l10n="Observing Earth">拍摄地球</h3>
+    <p id="manual-earth" data-l10n="Find the observation point marked by a lilac diamond on the radar. Stop and press E to open the viewfinder. Scroll to zoom and use the side arrows to switch bands or open the wide view. Analyze and download images after capture.">前往雷达浅紫色菱形标出的观测台。停稳后按 E 打开取景器，滚轮变焦，两侧箭头切换波段与地球全景。拍摄后可查看分析并下载照片。</p>
+    <form method="dialog" class="manual-actions">
+      <button type="button" id="guide-toggle" class="utility-button" aria-pressed="true">随行引导开</button>
+      <button class="utility-button" data-l10n="Close manual">关闭手册</button>
+    </form>
+  </dialog>
+
+  <div id="mission-marker" class="mission-marker" hidden>
+    <span id="marker-arrow" aria-hidden="true"></span><span id="marker-text"></span>
+    <span id="context-prompt" hidden><kbd>E</kbd><span>长按取样</span></span>
+    <div id="context-progress" role="progressbar" aria-label="交互进度" data-l10n-aria-label="Action progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><span>0%</span></div>
+    <button type="button" id="interact" class="object-action" aria-label="交互" hidden>取样</button>
+    <button type="button" id="build-action" class="object-action" aria-label="建造" hidden>建造</button>
+  </div>
+  <figure class="navigation" aria-label="勘探雷达" data-l10n-aria-label="Survey radar">
+    <canvas id="radar" width="130" height="130"></canvas>
+    <button type="button" id="radar-toggle" aria-label="地图图例" data-l10n-aria-label="Map legend" aria-expanded="false" aria-controls="radar-legend"></button>
+    <figcaption id="radar-legend" class="radar-legend"><span data-l10n="Sample">晶样</span><span data-l10n="Base">基站</span><span data-l10n="Survey">勘测</span><span data-l10n="Patrol">巡逻</span></figcaption>
+  </figure>
+
+  <footer class="controls" aria-label="游戏操作" data-l10n-aria-label="Game controls">
+    <p id="look-lock" data-l10n="Click the scene to lock the camera">点击画面启用鼠标视角</p>
+    <div class="mobile-controls">
+      <div id="joystick" class="joystick" role="group" aria-label="驾驶摇杆，上推前进，下拉倒车，左右转向" data-l10n-aria-label="Drive joystick. Up to move forward, down to reverse, left or right to steer.">
+        <span class="joystick-puck" aria-hidden="true"></span>
+        <span class="joystick-caption" data-l10n="Drive" aria-hidden="true">驾驶</span>
+      </div>
+      <div class="touch-buttons">
+        <button type="button" id="brake-touch" class="touch-action" aria-label="刹车，停稳后长按倒车" data-l10n-aria-label="Brake. Stop first, then hold to reverse.">刹车</button>
+        <button type="button" id="boost" class="touch-action" aria-label="推进，单独长按可前进" data-l10n-aria-label="Boost. Hold to drive forward." data-l10n="Boost">推进</button>
+      </div>
+    </div>
+
+  </footer>
+
+  <!-- GAME_MODULE -->
+</body>
+</html>
