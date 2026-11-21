@@ -12,8 +12,8 @@ const cutWall = new THREE.MeshStandardMaterial({
   color: 0x455952, roughness: 0.91, side: THREE.DoubleSide, vertexColors: true,
 });
 const coreMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0x9fb9ac, emissive: 0x2d5e50, emissiveIntensity: 0.24, roughness: 0.28,
-  clearcoat: 0.72, clearcoatRoughness: 0.14, envMapIntensity: 1.35, flatShading: true,
+  color: 0xaef6de, emissive: 0x4ae8c2, emissiveIntensity: 1.15, roughness: 0.22,
+  clearcoat: 0.85, clearcoatRoughness: 0.12, envMapIntensity: 1.45, flatShading: true, toneMapped: false,
 });
 const fragmentGeometry = new THREE.DodecahedronGeometry(1, 0);
 const coreGeometry = new THREE.CylinderGeometry(1, 0.78, 1, 10);
@@ -145,6 +145,34 @@ export function createMiningEffects(scene, height) {
     broken.add(piece);
   }
   core.add(intact, broken);
+  // Dynamic flickering HDR cutting-arc PointLight + soft feathered vapor puffs & crisp thin resonance rings at the drill bite
+  const arcLight = new THREE.PointLight(0xffb464, 0, 2.6, 2);
+  scene.add(arcLight);
+  const puffCanvas = document.createElement("canvas");
+  puffCanvas.width = puffCanvas.height = 64;
+  const pCtx = puffCanvas.getContext("2d");
+  const pGrad = pCtx.createRadialGradient(32, 32, 3, 32, 32, 30);
+  pGrad.addColorStop(0, "rgba(255, 226, 178, 0.78)");
+  pGrad.addColorStop(0.38, "rgba(175, 232, 224, 0.34)");
+  pGrad.addColorStop(0.75, "rgba(130, 170, 168, 0.08)");
+  pGrad.addColorStop(1, "rgba(0, 0, 0, 0)");
+  pCtx.fillStyle = pGrad;
+  pCtx.fillRect(0, 0, 64, 64);
+  const puffTex = new THREE.CanvasTexture(puffCanvas);
+  const dustRings = Array.from({ length: 3 }, () => {
+    const mat = new THREE.MeshBasicMaterial({
+      map: puffTex, transparent: true, opacity: 0, side: THREE.DoubleSide,
+      depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.22), mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.visible = false;
+    scene.add(mesh);
+    return { mesh, mat };
+  });
+  let arcIntensity = 0;
+  let cutClock = 0;
+  const arcPos = new THREE.Vector3();
   const transform = new THREE.Object3D();
   const sparkDir = new THREE.Vector3();
   const sparkForward = new THREE.Vector3(0, 0, 1);
@@ -155,7 +183,10 @@ export function createMiningEffects(scene, height) {
   let sparkEmission = 0;
   let sequence = 0;
   function emit(position, rapid, dt) {
-    emission += dt * (rapid ? 34 : 21);
+    arcPos.copy(position);
+    arcIntensity = Math.min(1, arcIntensity + dt * 14);
+    cutClock += dt * (rapid ? 2.8 : 1.9);
+    emission += dt * (rapid ? 40 : 25);
     while (emission >= 1) {
       emission--;
       const i = sequence++;
@@ -170,22 +201,38 @@ export function createMiningEffects(scene, height) {
         turn: angle, tint: 0.42 + jitter * 0.52,
       });
     }
-    sparkEmission += dt * (rapid ? 46 : 26);
+    sparkEmission += dt * (rapid ? 58 : 34);
     while (sparkEmission >= 1) {
       sparkEmission--;
       const i = sequence++;
       const angle = i * 2.399963 + 0.7;
       const jitter = 0.5 + 0.5 * Math.cos(i * 53.17);
-      const speed = (0.68 + jitter * 1.18) * (rapid ? 1.25 : 1);
+      const speed = (0.72 + jitter * 1.35) * (rapid ? 1.28 : 1);
       if (sparkList.length === sparks.instanceMatrix.count) sparkList.shift();
       sparkList.push({
         x: position.x + Math.cos(angle) * 0.025, y: position.y + 0.028, z: position.z + Math.sin(angle) * 0.025,
-        vx: Math.cos(angle) * speed, vy: 0.52 + jitter * 0.95, vz: Math.sin(angle) * speed,
-        life: 0, maxLife: 0.18 + jitter * 0.24,
+        vx: Math.cos(angle) * speed, vy: 0.56 + jitter * 1.05, vz: Math.sin(angle) * speed,
+        life: 0, maxLife: 0.20 + jitter * 0.26,
       });
     }
   }
   function update(dt) {
+    arcIntensity = Math.max(0, arcIntensity - dt * 6.5);
+    if (arcIntensity > 0.02) {
+      arcLight.position.set(arcPos.x, arcPos.y + 0.08, arcPos.z);
+      arcLight.intensity = arcIntensity * (2.6 + Math.sin(cutClock * 38) * 1.15);
+      for (let i = 0; i < dustRings.length; i++) {
+        const phase = (cutClock + i / dustRings.length) % 1;
+        const { mesh, mat } = dustRings[i];
+        mesh.visible = true;
+        mesh.position.set(arcPos.x, arcPos.y + 0.025 + phase * 0.14, arcPos.z);
+        mesh.scale.setScalar(0.65 + phase * 2.4);
+        mat.opacity = arcIntensity * Math.sin(phase * Math.PI) * 0.34;
+      }
+    } else {
+      arcLight.intensity = 0;
+      for (const { mesh } of dustRings) mesh.visible = false;
+    }
     for (const [i, chip] of chipList.entries()) {
       if (chip.vy || chip.vx || chip.vz) {
         chip.vy -= LUNAR_GRAVITY * dt;
@@ -253,6 +300,9 @@ export function createMiningEffects(scene, height) {
   }
   function reset() {
     core.visible = false;
+    arcIntensity = 0;
+    arcLight.intensity = 0;
+    for (const { mesh } of dustRings) mesh.visible = false;
     chipList.length = chunks.count = sparkList.length = sparks.count = sequence = 0;
     emission = sparkEmission = 0;
   }

@@ -85,6 +85,10 @@ export function createLunarSurvey(scene, height) {
   const lerp = THREE.MathUtils.lerp;
   const smooth = THREE.MathUtils.smootherstep;
 
+  const surveyGroup = new THREE.Group();
+  surveyGroup.name = "campaign-survey-stations";
+  scene.add(surveyGroup);
+
   const stations = SURVEY_SITES.map(({ x, z }, index) => {
     const station = new THREE.Group();
     const ground = height(x, z);
@@ -92,7 +96,7 @@ export function createLunarSurvey(scene, height) {
     station.position.set(x, ground, z);
     station.rotation.y = yaw;
     station.name = index ? "坡脚光谱仪" : "浅层震动仪";
-    scene.add(station);
+    surveyGroup.add(station);
     function floor(dx, dz) {
       return height(x + dx * Math.cos(yaw) + dz * Math.sin(yaw),
         z - dx * Math.sin(yaw) + dz * Math.cos(yaw)) - ground;
@@ -194,25 +198,69 @@ export function createLunarSurvey(scene, height) {
       lens.finish();
     }
     housing.finish();
-    return { articulated, indicator, deployment: 0 };
+    // Interactive visual feedback: concentric seismic ground waves (index 0) or sweeping VNIR laser fan (index 1).
+    let fx;
+    if (index === 0) {
+      const rings = Array.from({ length: 3 }, () => {
+        const mat = new THREE.MeshBasicMaterial({
+          color: new THREE.Color().setRGB(0.45, 2.4, 2.2), toneMapped: false, transparent: true, opacity: 0,
+          side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        const mesh = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.22, 32), mat);
+        mesh.rotation.x = -TURN;
+        mesh.position.y = 0.04;
+        mesh.visible = false;
+        station.add(mesh);
+        return { mesh, mat };
+      });
+      fx = { rings };
+    } else {
+      const fanMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color().setRGB(0.35, 2.6, 2.3), toneMapped: false, transparent: true, opacity: 0,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      const fanGeo = new THREE.ConeGeometry(0.28, 1.35, 16, 1, true);
+      fanGeo.translate(0, -0.675, 0);
+      fanGeo.rotateX(TURN);
+      const fan = new THREE.Mesh(fanGeo, fanMat);
+      fan.position.set(0, 0, -0.14);
+      fan.visible = false;
+      articulated.add(fan);
+      fx = { fan, fanMat };
+    }
+    return { articulated, indicator, deployment: 0, fx };
   });
 
   function update(state, time, dt) {
-    for (const [index, { articulated, indicator }] of stations.entries()) {
+    for (const [index, { articulated, indicator, fx }] of stations.entries()) {
       const station = stations[index];
       const active = state.surveyHold && state.surveyIndex === index;
       const recorded = Boolean(state.surveyMask & (1 << index));
       station.deployment = lerp(station.deployment, active ? 1 : 0, 1 - Math.exp(-6 * dt));
       const progress = active ? state.surveyProgress : 0;
       const sample = smooth(progress, 0.22, 0.95);
-      indicator.emissiveIntensity = active ? 0.85 + 0.18 * Math.sin(time * 6.5) : recorded ? 0.22 : 0;
+      indicator.emissiveIntensity = active ? 1.45 + 0.45 * Math.sin(time * 9.5) : recorded ? 0.32 : 0;
       if (index === 0) {
-        articulated.position.y = 0.133 - station.deployment * smooth(progress, 0, 0.29) * 0.043;
+        const hammer = active ? Math.sin(time * 28) * 0.0045 * smooth(progress, 0.15, 0.35) : 0;
+        articulated.position.y = 0.133 - station.deployment * smooth(progress, 0, 0.29) * 0.043 + hammer;
+        for (let r = 0; r < fx.rings.length; r++) {
+          const { mesh, mat } = fx.rings[r];
+          mesh.visible = active && progress > 0.15;
+          if (mesh.visible) {
+            const wave = (time * 0.85 + r / fx.rings.length) % 1;
+            mesh.scale.setScalar(0.8 + wave * 6.5);
+            mat.opacity = (1 - wave) * 0.55;
+          }
+        }
       } else {
         articulated.rotation.x = station.deployment * (0.58 + 0.17 * sample);
         articulated.rotation.y = station.deployment * (sample - 0.5) * 0.64;
+        fx.fan.visible = active && progress > 0.12;
+        if (fx.fan.visible) {
+          fx.fanMat.opacity = (0.22 + 0.10 * Math.sin(time * 18)) * station.deployment;
+        }
       }
     }
   }
-  return { update };
+  return { update, group: surveyGroup };
 }

@@ -32,6 +32,10 @@ import { ARENA_LIMIT, BUILD_SAMPLES, BUILD_SURVEYS, DATA_TRANSFER_SECONDS, OBSER
 import { buildCrystalField, buildLunarTerrain, buildStationFurniture, createGlowFactory, createReflectionEnvironment, createSharedMaterials, terrainHeight as height } from "../world/lunar-world.mjs";
 import { createRadarRenderer } from "../ui/lunar-radar.mjs";
 import { createArcadeSprint, createCameraJuice } from "../simulation/lunar-arcade.mjs";
+import { createExtractionMode } from "../simulation/lunar-extraction.mjs";
+import { createOrbitalRaceMode } from "../simulation/lunar-race.mjs";
+import { createCampaignPlus } from "../simulation/lunar-campaign-plus.mjs";
+import { createHeroAssetPipeline } from "../world/lunar-hero-assets.mjs";
 import { createLunarDebugOverlay } from "../ui/lunar-debug-overlay.mjs";
 
 const locale = createLunarLocale();
@@ -68,7 +72,7 @@ const mobileGraphics = matchMedia("(pointer: coarse)").matches;
 const renderer = new THREE.WebGLRenderer({ antialias: !mobileGraphics, powerPreference: "high-performance" });
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.shadowMap.autoUpdate = !mobileGraphics;
+renderer.shadowMap.autoUpdate = false;
 renderer.toneMapping = THREE.AgXToneMapping;
 renderer.toneMappingExposure = 1.16;
 renderer.transmissionResolutionScale = mobileGraphics ? 0.57 : 0.80;
@@ -97,7 +101,7 @@ scene.environment = createReflectionEnvironment(renderer);
 scene.environmentIntensity = 0.45;
 
 await bootStep(28, t("烘制月壤、远坡与科研站", "Preparing terrain and the field station"));
-const { ground, tallRockFixtures, sampleRockSupport, lowRockSupports, wheelSurface } = buildLunarTerrain(scene, renderer, camera, sun, { mobile: mobileGraphics });
+const { ground, tallRockFixtures, sampleRockSupport, lowRockSupports, wheelSurface, applyProceduralSector } = buildLunarTerrain(scene, renderer, camera, sun, { mobile: mobileGraphics });
 const ambientActivity = createLunarAmbientActivity(scene, height, { sunlight: solarKeyOffset });
 const sharedMats = createSharedMaterials();
 const { silver, slateMetal, ice, amber, roadMarks } = sharedMats;
@@ -137,10 +141,13 @@ await bootStep(54, t("检查工坊、车辆和巡检设备", "Preparing rover an
 const base = createLunarBase({ height, glow, displayProgressStep: mobileGraphics ? 5 : 1 });
 scene.add(base.station);
 const workshopPoint = { x: base.workshopPoint.x, z: base.workshopPoint.z, radius: base.visitRadius, access: base.workshopAccess };
+const campaignWorldGroup = new THREE.Group();
+campaignWorldGroup.name = "campaign-world-props";
+scene.add(campaignWorldGroup);
 function buildSite(site, index, make, name, nameEn) {
-  const structure = make(scene, height, site);
+  const structure = make(campaignWorldGroup, height, site);
   return { site: { ...site, index, name, nameEn }, structure,
-    preview: createFoundationPreview(scene, wheelSurface, site, structure.obstacle, t) };
+    preview: createFoundationPreview(campaignWorldGroup, wheelSurface, site, structure.obstacle, t) };
 }
 const relayPads = [RELAY_SITE, { x: 20.5, z: -14.7, radius: 1.95 }]
   .map((site, i) => buildSite(site, i, createRelay, `中继地基 ${i ? "B" : "A"}`, `Relay site ${i ? "B" : "A"}`));
@@ -162,7 +169,7 @@ const scout = createScoutDrone(scene, height, { occluders: [base.station], scanT
 ] });
 const hazard = scout.hazard;
 
-const { solarBanks, padRings, dockLights, receiver, dataDestination } = buildStationFurniture(scene, sharedMats, glow);
+const { solarBanks, solarObstacles, padRings, dockLights, receiver, dataDestination } = buildStationFurniture(scene, sharedMats, glow);
 
 const roverRig = createLunarRover({ glow });
 const { rover, wheelHubs, updateSuspension, updateSampler, canReachSample, getSamplerTip, getSamplerStorage, resetSampler } = roverRig;
@@ -183,16 +190,96 @@ let activeCut = null;
 let clearingCut = -1;
 let storedSamples = 0;
 let bitEngaged = false;
-const { crystals, crystalMeshes } = buildCrystalField(scene, sharedMats);
+const { crystals, crystalMeshes, crystalFieldGroup } = buildCrystalField(scene, sharedMats);
 const fieldSurvey = createLunarSurvey(scene, height);
-const earthTelescope = installEarthTelescope(scene, height, earthDirection);
+const earthTelescope = installEarthTelescope(campaignWorldGroup, height, earthDirection);
 const fixtures = [...crystals, ...SURVEY_SITES.map(site => ({ x: site.x, z: site.z, radius: 0.29 })),
-  base.obstacle, earthTelescope, { x: receiver.position.x, z: receiver.position.z, radius: 0.19 },
+  base.obstacle, earthTelescope, ...solarObstacles, { x: receiver.position.x, z: receiver.position.z, radius: 0.19 },
   ...relayPads.map(pad => pad.structure.obstacle),
   ...observatoryPads.map(pad => pad.structure.obstacle), ...tallRockFixtures];
 const poweredFixtures = [...fixtures, powerPad.structure.obstacle];
+let extractionFixtures = [base.obstacle, ...solarObstacles, { x: receiver.position.x, z: receiver.position.z, radius: 0.19 }];
+function setCampaignWorldVisible(visible) {
+  campaignWorldGroup.visible = visible;
+  crystalFieldGroup.visible = visible;
+  fieldSurvey.group.visible = visible;
+}
 const arcade = createArcadeSprint(scene, height);
 const cameraJuice = createCameraJuice();
+let extractionTargetGoal = null;
+let hitStopTimer = 0;
+const speedLinesFx = document.querySelector("#speed-lines-fx");
+const extraction = createExtractionMode({
+  scene, camera, height, t,
+  onThrusterTheme: theme => roverRig.setThrusterTheme?.(theme),
+  onChassisChange: id => {
+    roverRig.setChassis?.(id);
+    const showContacts = !race.active && id !== "ufo";
+    tireContacts.forEach(p => { p.mesh.visible = showContacts; });
+  },
+  onHitStop: sec => { hitStopTimer = Math.max(hitStopTimer, sec); },
+  onPauseChange(isModal) {
+    if (isModal && document.pointerLockElement === renderer.domElement) {
+      cameraWasLocked = false;
+      document.exitPointerLock();
+    }
+    releaseInputs();
+    if (isModal) audio.drive({ active: false });
+  },
+  onRestartRun: () => { begin("extraction"); enterPlayView(); },
+  onExitMenu: () => begin("campaign", false),
+  onJuice: ({ crit, tier }) => {
+    playCue("combo", crit ? 1.0 : tier / 4);
+    cameraJuice.impulse(crit ? 0.45 : 0.22, crit ? 3.4 : 1.6);
+  },
+  onSectorTerrain: (seed, biomeIndex) => {
+    const res = applyProceduralSector(seed, biomeIndex);
+    extractionFixtures = [base.obstacle, { x: receiver.position.x, z: receiver.position.z, radius: 0.19 }, ...res.fixtures];
+    tracks.reset();
+    return res;
+  },
+});
+const campaignPlus = createCampaignPlus({
+  scene,
+  height,
+  sun,
+  roverRig,
+  dataDestination,
+  t,
+  qaMode: Boolean(LUNAR_QA),
+  onAwardCoins: (coins, source) => extraction.awardExternalCoins?.(coins, source),
+  onJuice({ crit, tier }) {
+    playCue(crit ? "combo" : "checkpoint", tier >= 3 ? 1 : 0.65);
+    cameraJuice.impulse(crit ? 0.36 : 0.18, crit ? 3.0 : 2.1);
+  },
+  onRocketFinished() {
+    showPhase();
+  },
+});
+const race = createOrbitalRaceMode({
+  scene, camera, roverRig,
+  createRivalRover: () => createLunarRover({ glow }),
+  t,
+  onPauseChange(isModal) {
+    if (isModal && document.pointerLockElement === renderer.domElement) {
+      cameraWasLocked = false;
+      document.exitPointerLock();
+    }
+    releaseInputs();
+    if (isModal) audio.drive({ active: false });
+  },
+  onJuice: ({ crit, tier }) => {
+    playCue(crit ? "boost" : "combo", crit ? 1.0 : Math.min(1, (tier || 1) / 3));
+  },
+  onHitStop: sec => { hitStopTimer = Math.max(hitStopTimer, sec); },
+  onFinishCoins: (amount, source) => extraction.awardExternalCoins(amount, source),
+  onOpenHangar: () => {
+    begin("extraction");
+    extraction.openGarage();
+  },
+  onExitMenu: () => begin("campaign", false),
+  onMapBiomeChange: (seed, biomeIndex) => applyProceduralSector(seed, biomeIndex),
+});
 
 const tracks = createLunarTracks(ground.material, { extent: ARENA_LIMIT + 2 });
 
@@ -207,6 +294,8 @@ function wheelGround(x, z, cosine, sine) {
 }
 
 const startCampaign = document.querySelector("#start-campaign");
+const startExtraction = document.querySelector("#start-extraction");
+const startRace = document.querySelector("#start-race");
 const startArcade = document.querySelector("#start-arcade");
 const debugToggle = document.querySelector("#debug-toggle");
 const mainMenuButton = document.querySelector("#main-menu");
@@ -246,19 +335,25 @@ const radar = document.querySelector("#radar");
 const radarRenderer = createRadarRenderer(radar);
 const radarToggle = document.querySelector("#radar-toggle");
 const navigation = radar.closest(".navigation");
+let earthPhotographed = false;
 const earthObservatory = bindLunarEarthObservatory({
   earth: earthDirection, sun: solarKeyOffset, isTouch: () => touchDevice,
   onOpen() {
     releaseInputs();
     setRadarLegend(false);
     audio.drive();
+    campaignPlus?.markEarthObserved?.();
     if (document.pointerLockElement !== renderer.domElement) return;
     cameraWasLocked = false;
     document.exitPointerLock();
   },
   onClose: requestCameraLock,
   t,
-  onArchived: () => missionNotices.post("earth-photo", ["地球观测图像已归档", "Earth image archived"], "result", motionTime),
+  onArchived: () => {
+    earthPhotographed = true;
+    campaignPlus?.markEarthArchived?.();
+    missionNotices.post("earth-photo", ["地球观测图像已归档", "Earth image archived"], "result", motionTime);
+  },
 });
 
 function setRadarLegend(expanded) {
@@ -368,7 +463,7 @@ function switchInput(touch) {
 let cameraWasLocked = false;
 let cameraUnlockedAt = -Infinity;
 function requestCameraLock() {
-  if (touchDevice || state.phase !== "playing" || paused || document.pointerLockElement === renderer.domElement) return;
+  if (touchDevice || state.phase !== "playing" || paused || race.active || extraction.modalOpen || document.pointerLockElement === renderer.domElement) return;
   // Browsers either return a Promise or report refusal through pointerlockerror.
   try { renderer.domElement.requestPointerLock?.()?.catch(() => {}); } catch { /* Canvas remains available to click again. */ }
 }
@@ -402,6 +497,33 @@ function openEarthObservatory() {
 }
 document.addEventListener("keydown", (event) => {
   if (onboarding.manualOpen || settings.open || earthObservatory.open) return;
+  if (state.phase === "ready" && ["ArrowUp", "ArrowDown", "KeyW", "KeyS", "ArrowLeft", "ArrowRight"].includes(event.code)) {
+    const items = [...document.querySelectorAll("#overlay .actions button:not([hidden]), #overlay .menu-tools button:not([hidden])")];
+    if (items.length) {
+      event.preventDefault();
+      const idx = items.indexOf(document.activeElement);
+      const dir = (event.code === "ArrowUp" || event.code === "KeyW" || event.code === "ArrowLeft") ? -1 : 1;
+      const next = idx < 0 ? 0 : (idx + dir + items.length) % items.length;
+      items[next].focus();
+      return;
+    }
+  }
+  if (extraction.modalOpen || race.finished || race.state?.mapSelectOpen) return;
+  if (race.active && event.code === "KeyM" && !event.repeat) {
+    event.preventDefault();
+    race.openMapSelectModal();
+    return;
+  }
+  if (race.active && event.code === "Escape" && !event.repeat) {
+    event.preventDefault();
+    race.stop();
+    begin("campaign", false);
+    return;
+  }
+  if (event.code === "KeyE" && !event.repeat && extraction.active && extraction.triggerCritAttempt()) {
+    event.preventDefault();
+    return;
+  }
   if (event.code === "KeyE" && !event.repeat && openEarthObservatory()) {
     event.preventDefault();
     return;
@@ -513,6 +635,7 @@ function applyAudioSettings() {
   musicToggle.setAttribute("aria-pressed", String(musicEnabled));
   musicToggle.querySelector(".toggle-copy").textContent = musicEnabled ? t("音乐开", "Music on") : t("音乐关", "Music off");
   audio.setMusicEnabled(musicEnabled);
+  race.setAudioSettings?.({ sound: soundEnabled, music: musicEnabled });
 }
 const audioPreferencesKey = "selene-audio-settings";
 try {
@@ -563,6 +686,8 @@ function showPhase() {
   setTitleActive(state.phase === "ready" && document.body.dataset.boot === "ready");
   overlay.hidden = state.phase === "playing" && !paused;
   startCampaign.hidden = state.phase !== "ready";
+  if (startExtraction) startExtraction.hidden = state.phase !== "ready";
+  if (startRace) startRace.hidden = state.phase !== "ready";
   if (startArcade) startArcade.hidden = state.phase !== "ready";
   debrief.hidden = state.phase !== "won";
   mainMenuButton.hidden = state.phase === "ready" || (state.phase === "playing" && !paused);
@@ -635,18 +760,56 @@ function begin(mission, playing = true) {
     audio.drive();
   }
   const isArcade = mission === "arcade";
-  state = createState(height(0, 0), isArcade ? "survey" : mission);
+  const isExtraction = mission === "extraction";
+  const isRace = mission === "race";
+  state = createState(height(0, 0), isArcade || isExtraction || isRace ? "survey" : mission);
   if (isArcade) state.mission = "arcade";
+  if (isExtraction) state.mission = "extraction";
+  if (isRace) state.mission = "race";
   state.phase = playing ? "playing" : "ready";
   if (isArcade && playing) arcade.start(state);
   else arcade.stop();
+  setCampaignWorldVisible(!((isExtraction || isRace) && playing));
+  campaignPlus.reset(!isArcade && !isExtraction && !isRace && playing);
+  if (isExtraction && playing) extraction.start(state);
+  else extraction.stop();
+  const backdropGroup = scene.getObjectByName("lunar-backdrop");
+  if (isRace && playing) {
+    if (backdropGroup) {
+      for (let i = 1; i < backdropGroup.children.length; i++) backdropGroup.children[i].position.y = -32;
+    }
+    camera.far = 480;
+    camera.updateProjectionMatrix();
+    extraction.applyActiveChassis();
+    tireContacts.forEach(p => { p.mesh.visible = false; });
+    race.start(extraction.activeChassis);
+  } else {
+    race.stop();
+    ground.visible = true;
+    base.station.visible = true;
+    receiver.visible = true;
+    if (backdropGroup) {
+      for (let i = 1; i < backdropGroup.children.length; i++) backdropGroup.children[i].position.y = 0;
+    }
+    camera.far = 300;
+    camera.updateProjectionMatrix();
+    if (!isExtraction) {
+      roverRig.setChassis?.("explorer");
+      roverRig.setThrusterTheme?.("cyan");
+      roverRig.setVisualEvolution?.({});
+    }
+    const showContacts = roverRig.getChassis?.() !== "ufo";
+    tireContacts.forEach(p => { p.mesh.visible = showContacts; });
+  }
+  if (speedLinesFx) speedLinesFx.style.opacity = "0";
+  hitStopTimer = 0;
   cameraJuice.reset();
-  if (playing) audio.drive({ active: true });
+  if (playing) audio.drive({ active: !isRace });
   scout.reset();
   companion.reset();
   uplink.reset();
   roverRig.aimDataDish(null, 1);
-  rover.rotation.set(0, state.yaw, 0, "YXZ");
+  if (!isRace) rover.rotation.set(0, state.yaw, 0, "YXZ");
   motionTime = 0;
   cameraOrbit.yaw = cameraOrbit.pitch = cameraOrbit.idle = 0;
   recentInstallation = null;
@@ -662,6 +825,7 @@ function begin(mission, playing = true) {
   lastRoughCue = -1;
   missionNotices.reset();
   scoutLines.reset();
+  earthPhotographed = false;
   earthObservatory.reset();
   tracks.reset();
   lunarDust.reset();
@@ -689,6 +853,15 @@ startCampaign.addEventListener("click", () => {
   begin("campaign");
   enterPlayView();
 });
+startExtraction?.addEventListener("click", () => {
+  begin("extraction");
+  enterPlayView();
+});
+startRace?.addEventListener("click", () => {
+  begin("race");
+  race.openMapSelectModal();
+  if (touchDevice) fullscreen.enterByDefault();
+});
 startArcade?.addEventListener("click", () => {
   begin("arcade");
   enterPlayView();
@@ -705,7 +878,12 @@ resumeButton.addEventListener("click", () => {
 });
 
 function drawRadar() {
-  radarRenderer.draw({ state, crystals, hazard, navigationGoal, motionTime, arcadeTarget: arcade.target });
+  radarRenderer.draw({
+    state, crystals, hazard, navigationGoal, motionTime, arcadeTarget: arcade.target,
+    extractionNodes: extraction.nodes, extractionCrates: extraction.crates,
+    extractionGates: extraction.gates, extractionUnbanked: extraction.unbankedCoins,
+    extractionStormRadius: extraction.active ? extraction.stormRadius : null,
+  });
 }
 function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
@@ -772,7 +950,8 @@ function closestGoal(choices) {
 }
 
 function currentGoal() {
-  if (paused || state.phase !== "playing") return null;
+  if (paused || state.phase !== "playing" || extraction.modalOpen) return null;
+  if (extraction.active && extractionTargetGoal) return extractionTargetGoal;
   if (arcade.active && arcadeTargetGoal) {
     return { ...arcadeTargetGoal, name: t(arcadeTargetGoal.name, arcadeTargetGoal.nameEn) };
   }
@@ -807,7 +986,8 @@ function currentGoal() {
   } else if (!nearBuild && isNearEarthObservatory(state)) {
     const ready = canObserveEarth(state);
     return { ...EARTH_SITE, name: t(EARTH_SITE.name, "Earth observatory"), ready, distance: distanceTo(EARTH_SITE), touchAction: touchDevice && ready,
-      control: ready ? { key: "E", label: t("打开望远镜", "Open telescope") } : null, prompt: ready ? null : t("停车后观测地球", "Stop to observe Earth") };
+      control: ready ? { key: "E", label: t("打开望远镜拍摄地球（彩蛋）", "Open telescope · Photo Earth") } : null,
+      prompt: ready ? null : t("停稳后按 E 拍摄地球", "Stop to photograph Earth") };
   } else if (build) {
     const workshop = build === workshopPoint;
     const blocked = constructionCheck?.visible && !constructionCheck.valid;
@@ -847,7 +1027,7 @@ function nextCompanionTarget(goal) {
   const { yaw, x, z } = state;
   const towardEarth = -(EARTH_SITE.x - x) * Math.sin(yaw) - (EARTH_SITE.z - z) * Math.cos(yaw);
   // The optional telescope can be spotted on approach, before its E prompt appears.
-  if (earthRange < 5.8 && towardEarth > 0.52 * earthRange && !goal?.control && (goal?.distance ?? Infinity) > earthRange) {
+  if (earthRange < 9.2 && towardEarth > 0.44 * earthRange && !goal?.control && (goal?.distance ?? Infinity) > earthRange) {
     goal = { ...EARTH_SITE, distance: earthRange };
   }
   if (!goal) return null;
@@ -870,7 +1050,14 @@ function reportCompanionScan(target) {
 }
 
 function updateHud() {
-  if (arcade.active) {
+  if (extraction.active) {
+    if (scoreMetricLabel) setText(scoreMetricLabel, t("待撤离", "Loot"));
+    if (qualityLabel) setText(qualityLabel, t("货舱", "Cargo"));
+    if (surveyLabel) setText(surveyLabel, t("车库币", "Bank"));
+    setText(score, `${extraction.unbankedCoins}`);
+    setText(qualityCount, `${extraction.cargoCount}/${extraction.maxCargo}`);
+    setText(surveyCount, `${extraction.bankCoins}`);
+  } else if (arcade.active) {
     if (scoreMetricLabel) setText(scoreMetricLabel, t("得分", "Score"));
     if (qualityLabel) setText(qualityLabel, t("连击", "Combo"));
     if (surveyLabel) setText(surveyLabel, t("信标", "Beacons"));
@@ -912,9 +1099,11 @@ function updateHud() {
     : t(`勘测 · 晶样 ${Math.min(state.collected, SURVEY_MIN_ORE)}/${SURVEY_MIN_ORE} · 读数 ${state.surveyCount}/${SURVEY_REQUIRED}`, `Survey · Samples ${Math.min(state.collected, SURVEY_MIN_ORE)}/${SURVEY_MIN_ORE} · Readings ${state.surveyCount}/${SURVEY_REQUIRED}`);
   const transferStatus = state.dataTransfer === "survey" ? t("正在上传初勘记录", "Uploading the preliminary survey")
     : state.dataTransfer === "return" ? t("正在回传任务数据", "Sending the expedition log") : null;
-  const arcadeStatus = arcade.active
-    ? t(`极速采集 · 连击 ×${arcade.combo} · 穿越高亮信标或低重力飞跃`, `Arcade Sprint · Combo ×${arcade.combo} · Hit glowing beacons or launch off craters`)
-    : null;
+  const arcadeStatus = extraction.active
+    ? t(`肉鸽远征 · 采矿按 E 暴击 / 破译空投抽卡 / 过门叠连击 · 回着陆区撤离或加注深潜`, `Roguelite Extraction · E to Crit / Crack Crates / Fever Gates · Return to Extract or Push Deeper`)
+    : arcade.active
+      ? t(`极速采集 · 连击 ×${arcade.combo} · 穿越高亮信标或低重力飞跃`, `Arcade Sprint · Combo ×${arcade.combo} · Hit glowing beacons or launch off craters`)
+      : null;
   setText(objective, arcadeStatus ?? transferStatus ?? buildObjective[state.buildStage] ?? (state.campaignStage === "survey" ? surveyGoal : destination));
   timer.dataset.urgent = String(state.time <= 10);
   energyMeter.value = state.energy;
@@ -953,7 +1142,7 @@ function drivingFov() {
   return camera.aspect < 0.72 ? 58 : camera.aspect < 1 ? 52 : touchDevice ? 46 : 43;
 }
 let qualityTier = mobileGraphics ? "low" : "high";
-let shadowThrottleMs = mobileGraphics ? 48 : 0;
+let shadowThrottleMs = mobileGraphics ? 48 : 28;
 let arcadeTargetGoal = null;
 const viewportSize = new THREE.Vector2();
 function resize() {
@@ -963,8 +1152,8 @@ function resize() {
   camera.fov = drivingFov();
   camera.updateProjectionMatrix();
   const mobileRatio = Math.min(1.10, Math.sqrt(420000 / (width * height)));
-  const tierMax = qualityTier === "low" ? 1.0 : qualityTier === "balanced" ? 1.35 : 1.6;
-  const ratio = Math.min(window.devicePixelRatio, mobileGraphics ? Math.min(mobileRatio, tierMax) : touchDevice ? Math.min(1.35, tierMax) : tierMax);
+  const tierMax = qualityTier === "low" ? 1.0 : qualityTier === "balanced" ? 1.2 : 1.35;
+  const ratio = Math.min(window.devicePixelRatio, mobileGraphics ? Math.min(mobileRatio, tierMax) : touchDevice ? Math.min(1.25, tierMax) : tierMax);
   renderer.getSize(viewportSize);
   if (viewportSize.x !== width || viewportSize.y !== height || renderer.getPixelRatio() !== ratio) {
     renderer.setDrawingBufferSize(width, height, ratio);
@@ -974,8 +1163,8 @@ function resize() {
 function applyQualityTier(tier) {
   qualityTier = tier;
   lighting.setBloomEnabled(tier !== "low");
-  lighting.setOcclusionScale?.(tier === "high" ? 0.50 : tier === "balanced" ? 0.40 : 0.32);
-  shadowThrottleMs = tier === "low" ? 48 : tier === "balanced" ? 24 : 0;
+  lighting.setOcclusionScale?.(tier === "high" ? 0.38 : tier === "balanced" ? 0.32 : 0.26);
+  shadowThrottleMs = tier === "low" ? 48 : tier === "balanced" ? 33 : 28;
   resize();
 }
 const debugOverlay = createLunarDebugOverlay({
@@ -990,6 +1179,24 @@ debugToggle?.addEventListener("click", () => {
   debugToggle.setAttribute("aria-pressed", String(next));
   if (next && settings.open) settings.close();
 });
+const heroAssets = createHeroAssetPipeline();
+void heroAssets.attachFromUrlParams({ rover });
+window.__lunarHeroAssets = heroAssets;
+window.__lunarModes = {
+  openHangar: () => { if (!extraction.active) begin("extraction"); extraction.openGarage(); },
+  triggerTakedown: (idx = 0) => race.triggerTakedownForTest?.(idx),
+  triggerRampJump: (withShift = false) => race.triggerRampJumpForTest?.(withShift),
+  triggerFinish: () => race.triggerFinishForTest?.(),
+  triggerSonar: () => campaignPlus.triggerSonar(rover.position),
+  triggerFlare: () => campaignPlus.triggerSolarFlare(),
+  triggerMeteor: () => campaignPlus.triggerMeteorEvent(rover.position),
+  triggerRocket: () => campaignPlus.triggerRocketFinale(),
+  openEarthTelescope: () => earthObservatory.show(),
+  setShield: v => campaignPlus.setShieldForTest?.(v),
+  get campaignPlus() { return campaignPlus.state; },
+  get extraction() { return { active: extraction.active, garageOpen: extraction.garageOpen, chassis: extraction.activeChassis, coins: extraction.bankCoins }; },
+  get race() { return race.state; },
+};
 window.__lunarDebug = {
   setVisible: v => debugOverlay.setVisible(v),
   setMode: m => debugOverlay.setMode(m),
@@ -1131,7 +1338,7 @@ function updateMining(dt, target) {
         storedSamples++;
         cargo = null;
       }
-    } else if (cargo.elapsed > 2.3) {
+    } else if (cargo.elapsed > (LUNAR_QA ? 2.3 : 3.8)) {
       miningEffects.core.visible = false;
       cargo = null;
       playCue("sample");
@@ -1206,7 +1413,7 @@ function updateRover(dt, controls) {
   const target = state.scanHold && !cargo ? crystalMeshes[state.scanIndex]?.boreSurface : null;
   if (!construction.update(state.buildStage, state.buildProgress)) {
     updateSampler?.(dt, { active: Boolean(target), progress: state.scanProgress, target,
-      mode: state.scanMode, delivering: Boolean(cargo) });
+      mode: state.scanMode, delivering: Boolean(cargo), smoothRetract: !LUNAR_QA });
   }
   updateMining(dt, target);
   if (dt > 0) tracks.flush(dt);
@@ -1284,6 +1491,17 @@ function updateCamera(dt, driving) {
       targetPosition.copy(titleCameraPosition);
       lookAt.copy(titleCameraTarget);
     }
+  } else if (extraction.garageOpen) {
+    // Live 3D Hangar Showroom Camera: frames the Hero Rover cleanly in the UPPER 42% (portrait) or LEFT 45% (landscape)!
+    const orbitA = visualTime * 0.34 + 0.65;
+    const rad = portrait ? 4.15 : 3.05;
+    const cx = rover.position.x + Math.sin(orbitA) * rad;
+    const cz = rover.position.z + Math.cos(orbitA) * rad;
+    const rightX = Math.cos(orbitA);
+    const rightZ = -Math.sin(orbitA);
+    const shift = portrait ? 0 : 0.85;
+    targetPosition.set(cx, Math.max(rover.position.y + (portrait ? 1.55 : 1.12), height(cx, cz) + 0.58), cz);
+    lookAt.set(rover.position.x + rightX * shift, rover.position.y + (portrait ? -0.78 : 0.52), rover.position.z + rightZ * shift);
   } else {
     const cosine = Math.cos(rover.rotation.y), sine = Math.sin(rover.rotation.y);
     const cameraDistance = portrait ? 5.9 : 4.85;
@@ -1337,7 +1555,8 @@ function updateCamera(dt, driving) {
     camera.position.add(juice.offset);
   }
   camera.lookAt(cameraTarget);
-  const targetFov = (frame?.fov ?? drivingFov()) + (frame?.mix > 0.3 ? 0 : juice.fovOffset);
+  const feverFov = extraction.active && extraction.combo >= 4 ? 4.5 : 0;
+  const targetFov = (frame?.fov ?? drivingFov()) + (frame?.mix > 0.3 ? 0 : juice.fovOffset + feverFov);
   const fov = THREE.MathUtils.damp(camera.fov, targetFov, 6, dt);
   if (Math.abs(fov - camera.fov) > 0.008) {
     camera.fov = fov;
@@ -1357,7 +1576,7 @@ renderer.domElement.addEventListener("webglcontextrestored", () => {
 renderer.setAnimationLoop((now) => {
   const frameStart = performance.now();
   const hidden = document.hidden;
-  const dt = lastFrame === undefined || hidden || paused ? 0 : Math.min((now - lastFrame) / 1000, 0.065);
+  const rawDt = lastFrame === undefined || hidden || paused ? 0 : Math.min((now - lastFrame) / 1000, 0.065);
   lastFrame = now;
   if (earthObservatory.open) return;
   if (document.body.dataset.boot === "ready") {
@@ -1366,7 +1585,32 @@ renderer.setAnimationLoop((now) => {
   }
   if (state.phase === "ready") titleStaticRendered = true;
   redrawPausedScene = false;
-  visualTime += dt;
+  let dt = extraction.modalOpen ? 0 : rawDt;
+  if (hitStopTimer > 0 && rawDt > 0) {
+    hitStopTimer = Math.max(0, hitStopTimer - rawDt);
+    dt *= 0.06;
+  }
+  visualTime += extraction.garageOpen ? rawDt : dt;
+
+  // Step 3C: Orbital Mag-Lev GP Racing Mode!
+  if (race.active) {
+    const stick = joystick.read();
+    const raceInputs = {
+      throttle: held("ArrowUp", "KeyW") - held("ArrowDown", "KeyS") || stick.throttle,
+      steer: held("ArrowRight", "KeyD") - held("ArrowLeft", "KeyA") || stick.steer,
+      nitro: inputs.has("ShiftLeft") || inputs.has("ShiftRight"),
+      shockwave: inputs.has("Space"),
+    };
+    const rFx = race.update(rawDt, visualTime, raceInputs);
+    if (speedLinesFx && rFx) {
+      speedLinesFx.dataset.tone = rFx.shockwave ? "shockwave" : "nitro";
+      speedLinesFx.style.opacity = String(Number(rFx.speedFx.toFixed(3)));
+    }
+    camera.updateMatrixWorld();
+    mainRenderCalls = lighting.render();
+    debugOverlay.update({ now, frameMs: performance.now() - frameStart, drawCalls: mainRenderCalls, state });
+    return;
+  }
   const previousPhase = state.phase;
   const prevHits = state.hits, prevCollected = state.collected;
   const prevCampaignStage = state.campaignStage, prevPower = state.powerOnline;
@@ -1402,8 +1646,17 @@ renderer.setAnimationLoop((now) => {
     committedConstruction: construction.stage,
   });
   if (state.dataTransfer) Object.assign(controls, { throttle: 0, steer: 0, brake: true, boost: false, interact: false, build: false });
-  step(state, controls, crystals, hazard, dt, wheelSurface, checkSamplerAccess, canAdvanceCut, SURVEY_SITES, state.powerOnline ? poweredFixtures : fixtures,
+  const activeCrystals = extraction.active ? [] : crystals;
+  const activeSurveySites = extraction.active ? [] : SURVEY_SITES;
+  const activeFixtures = extraction.active ? extractionFixtures : (state.powerOnline ? poweredFixtures : fixtures);
+  step(state, controls, activeCrystals, hazard, dt, wheelSurface, checkSamplerAccess, canAdvanceCut, activeSurveySites, activeFixtures,
     selectedRelay.site, workshopPoint, selectedObservatory.site);
+  if (extraction.active && state.phase === "lost") state.phase = "playing";
+  if (extraction.active && state.phase === "playing" && !extraction.modalOpen) {
+    extractionTargetGoal = extraction.update(state, dt, visualTime, rover.position, hazard);
+  } else {
+    extractionTargetGoal = null;
+  }
   if (arcade.active && state.phase === "playing") {
     arcadeTargetGoal = arcade.update(state, dt, visualTime, {
       hazard,
@@ -1495,13 +1748,38 @@ renderer.setAnimationLoop((now) => {
   }
   if (state.surveyCount > prevSurveyCount || state.collected > prevCollected) touchTask = null;
   if (state.returnEligible && !prevEligible) playCue("return");
-  if (state.collected !== prevCollected && !arcade.active) {
+  if (state.collected !== prevCollected && !arcade.active && !extraction.active) {
     cargo = { index: state.scanIndex, mode: state.scanMode, elapsed: 0, transfer: 0 };
     cameraJuice.impulse(0.24);
     missionNotices.post(`sample:${state.collected}`, [`晶样已采集 · ${state.collected} 份`, `Samples collected · ${state.collected}`], "result", motionTime);
   }
   updateRover(dt, controls);
-  roverRig.setBoostVisual?.(state.boosting && state.phase === "playing" && !paused, dt, visualTime);
+  const visDt = extraction.garageOpen ? rawDt : dt;
+  roverRig.setBoostVisual?.(
+    (state.boosting && state.phase === "playing" && !paused) || (extraction.garageOpen && (Math.sin(visualTime * 1.4) > 0.25)),
+    visDt,
+    visualTime,
+    false,
+  );
+  if (extraction.active) {
+    const evo = extraction.visualState;
+    roverRig.setVisualEvolution?.({
+      ...evo,
+      stuntGlow: extraction.garageOpen ? 0.55 : evo.stuntGlow,
+      dt: visDt,
+      time: visualTime,
+    });
+    if (speedLinesFx) {
+      const fxVal = !extraction.modalOpen && state.phase === "playing"
+        ? (evo.fever ? 0.65 : state.boosting ? 0.42 : 0)
+        : 0;
+      speedLinesFx.dataset.tone = evo.fever ? "fever" : "nitro";
+      speedLinesFx.style.opacity = String(fxVal);
+    }
+  } else {
+    roverRig.setVisualEvolution?.({ dt: visDt, time: visualTime });
+    if (speedLinesFx) speedLinesFx.style.opacity = "0";
+  }
   if (state.dataTransfer || prevTransfer) {
     roverRig.aimDataDish(dataDestination, dt);
     roverRig.getDataFeed(dataOrigin);
@@ -1509,6 +1787,9 @@ renderer.setAnimationLoop((now) => {
       uplink.start({ origin: dataOrigin, destination: dataDestination });
       playCue("uplink");
     } else uplink.update(dt, dataOrigin);
+  } else if (state.surveyHold && state.surveyIndex >= 0) {
+    const site = SURVEY_SITES[state.surveyIndex];
+    roverRig.aimDataDish(actionFocus.set(site.x, height(site.x, site.z) + 0.45, site.z), dt);
   } else roverRig.aimDataDish(null, dt);
   fieldSurvey.update(state, visualTime, dt);
   ambientActivity.update(visualTime, dt);
@@ -1542,14 +1823,28 @@ renderer.setAnimationLoop((now) => {
     active: state.buildHold && nearWorkshop,
     progress: nearWorkshop ? state.buildProgress : 0,
     item: state.buildContext === "fabricateObservatory" ? "TERRAIN SCANNER" : state.buildContext === "fabricatePower" ? "SOLAR SUPPLY" : "RELAY KIT",
+    dt,
+    time: visualTime,
   });
-  for (const [i, { bore, patchMaterial, gleam, indicator }] of crystalMeshes.entries()) {
+  for (const [i, { specimen, mineral, bore, patchMaterial, gleam, indicator }] of crystalMeshes.entries()) {
     const recovered = Boolean(state.mask & (1 << i));
     const scanning = !recovered && state.scanHold && state.scanIndex === i;
+    const activeBite = scanning && bitEngaged;
     bore.update(dt);
     indicator.material = recovered ? amber : scanning ? ice : slateMetal;
-    gleam.intensity = scanning ? 0.90 + Math.sin(visualTime * 6.0) * 0.10 : 0;
-    patchMaterial.opacity = recovered ? 0.095 : scanning ? 0.20 : 0.135;
+    gleam.intensity = activeBite ? 1.85 + Math.sin(visualTime * 28.0) * 0.45 : scanning ? 0.95 + Math.sin(visualTime * 6.0) * 0.14 : 0;
+    patchMaterial.opacity = recovered ? 0.095 : scanning ? 0.22 : 0.135;
+    if (specimen) {
+      if (activeBite) {
+        const amp = state.scanMode === "rapid" ? 0.006 : 0.0038;
+        specimen.position.set(Math.sin(visualTime * 118) * amp, Math.cos(visualTime * 93) * amp * 0.4, Math.cos(visualTime * 107) * amp);
+      } else {
+        specimen.position.set(0, 0, 0);
+      }
+    }
+    if (mineral) {
+      mineral.emissiveIntensity = activeBite ? 0.65 + 0.28 * Math.sin(visualTime * 24) : scanning ? 0.34 : 0.18;
+    }
   }
   const returning = state.returnEligible || readyToUpload(state);
   for (const mark of padRings) mark.material = returning ? amber : roadMarks;
@@ -1558,13 +1853,33 @@ renderer.setAnimationLoop((now) => {
     light.material.emissive.setHex(returning ? 0xffb572 : 0x8cf8eb);
     light.material.emissiveIntensity = returning ? 2.8 + 1.1 * Math.sin(visualTime * 5) : 2.1;
   }
-  updateCamera(dt, cameraDriveIntent && !state.dataTransfer);
+  if (campaignPlus.active) {
+    earthTelescope.update?.(visualTime, earthPhotographed);
+    campaignPlus.update({
+      state, dt, rawDt, visualTime,
+      roverPos: rover.position,
+      relaySite: selectedRelay?.site,
+      observatorySite: selectedObservatory?.site,
+      powerSite: powerPad?.site,
+    });
+  }
+  if (campaignPlus.isCameraActive) {
+    campaignPlus.applyCamera(camera, rawDt);
+  } else {
+    updateCamera(extraction.garageOpen ? rawDt : dt, cameraDriveIntent && !state.dataTransfer);
+  }
   camera.updateMatrixWorld();
   navigationGoal = currentGoal();
   if (!paused) companion.update(state, nextCompanionTarget(navigationGoal), dt,
     Boolean(cargo || state.scanHold || state.surveyHold || state.buildHold || construction.active || state.dataTransfer));
   guidance.update(navigationGoal, camera, viewport.clientWidth, viewport.clientHeight, motionTime, touchDevice);
-  if (state.phase !== previousPhase) showPhase();
+  if (state.phase !== previousPhase) {
+    if (state.phase === "won" && campaignPlus.active && !LUNAR_QA) {
+      campaignPlus.triggerRocketFinale();
+    } else {
+      showPhase();
+    }
+  }
   if (LUNAR_QA) audioFrame = { ...acousticState, soundEnabled, musicEnabled, cues: pendingAudioCues.splice(0) };
   updateHud();
   if (state.phase === "playing" && visualTime - lastRadarUpdate >= 0.055) {
@@ -1579,7 +1894,8 @@ renderer.setAnimationLoop((now) => {
     lastShadowFrame = now;
   }
   if (!firstGameplayShadersWarmed) {
-    // Prepare the hidden cutting wall and fragment materials in the actual HDR pass.
+    // Pre-compile all scene GPU shaders during boot so sudden camera turns NEVER hitch on first frustum entry!
+    try { renderer.compile(scene, camera); } catch { /* ignore */ }
     crystalMeshes[0].bore.warm(true);
     miningEffects.warm(true);
     mainRenderCalls = lighting.render();

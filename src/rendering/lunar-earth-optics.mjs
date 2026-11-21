@@ -6,7 +6,7 @@ import cloudMap from "../assets/lunar-earth-clouds.webp";
 // longitude range seen from this fictional site, with margin for cloud drift.
 const HALF_MAP_LONGITUDE = 103 * Math.PI / 180;
 const POSE_ROLL = 11 * Math.PI / 180;
-const MAX_CLOUD_DRIFT_RAD = 0.72 * Math.PI / 180;
+const MAX_CLOUD_DRIFT_RAD = 9.5 * Math.PI / 180;
 const clamp = (value, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, value));
 
 function noise(x, y) {
@@ -65,6 +65,7 @@ uniform vec2 uCenter;
 uniform float uRadius;
 uniform vec3 uSun;
 uniform float uCloudShift;
+uniform float uTime;
 uniform float uRollCos;
 uniform float uRollSin;
 uniform float uHalfMapLon;
@@ -162,10 +163,28 @@ void main() {
     vec2 clampedUV = clamp(mapUV, vec2(0.001), vec2(0.999));
     surfaceLinear = toLinear(texture(uSurface, clampedUV).rgb);
     if (uHasClouds == 1) {
-      float wind = 0.55 + 0.45 * cos((mapUV.y - 0.5) * PI * 2.0);
-      vec2 cloudUV = clamp(vec2(mapUV.x + wind * uCloudShift / (2.0 * uHalfMapLon), mapUV.y), vec2(0.001), vec2(0.999));
-      float cloudBrightness = texture(uClouds, cloudUV).r;
-      coverage = smoothstep(0.13, 0.92, cloudBrightness) * 0.89;
+      // Latitude-banded trade winds & jet streams + gentle organic curl/diffusion advection.
+      float latBand = (mapUV.y - 0.5) * PI * 2.0;
+      float wind = 0.62 + 0.38 * cos(latBand) + 0.16 * sin(latBand * 2.0);
+      float drift = wind * uCloudShift / (2.0 * uHalfMapLon);
+      float swirlPhase = uTime * 0.52;
+      vec2 curl = vec2(
+        sin(mapUV.y * 16.0 + swirlPhase) * cos(mapUV.x * 11.0 - swirlPhase * 0.7),
+        cos(mapUV.x * 14.0 + swirlPhase * 0.85) * sin(mapUV.y * 12.0 + swirlPhase * 0.6)
+      ) * 0.0085;
+      // Primary cloud deck with noticeable eastward drift + soft curling diffusion.
+      vec2 cloudUV1 = clamp(vec2(mapUV.x + drift, mapUV.y) + curl, vec2(0.002), vec2(0.998));
+      float baseCloud = texture(uClouds, cloudUV1).r;
+      // Secondary high-altitude wispy cirrus veil drifting faster with soft breathing diffusion.
+      vec2 cloudUV2 = clamp(
+        vec2(mapUV.x + drift * 1.68 + 0.018 * sin(uTime * 0.24), mapUV.y + 0.012 * cos(mapUV.x * 9.0 + swirlPhase)) - curl * 1.45,
+        vec2(0.002),
+        vec2(0.998)
+      );
+      float highWisps = texture(uClouds, cloudUV2).r;
+      float diffuseBreath = 0.28 + 0.14 * sin(uTime * 0.65 + mapUV.x * 8.0 + mapUV.y * 6.0);
+      float cloudBrightness = clamp(mix(baseCloud, max(baseCloud, highWisps * 1.06), diffuseBreath), 0.0, 1.0);
+      coverage = smoothstep(0.11, 0.90, cloudBrightness) * 0.91;
     }
   }
 
@@ -244,6 +263,7 @@ function createGpuOptics({ image, clouds, light }) {
     uRadius: gl.getUniformLocation(program, "uRadius"),
     uSun: gl.getUniformLocation(program, "uSun"),
     uCloudShift: gl.getUniformLocation(program, "uCloudShift"),
+    uTime: gl.getUniformLocation(program, "uTime"),
     uRollCos: gl.getUniformLocation(program, "uRollCos"),
     uRollSin: gl.getUniformLocation(program, "uRollSin"),
     uHalfMapLon: gl.getUniformLocation(program, "uHalfMapLon"),
@@ -271,7 +291,7 @@ function createGpuOptics({ image, clouds, light }) {
     const midX = width / 2 + offsetX;
     const midY = height / 2 + offsetY;
     const radius = Math.min(width, height) * zoom * (mode === "overview" ? 0.32 : 1.9 / 9.6);
-    const cloudShift = reducedMotion || !cloudTex ? 0 : Math.sin(time * 0.134) * MAX_CLOUD_DRIFT_RAD;
+    const cloudShift = reducedMotion || !cloudTex ? 0 : Math.sin(time * 0.34) * MAX_CLOUD_DRIFT_RAD;
 
     gl.viewport(0, 0, width, height);
     gl.clearColor(0, 0, 0, 0);
@@ -289,6 +309,7 @@ function createGpuOptics({ image, clouds, light }) {
     gl.uniform2f(loc.uCenter, midX, midY);
     gl.uniform1f(loc.uRadius, radius);
     gl.uniform1f(loc.uCloudShift, cloudShift);
+    gl.uniform1f(loc.uTime, reducedMotion ? 0 : time);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     context.save();

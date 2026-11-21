@@ -10,6 +10,20 @@ import { ARENA_LIMIT, RETURN_RADIUS } from "../simulation/lunar-rules.mjs";
 
 export const ARENA_RADIUS = 37.4;
 
+export const LUNAR_BIOMES = [
+  { id: "basalt", name: "南极玄武灰", nameEn: "Mare Basalt", slate: 0x5e5b57, ash: 0x9d988f, rim: 0x85817b, sun: 0xfff3de, rock: 0x67635c },
+  { id: "ferric", name: "铁锈赤峡", nameEn: "Ferric Rust Ridge", slate: 0x624336, ash: 0xb88160, rim: 0x9a6a50, sun: 0xffd5a4, rock: 0x765140 },
+  { id: "cryo", name: "永夜冰晶盆地", nameEn: "Cryo-Ice Basin", slate: 0x415668, ash: 0x9ab9cf, rim: 0x7795aa, sun: 0xdff2ff, rock: 0x586e80 },
+  { id: "obsidian", name: "硫磺火山裂谷", nameEn: "Volcanic Obsidian", slate: 0x2b2932, ash: 0x756a52, rim: 0x564f44, sun: 0xffdf94, rock: 0x3d3a40 },
+];
+
+let activeTerrainConfig = null;
+
+function makeTerrainRng(seed) {
+  let s = (seed >>> 0) || 42;
+  return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+}
+
 export function fract(number) { return number - Math.floor(number); }
 export function hash(x, z) { return fract(Math.sin(x * 191.51 + z * 319.47) * 43758.5453); }
 
@@ -22,7 +36,7 @@ export function noise(x, z) {
     THREE.MathUtils.lerp(hash(xi, zi + 1), hash(xi + 1, zi + 1), u), v);
 }
 
-export function terrainHeight(x, z) {
+function baseCampaignHeight(x, z) {
   const saddle = 0.19 * (noise(x * 0.2, z * 0.17) - 0.5)
     + 0.11 * (noise(x * 0.75, z * 0.72) - 0.53);
   const basin = Math.exp(-((x + 4.2) ** 2 + (z - 1.05) ** 2) / 5.5);
@@ -36,6 +50,33 @@ export function terrainHeight(x, z) {
   const relief = saddle - 0.29 * basin - 0.19 * secondary + regolithHeight(x, z)
     + border * (ridge - 0.46 * outsideBowl);
   return THREE.MathUtils.lerp(relief, -0.08, THREE.MathUtils.smoothstep(radial, 35.95, ARENA_RADIUS));
+}
+
+export function terrainHeight(x, z) {
+  const base = baseCampaignHeight(x, z);
+  if (!activeTerrainConfig) return base;
+  const { ox, oz, craters, ridgeAmp, ridgeFreq, rotCos, rotSin } = activeTerrainConfig;
+  const radial = Math.hypot(x, z);
+  // Keep Landing Pad (0, 0) & Main Habitat (-9.17, -7.5) smoothly anchored to baseline height so zero structures float!
+  const padSafe = THREE.MathUtils.smoothstep(radial, 3.6, 6.2);
+  const baseSafe = THREE.MathUtils.smoothstep(Math.hypot(x + 9.17, z + 7.5), 4.2, 7.2);
+  const edgeFade = 1 - THREE.MathUtils.smoothstep(radial, 27.5, 35.5);
+  const weight = padSafe * baseSafe * edgeFade;
+  if (weight <= 0.0001) return base;
+
+  const rx = x * rotCos - z * rotSin;
+  const rz = x * rotSin + z * rotCos;
+  let proc = ridgeAmp * (noise(rx * ridgeFreq + ox, rz * ridgeFreq + oz) - 0.48)
+    + (ridgeAmp * 0.45) * (noise(rx * ridgeFreq * 2.3 - oz, rz * ridgeFreq * 2.1 + ox) - 0.5);
+  for (let i = 0; i < craters.length; i++) {
+    const c = craters[i];
+    const d = Math.hypot(x - c.x, z - c.z) / c.r;
+    if (d > 1.45) continue;
+    const bowl = 1 - THREE.MathUtils.smoothstep(d, 0.15, 0.92);
+    const lip = THREE.MathUtils.smoothstep(d, 0.68, 0.96) * (1 - THREE.MathUtils.smoothstep(d, 0.96, 1.42));
+    proc += lip * c.lip - bowl * c.depth;
+  }
+  return THREE.MathUtils.lerp(base, proc, weight);
 }
 
 export function createReflectionEnvironment(renderer) {
@@ -159,9 +200,135 @@ export function buildLunarTerrain(scene, renderer, camera, sun, { mobile = false
 
   const rockField = addEmbeddedRocks(scene, terrainHeight, { arenaRadius: ARENA_RADIUS, playableLimit: ARENA_LIMIT });
   const { tallRockFixtures, sampleRockSupport, lowRockSupports } = rockField.userData;
-  const wheelSurface = (x, z) => terrainHeight(x, z) + sampleRockSupport(x, z);
 
-  return { ground, surface, rockField, tallRockFixtures, sampleRockSupport, lowRockSupports, wheelSurface };
+  // Dynamic Procedural Boulder Field for Roguelite Extraction sectors (reuses faceted rock geometry & updates per seed/biome)
+  const procRockGeo = new THREE.DodecahedronGeometry(1, 1);
+  const prPos = procRockGeo.attributes.position;
+  for (let i = 0; i < prPos.count; i++) {
+    const vx = prPos.getX(i), vy = prPos.getY(i), vz = prPos.getZ(i);
+    const warp = 0.78 + 0.36 * noise(vx * 2.1 + 4, vz * 2.3 + vy * 1.9);
+    prPos.setXYZ(i, vx * warp, vy * warp * 0.68, vz * warp);
+  }
+  procRockGeo.computeVertexNormals();
+  const procRockMat = new THREE.MeshStandardMaterial({ color: 0x67635c, roughness: 0.92, metalness: 0.04, flatShading: true });
+  const procRocks = new THREE.InstancedMesh(procRockGeo, procRockMat, 64);
+  procRocks.castShadow = true;
+  procRocks.receiveShadow = true;
+  procRocks.visible = false;
+  scene.add(procRocks);
+  const procRockFixtures = [];
+  const rockPose = new THREE.Object3D();
+  const rockTone = new THREE.Color();
+  const defaultSunColor = sun.color.clone();
+
+  function rebuildTerrainGeometry(biome) {
+    const colorAttr = terrain.attributes.color;
+    slate.setHex(biome.slate);
+    ash.setHex(biome.ash);
+    rimColor.setHex(biome.rim);
+    const ox = activeTerrainConfig ? activeTerrainConfig.ox : 3;
+    const oz = activeTerrainConfig ? activeTerrainConfig.oz : 0;
+    for (let i = 0; i < terrainPositions.count; i++) {
+      const x = terrainPositions.getX(i);
+      const z = terrainPositions.getZ(i);
+      const y = terrainHeight(x, z);
+      terrainPositions.setY(i, y);
+      let value = 0.12 + 0.44 * noise(x * 0.27 + ox, z * 0.31 + oz)
+        + 0.24 * noise(x * 0.92 + oz, z * 1.06 - ox) + 0.12 * noise(x * 2.3, z * 2.1);
+      if (activeTerrainConfig) {
+        // Highlight crater rims & darkened crater floors in procedural sectors
+        value += THREE.MathUtils.clamp(y * 0.42, -0.25, 0.28);
+      } else {
+        value += regolithTint(x, z);
+      }
+      groundColor.copy(slate).lerp(ash, THREE.MathUtils.clamp(value, 0, 1))
+        .lerp(rimColor, THREE.MathUtils.smoothstep(Math.hypot(x, z), 34.9, ARENA_RADIUS));
+      colorAttr.setXYZ(i, groundColor.r, groundColor.g, groundColor.b);
+    }
+    terrainPositions.needsUpdate = true;
+    colorAttr.needsUpdate = true;
+    terrain.computeVertexNormals();
+  }
+
+  function applyProceduralSector(seed, biomeIndex = 0) {
+    if (seed === null || seed === undefined) {
+      activeTerrainConfig = null;
+      const baseBiome = LUNAR_BIOMES[0];
+      rebuildTerrainGeometry(baseBiome);
+      sun.color.copy(defaultSunColor);
+      rockField.visible = true;
+      procRocks.visible = false;
+      procRockFixtures.length = 0;
+      return { biome: baseBiome, fixtures: tallRockFixtures };
+    }
+    const biome = LUNAR_BIOMES[Math.abs(biomeIndex) % LUNAR_BIOMES.length];
+    const rng = makeTerrainRng(seed);
+    const craters = [];
+    const craterCount = 8 + Math.floor(rng() * 4);
+    for (let i = 0; i < craterCount; i++) {
+      const a = (i / craterCount) * Math.PI * 2 + (rng() - 0.5) * 0.65;
+      const dist = 7.4 + rng() * 17.5;
+      const cx = Math.cos(a) * dist;
+      const cz = Math.sin(a) * dist;
+      if (Math.hypot(cx + 9.17, cz + 7.5) < 6.4) continue;
+      craters.push({
+        x: cx, z: cz,
+        r: 2.3 + rng() * 2.8,
+        depth: 0.26 + rng() * 0.44,
+        lip: 0.18 + rng() * 0.24,
+      });
+    }
+    const rotAngle = rng() * Math.PI * 2;
+    activeTerrainConfig = {
+      ox: rng() * 40 - 20,
+      oz: rng() * 40 - 20,
+      craters,
+      ridgeAmp: 0.45 + rng() * 0.45,
+      ridgeFreq: 0.11 + rng() * 0.08,
+      rotCos: Math.cos(rotAngle),
+      rotSin: Math.sin(rotAngle),
+    };
+    rebuildTerrainGeometry(biome);
+    sun.color.setHex(biome.sun);
+    rockField.visible = false;
+    procRockMat.color.setHex(biome.rock);
+    procRockFixtures.length = 0;
+    let rockIdx = 0;
+    for (let i = 0; i < 64; i++) {
+      const a = rng() * Math.PI * 2;
+      const r = 6.2 + rng() * 21.5;
+      const rx = Math.cos(a) * r;
+      const rz = Math.sin(a) * r;
+      if (Math.hypot(rx + 9.17, rz + 7.5) < 5.8) continue;
+      if (Math.abs(rx) < 2.6 && rz < 0 && rz > -8.2) continue;
+      const tall = i < 16;
+      const sx = tall ? 0.55 + rng() * 0.65 : 0.16 + rng() * 0.34;
+      const sy = tall ? 0.48 + rng() * 0.72 : 0.12 + rng() * 0.22;
+      const sz = sx * (0.72 + rng() * 0.55);
+      const ry = terrainHeight(rx, rz);
+      rockPose.position.set(rx, ry + sy * 0.22, rz);
+      rockPose.rotation.set((rng() - 0.5) * 0.4, rng() * Math.PI * 2, (rng() - 0.5) * 0.4);
+      rockPose.scale.set(sx, sy, sz);
+      rockPose.updateMatrix();
+      procRocks.setMatrixAt(rockIdx, rockPose.matrix);
+      rockTone.setHex(biome.rock).multiplyScalar(0.76 + rng() * 0.46);
+      procRocks.setColorAt(rockIdx, rockTone);
+      if (tall) procRockFixtures.push({ x: rx, z: rz, radius: Math.max(sx, sz) * 0.76 });
+      rockIdx += 1;
+    }
+    procRocks.count = rockIdx;
+    procRocks.instanceMatrix.needsUpdate = true;
+    if (procRocks.instanceColor) procRocks.instanceColor.needsUpdate = true;
+    procRocks.visible = true;
+    return { biome, fixtures: procRockFixtures };
+  }
+
+  const wheelSurface = (x, z) => terrainHeight(x, z) + (activeTerrainConfig ? 0 : sampleRockSupport(x, z));
+
+  return {
+    ground, surface, rockField, tallRockFixtures, sampleRockSupport, lowRockSupports,
+    wheelSurface, applyProceduralSector, procRockFixtures,
+  };
 }
 
 export function buildStationFurniture(scene, { silver, slateMetal, amber, roadMarks }, glow) {
@@ -206,13 +373,21 @@ export function buildStationFurniture(scene, { silver, slateMetal, amber, roadMa
   });
   const solarCellGeometry = new THREE.BoxGeometry(0.205, 0.014, 0.21);
   const solarBanks = [];
+  const solarObstacles = [];
   const alignSolar = new THREE.Object3D();
+  const rackCos = Math.cos(-0.42), rackSin = Math.sin(-0.42);
   for (const side of [-1, 1]) {
     const bank = new THREE.Group();
     bank.rotation.x = 0.26;
     bank.position.set(side * 0.67, 0.61, 0);
     solarRack.add(bank);
     solarBanks.push(bank);
+    // Register physical collision for both solar array wings so the rover cannot clip through!
+    solarObstacles.push({
+      x: 6.9 + (side * 0.67) * rackCos,
+      z: -9.1 - (side * 0.67) * rackSin,
+      radius: 0.78,
+    });
     block(bank, slateMetal, 1.19, 0.073, 0.97, 0, 0, 0, 0.024);
     block(solarRack, silver, 0.09, 0.63, 0.11, side * 0.70, 0.33, -0.09, 0.012);
     block(solarRack, slateMetal, 0.26, 0.08, 0.29, side * 0.70, 0.06, -0.09, 0.014);
@@ -265,7 +440,7 @@ export function buildStationFurniture(scene, { silver, slateMetal, amber, roadMa
   block(receiver, amber, 0.095, 0.022, 0.018, 0, 0.922, 0.087, 0.003);
   const dataDestination = receiver.localToWorld(new THREE.Vector3(0, 1.004, 0.108));
 
-  return { solarBanks, padRings, dockLights, receiver, dataDestination };
+  return { solarBanks, solarObstacles, padRings, dockLights, receiver, dataDestination };
 }
 
 function makeCausticMap() {
@@ -307,7 +482,9 @@ export function buildCrystalField(scene, { slateMetal }) {
     vertexShader: /* glsl */ `
       varying vec3 facingNormal;
       varying vec3 towardCamera;
+      varying vec3 localPos;
       void main() {
+        localPos = position;
         vec4 view = modelViewMatrix * vec4(position, 1.0);
         facingNormal = normalize(normalMatrix * normal);
         towardCamera = -view.xyz;
@@ -319,12 +496,19 @@ export function buildCrystalField(scene, { slateMetal }) {
       uniform vec3 mineralTint;
       varying vec3 facingNormal;
       varying vec3 towardCamera;
+      varying vec3 localPos;
       void main() {
         vec3 n = normalize(facingNormal);
         vec3 v = normalize(towardCamera);
-        float fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 3.1);
-        float gleam = pow(max(0.0, dot(reflect(-v, n), normalize(vec3(-0.63, 0.56, 0.42)))), 24.0);
-        gl_FragColor = vec4(mix(mineralTint * 2.35, vec3(1.18, 1.24, 1.15), gleam), fresnel * 0.28 + gleam * 0.34);
+        // Fake interior parallax strata: refracted view vector reveals crystalline growth planes.
+        vec3 refr = refract(-v, n, 0.66);
+        vec3 innerCoord = localPos * 14.0 + refr * 1.45;
+        float strata = smoothstep(0.62, 0.96, 0.5 + 0.5 * sin(innerCoord.y * 2.1 + sin(innerCoord.x * 1.3 - innerCoord.z * 1.5)));
+        float fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 2.8);
+        float gleam = pow(max(0.0, dot(reflect(-v, n), normalize(vec3(-0.63, 0.56, 0.42)))), 26.0);
+        vec3 col = mix(mineralTint * 2.35, vec3(1.22, 1.28, 1.18), gleam);
+        float alpha = fresnel * 0.28 + gleam * 0.36 + strata * 0.14;
+        gl_FragColor = vec4(col, alpha);
         #include <colorspace_fragment>
       }
     `,
@@ -343,6 +527,10 @@ export function buildCrystalField(scene, { slateMetal }) {
   const collarPose = new THREE.Object3D();
   let collarIdx = 0;
 
+  const crystalFieldGroup = new THREE.Group();
+  crystalFieldGroup.name = "campaign-crystal-field";
+  scene.add(crystalFieldGroup);
+
   const boreRay = new THREE.Raycaster();
   const down = new THREE.Vector3(0, -1, 0);
   const boreRayStart = new THREE.Vector3();
@@ -353,7 +541,7 @@ export function buildCrystalField(scene, { slateMetal }) {
     const marker = new THREE.Group();
     const y = terrainHeight(x, z);
     marker.position.set(x, y, z);
-    scene.add(marker);
+    crystalFieldGroup.add(marker);
 
     for (let c = 0; c < 7; c++) {
       const theta = (c / 7) * Math.PI * 2 + hash(siteIndex, c + 19) * 0.55;
@@ -419,10 +607,10 @@ export function buildCrystalField(scene, { slateMetal }) {
     const roof = mineralTop(x, z);
     if (roof !== undefined) boreSurface.y = roof;
     const bore = createBore(scene, mineral, edge, boreSurface, mineralTop);
-    crystalMeshes.push({ patchMaterial, gleam, indicator, boreSurface, bore });
+    crystalMeshes.push({ specimen, mineral, patchMaterial, gleam, indicator, boreSurface, bore });
   }
 
   collarMesh.instanceMatrix.needsUpdate = true;
-  scene.add(collarMesh);
-  return { crystals, crystalMeshes };
+  crystalFieldGroup.add(collarMesh);
+  return { crystals, crystalMeshes, crystalFieldGroup };
 }

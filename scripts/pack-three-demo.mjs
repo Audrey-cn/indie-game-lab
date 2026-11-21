@@ -14,9 +14,8 @@ if (shell.split(posterToken).length !== 2) throw new Error("Expected a single em
 if (shell.split(videoToken).length !== 2) throw new Error("Expected a single embedded title video slot.");
 if (shell.split(musicToken).length !== 2) throw new Error("Expected a single embedded music slot.");
 
-const musicRaw = await readFile(new URL("audio/lunar-in-this-moment-loop.m4a", srcRoot));
-const music = musicRaw.toString("base64");
-const html = shell.replace(posterToken, "").replace(videoToken, "").replace(musicToken, music);
+// Lean playable build uses zero-byte procedural Web Audio deep-space synth (no 275 KB base64 .m4a).
+const html = shell.replace(posterToken, "").replace(videoToken, "").replace(musicToken, "");
 const marker = "<!-- GAME_MODULE -->";
 if (html.split(marker).length !== 2) throw new Error("Expected a single inline bundle marker.");
 
@@ -25,6 +24,8 @@ const result = await esbuild.build({
   bundle: true,
   write: false,
   minify: true,
+  legalComments: "none",
+  drop: ["debugger"],
   metafile: true,
   format: "iife",
   platform: "browser",

@@ -1,5 +1,5 @@
 <h1 align="center">Lunar Field Station</h1>
-<p align="center"><strong>A 1.75 MB standalone WebGL 2 lunar rover technical vertical slice built with Three.js r182</strong></p>
+<p align="center"><strong>A 1.81 MB standalone WebGL 2 three-mode lunar 3D game & rendering vertical slice built with Three.js r182</strong></p>
 
 <p align="center">
   <a href="https://audrey-cn.github.io/lunar-field-station/"><img src="./media/play-en.png" width="146" height="42" alt="Play in browser"></a>
@@ -8,13 +8,13 @@
 
 <p align="center">
   <a href="./README.md">简体中文</a> · <strong>English</strong> ·
+  <a href="./docs/GAME_DESIGN.md">Game Design</a> ·
   <a href="./docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="./docs/RENDERING_BREAKDOWN.md">Rendering Breakdown</a> ·
   <a href="./docs/OPTIMIZATION_LOG.md">Benchmarks</a> ·
-  <a href="./docs/controls.md">Controls</a> ·
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
-<p align="center"><sub>v0.2.1 · WebGL 2 · Three.js r182 · 1.75 MB single-file HTML (895 KB gzip) · -48% Draw Calls · -59% Triangles · Press <code>F2</code> for live Render Breakdown</sub></p>
+<p align="center"><sub>v0.3.0 · WebGL 2 · Three.js r182 · 1.81 MB single-file HTML (806 KB gzip) · 3 Game Modes · Live 3D Morphable Hangar · Mobile Portrait & Landscape UI · Press <code>F2</code> for live Render Breakdown</sub></p>
 
 ---
 

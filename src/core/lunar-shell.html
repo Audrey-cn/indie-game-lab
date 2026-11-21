@@ -308,6 +308,12 @@
     .landing-context { display: none; }
     .menu-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .menu-tools .utility-button { min-width: 94px; margin: 0; }
+    #start-extraction {
+      border-color: #74ffd888;
+      color: #c8fff4;
+      background: linear-gradient(135deg, #0c2628d8, #12212cd8);
+    }
+    #start-extraction:hover { border-color: #9effe8; background: linear-gradient(135deg, #133b3ee8, #193142e8); }
 
     .navigation {
       position: absolute;
@@ -1008,75 +1014,148 @@
     }
 
     body[data-phase="ready"] #overlay {
-      --menu-gold: #edc586;
-      --menu-inline: max(var(--edge), clamp(28px, 7.6vw, 112px));
+      --menu-gold: #f0c987;
+      --menu-cyan: #74ffd8;
+      --menu-inline: max(var(--edge), clamp(28px, 7.2vw, 108px));
       align-items: center;
       padding: max(24px, var(--top)) max(var(--edge), env(safe-area-inset-right)) var(--bottom)
         max(var(--menu-inline), env(safe-area-inset-left) + 20px);
       background:
-        linear-gradient(90deg, #080c11f5 1%, #080c11e8 19%, #080c118f 36%, #080c1117 63%, transparent 78%),
-        linear-gradient(0deg, #05080c8f, transparent 39%);
+        radial-gradient(ellipse 68% 92% at 14% 52%, #050a12f0 0%, #060b14b8 34%, #070d1626 66%, transparent 82%),
+        linear-gradient(0deg, #04070cc2 0%, transparent 28%),
+        linear-gradient(180deg, #04070c9e 0%, transparent 22%);
     }
-    body[data-phase="ready"] .briefing { width: min(100%, 31em); }
-    body[data-phase="ready"] .briefing::before { display: none; }
+    body[data-phase="ready"] #overlay::before {
+      content: "SELENE-07 // SOUTH POLE SECTOR · 89.4°S 142.8°E // WEBGL 2.0 HDR";
+      position: fixed;
+      top: max(16px, env(safe-area-inset-top));
+      left: var(--menu-inline);
+      font: 600 10px/1 var(--mono);
+      letter-spacing: .20em;
+      color: #93b5bc99;
+      padding-left: 14px;
+      border-left: 2px solid var(--menu-cyan);
+      pointer-events: none;
+    }
+    body[data-phase="ready"] #overlay::after {
+      content: "1/6G PHYSICS · 120HZ SUSPENSION · REAL-TIME ORBITAL VIEW";
+      position: fixed;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      left: var(--menu-inline);
+      font: 500 9.5px/1 var(--mono);
+      letter-spacing: .18em;
+      color: #829ea870;
+      pointer-events: none;
+    }
+    body[data-phase="ready"] .briefing {
+      position: relative;
+      width: min(100%, 400px);
+      padding: 24px 26px 26px;
+      background: linear-gradient(155deg, #0b1420cc 0%, #070d16b0 100%);
+      backdrop-filter: blur(12px);
+      border: 1px solid #96b9c42e;
+      clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+      box-shadow: 0 24px 64px #000a, inset 0 1px 0 #ffffff1c;
+    }
+    body[data-phase="ready"] .briefing::before {
+      content: "";
+      display: block;
+      position: absolute;
+      top: 0; left: 0;
+      width: 68px; height: 2px;
+      margin: 0;
+      background: linear-gradient(90deg, var(--menu-cyan), transparent);
+      box-shadow: 0 0 14px #74ffd888;
+    }
+    body[data-phase="ready"] .briefing::after {
+      content: "";
+      position: absolute;
+      bottom: 0; right: 0;
+      width: 52px; height: 2px;
+      background: linear-gradient(270deg, var(--menu-gold), transparent);
+    }
 
     body[data-phase="ready"] .landing-context {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin: 0 0 clamp(11px, 2vh, 19px);
+      gap: 10px;
+      margin: 0 0 10px;
       color: var(--menu-gold);
-      font-size: 12px;
-      font-weight: 650;
-      letter-spacing: .19em;
+      font: 650 11px/1 var(--mono);
+      letter-spacing: .24em;
+      text-transform: uppercase;
       text-shadow: 0 2px 12px #000;
     }
     .landing-context::before {
       content: "";
       display: block;
-      width: 24px;
-      height: 1px;
-      background: currentColor;
+      width: 18px;
+      height: 2px;
+      background: var(--menu-cyan);
+      box-shadow: 0 0 8px var(--menu-cyan);
     }
     body[data-phase="ready"] #status {
-      margin: 0 0 clamp(11px, 1.8vh, 17px);
-      font-size: clamp(48px, 6.1vw, 92px);
-      font-weight: 730;
-      letter-spacing: .025em;
+      margin: 0 0 10px;
+      font-size: clamp(38px, 4.6vw, 60px);
+      font-weight: 800;
+      letter-spacing: .04em;
       line-height: 1.06;
       white-space: nowrap;
-      text-shadow: 0 4px 26px #000b;
+      background: linear-gradient(180deg, #ffffff 0%, #f1eadc 58%, #bfb7a6 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 6px 24px #000c);
     }
     body[data-phase="ready"] #brief {
-      max-width: 29em;
-      color: #d9d9d2;
-      font-size: clamp(13px, 1.15vw, 16px);
-      line-height: 1.75;
+      max-width: 28em;
+      color: #c2d1d6;
+      font-size: clamp(12.5px, 1.05vw, 14px);
+      line-height: 1.65;
       text-wrap: balance;
+      text-shadow: 0 2px 10px #000a;
     }
     body[data-phase="ready"] .actions {
-      width: min(100%, 320px);
-      margin-top: clamp(20px, 4.1vh, 34px);
+      width: 100%;
+      margin-top: 22px;
     }
     body[data-phase="ready"] #start-campaign {
+      position: relative;
+      overflow: hidden;
       width: 100%;
       min-height: 58px;
-      padding: 10px 18px 10px 20px;
-      border: 1px solid #f2d6a2;
-      border-radius: 3px;
-      color: #1d1b16;
-      background: linear-gradient(104deg, #f0d8ae 0%, #f5e8d0 89%);
-      box-shadow: 0 6px 30px #0204066e, inset 0 1px #fffae88f;
+      padding: 12px 18px 12px 20px;
+      border: 1px solid #ffe4b5;
+      border-radius: 0;
+      clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+      color: #121519;
+      background: linear-gradient(108deg, #f3d7a4 0%, #fbf0da 62%, #ebd0a0 100%);
+      box-shadow: 0 10px 30px #0008, inset 0 1px 0 #ffffffcc;
       font-size: 15px;
-      font-weight: 740;
-      letter-spacing: .075em;
+      font-weight: 780;
+      letter-spacing: .08em;
+      transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
     }
-    body[data-phase="ready"] #start-campaign:hover { background: #fff0d5; }
+    body[data-phase="ready"] #start-campaign::before {
+      content: "";
+      position: absolute;
+      inset: 0 -40%;
+      background: linear-gradient(110deg, transparent 40%, #ffffff66 50%, transparent 60%);
+      transform: translateX(-80%);
+      transition: transform .52s ease;
+    }
+    body[data-phase="ready"] #start-campaign:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 36px #f0c98744, inset 0 1px 0 #fff;
+      filter: brightness(1.04);
+    }
+    body[data-phase="ready"] #start-campaign:hover::before { transform: translateX(80%); }
     body[data-phase="ready"] #start-campaign::after { width: 8px; height: 8px; }
     body[data-phase="ready"] .menu-tools {
       display: grid;
-      gap: 0;
-      width: min(100%, 320px);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+      width: 100%;
       margin-top: 10px;
     }
     body[data-phase="ready"] .menu-tools .utility-button {
@@ -1086,30 +1165,114 @@
       width: 100%;
       min-width: 0;
       min-height: 44px;
-      padding: 0 12px;
-      border: 0;
-      border-bottom: 1px solid #cdd0cc36;
+      padding: 0 14px;
+      border: 1px solid #96b8c436;
       border-radius: 0;
-      background: transparent;
-      color: #e2e2da;
-      font-size: 13px;
-      font-weight: 560;
-      letter-spacing: .07em;
+      clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+      background: #0d1824b8;
+      color: #dce7ea;
+      font-size: 12.5px;
+      font-weight: 600;
+      letter-spacing: .06em;
       text-align: start;
-      text-shadow: 0 2px 10px #000;
+      transition: background .16s ease, border-color .16s ease, transform .16s ease, box-shadow .16s ease;
     }
-    body[data-phase="ready"] .menu-tools .utility-button:hover { background: #cec7b21a; color: #fff3df; }
+    body[data-phase="ready"] .menu-tools .utility-button:hover {
+      background: #172a3ce0;
+      border-color: #94edeb77;
+      color: #ffffff;
+      transform: translateY(-1px);
+    }
+    body[data-phase="ready"] #start-extraction {
+      grid-column: 1 / -1;
+      min-height: 54px;
+      padding: 0 18px 0 20px;
+      border: 1px solid #74ffd888;
+      border-left: 3px solid #74ffd8;
+      clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+      background: linear-gradient(108deg, #0b2b30e0 0%, #102030dd 64%, #1a2433d8 100%);
+      color: #d6fff6;
+      font-size: 14.5px;
+      font-weight: 720;
+      letter-spacing: .07em;
+      box-shadow: 0 10px 26px #0007, inset 0 1px 0 #74ffd833;
+    }
+    body[data-phase="ready"] #start-extraction:hover {
+      background: linear-gradient(108deg, #114046eb 0%, #163046ea 64%, #243347e4 100%);
+      border-color: #9effe8;
+      box-shadow: 0 14px 34px #74ffd833, inset 0 1px 0 #74ffd855;
+      transform: translateY(-2px);
+    }
+    body[data-phase="ready"] #start-race {
+      grid-column: 1 / -1;
+      min-height: 50px;
+      padding: 0 18px 0 20px;
+      border: 1px solid #c57cff99;
+      border-left: 3px solid #d97bff;
+      clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+      background: linear-gradient(108deg, #27103ce0 0%, #191536dd 58%, #341d2ad8 100%);
+      color: #f6e2ff;
+      font-size: 14px;
+      font-weight: 720;
+      letter-spacing: .07em;
+      box-shadow: 0 10px 26px #0007, inset 0 1px 0 #d97bff33;
+    }
+    body[data-phase="ready"] #start-race:hover {
+      background: linear-gradient(108deg, #3a1759eb 0%, #251d4dea 58%, #4b2638e4 100%);
+      border-color: #ebb5ff;
+      box-shadow: 0 14px 34px #c57cff44, inset 0 1px 0 #ebb5ff55;
+      transform: translateY(-2px);
+    }
+    body[data-mission="race"] :is(#hud, .navigation, #mission-marker, #look-lock, .touch-buttons) { display: none !important; }
+    #speed-lines-fx {
+      position: fixed;
+      inset: 0;
+      z-index: 55;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .12s ease;
+      background:
+        repeating-conic-gradient(
+          from 0deg at 50% 50%,
+          transparent 0deg 6deg,
+          var(--fx-ray, #74ffd828) 6.4deg 7.2deg,
+          transparent 7.6deg 14deg
+        ),
+        radial-gradient(ellipse at 50% 50%, transparent 48%, var(--fx-edge, #74ffd844) 100%);
+      mask-image: radial-gradient(ellipse at 50% 50%, transparent 32%, black 88%);
+      -webkit-mask-image: radial-gradient(ellipse at 50% 50%, transparent 32%, black 88%);
+    }
+    #speed-lines-fx[data-tone="shockwave"] {
+      --fx-ray: #e879f94a;
+      --fx-edge: #a855f788;
+      animation: speedSpin .35s linear infinite;
+    }
+    #speed-lines-fx[data-tone="fever"] {
+      --fx-ray: #ffd27536;
+      --fx-edge: #ffaa335c;
+      animation: speedSpin .65s linear infinite;
+    }
+    #speed-lines-fx[data-tone="nitro"] {
+      --fx-ray: #63f5ff32;
+      --fx-edge: #2dd4bf55;
+      animation: speedSpin .5s linear infinite;
+    }
+    @keyframes speedSpin {
+      0% { transform: scale(1.0) rotate(0deg); }
+      50% { transform: scale(1.06) rotate(2.5deg); }
+      100% { transform: scale(1.0) rotate(0deg); }
+    }
     body[data-phase="ready"] .menu-tools .utility-button::after {
       content: "";
       width: 6px;
       height: 6px;
-      border-top: 1px solid currentColor;
-      border-right: 1px solid currentColor;
-      opacity: .64;
+      border-top: 1.5px solid currentColor;
+      border-right: 1.5px solid currentColor;
+      opacity: .72;
       transform: rotate(45deg);
     }
     body[data-phase="ready"] :is(#start-campaign, .menu-tools button):focus-visible {
-      outline: 2px solid var(--menu-gold);
+      outline: 2px solid var(--menu-cyan);
       outline-offset: 3px;
     }
 
@@ -1174,6 +1337,7 @@
 <body data-boot="loading" data-phase="ready" data-paused="false">
   <img id="title-poster" src="__LUNAR_POSTER_DATA__" alt="" draggable="false">
   <div id="viewport" aria-hidden="true"></div>
+  <div id="speed-lines-fx" aria-hidden="true"></div>
   <video id="title-cinematic" muted loop playsinline preload="none" aria-hidden="true"></video>
   <script id="title-media-data" type="application/octet-stream">__LUNAR_TITLE_VIDEO_DATA__</script>
   <audio id="lunar-music" loop preload="none"></audio>
@@ -1248,7 +1412,8 @@
         <button type="button" id="main-menu" data-l10n="Main menu" hidden>返回首页</button>
       </div>
       <nav class="menu-tools" aria-label="游戏菜单" data-l10n-aria-label="Game menu">
-        <button type="button" id="start-arcade" class="utility-button" data-l10n="60s Arcade">60秒极速采集</button>
+        <button type="button" id="start-extraction" class="utility-button" data-l10n="Roguelite Extraction">深空搜打撤 · 肉鸽远征</button>
+        <button type="button" id="start-race" class="utility-button" data-l10n="Orbital Mag-Lev GP">星际磁吸竞速 · 狂野轨道</button>
         <button type="button" id="settings-open" class="utility-button" data-l10n="Settings">设置</button>
         <button type="button" id="manual-open" class="utility-button" data-l10n="Field manual">操作手册</button>
       </nav>

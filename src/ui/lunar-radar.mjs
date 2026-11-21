@@ -20,7 +20,7 @@ export function createRadarRenderer(canvas) {
     }
   }
 
-  function draw({ state, crystals, hazard, navigationGoal, motionTime, arcadeTarget }) {
+  function draw({ state, crystals, hazard, navigationGoal, motionTime, arcadeTarget, extractionNodes, extractionCrates, extractionGates, extractionUnbanked, extractionStormRadius }) {
     const side = canvas.width, middle = side * 0.5;
     const scale = (middle - RADAR_INSET) / ARENA_LIMIT;
     ctx.clearRect(0, 0, side, side);
@@ -33,7 +33,45 @@ export function createRadarRenderer(canvas) {
     ctx.font = "8px monospace";
     ctx.fillText("N", middle, 9);
 
-    if (arcadeTarget) {
+    if (extractionNodes) {
+      if (extractionStormRadius > 0) {
+        ctx.save();
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 1.4;
+        signal(0, 0, Math.min(middle - 3, extractionStormRadius * scale), "#d88affcc", true);
+        ctx.restore();
+      }
+      if (extractionUnbanked > 0) {
+        ctx.lineWidth = 1.6;
+        signal(0, 0, RETURN_RADIUS * scale + 2.2 + Math.sin(motionTime * 6) * 1.6, "#74ffd8", true);
+      }
+      signal(0, 0, 3.2, "#ffd597");
+      for (const node of extractionNodes) {
+        if (node.harvested) continue;
+        signal(node.x, node.z, node.tier === 3 ? 3.8 : 3.0, node.css);
+        if (node.jackpot) {
+          ctx.lineWidth = 1.3;
+          signal(node.x, node.z, 5.4 + Math.sin(motionTime * 7) * 1.1, "#ffd275", true);
+        }
+      }
+      if (extractionGates) {
+        ctx.lineWidth = 1.1;
+        for (const gate of extractionGates) {
+          if (gate.group.visible) signal(gate.x, gate.z, 3.3, "#74ffd8", true);
+        }
+      }
+      if (extractionCrates) {
+        for (const crate of extractionCrates) {
+          if (crate.opened) continue;
+          ctx.save();
+          ctx.translate(middle + crate.x * scale, middle + crate.z * scale);
+          ctx.rotate(Math.PI / 4);
+          ctx.fillStyle = "#ffd275";
+          ctx.fillRect(-3.0, -3.0, 6.0, 6.0);
+          ctx.restore();
+        }
+      }
+    } else if (arcadeTarget) {
       ctx.lineWidth = 1.6;
       signal(arcadeTarget.x, arcadeTarget.z, 5.2 + Math.sin(motionTime * 8) * 1.4, "#74ffd8", true);
       signal(arcadeTarget.x, arcadeTarget.z, 2.8, "#ffd28a");

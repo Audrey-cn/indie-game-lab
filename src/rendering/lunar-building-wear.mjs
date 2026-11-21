@@ -96,11 +96,13 @@ export function addBuildingWear(material, tile, profile, dustReach) {
       float deposition = smoothstep(0.34, 0.75, 0.55 * coating.g + 0.32 * broadWear.g + 0.13 * microWear.r);
       float heightFromGrade = buildingFinish.x / buildingDustReach + 0.30 * (coating.g - 0.5);
       float groundDust = 1.0 - smoothstep(0.07, 0.83, heightFromGrade);
+      // Terrain Seam Blending: smoothly fuse the lowest 24cm of struts/bases into lunar regolith.
+      float terrainSeam = 1.0 - smoothstep(0.0, 0.24, buildingFinish.x + 0.05 * (coating.g - 0.5));
       float ledge = smoothstep(0.18, 0.94, buildingSurface.w);
       float lowerShell = 1.0 - smoothstep(-0.91, 0.06, buildingSurface.w);
       float dust = groundDust * (0.10 + 0.60 * deposition + 0.22 * ledge + 0.10 * lowerShell);
       dust += seam * (0.09 + 0.16 * deposition) * (1.0 - 0.50 * buildingFinish.w);
-      dust = clamp(dust * buildingWearProfile.x * (1.0 - 0.43 * bareMetal), 0.0, 1.0);
+      dust = clamp(max(dust * buildingWearProfile.x * (1.0 - 0.43 * bareMetal), terrainSeam * 0.92), 0.0, 1.0);
 
       float pigment = 0.90 + 0.18 * broadWear.g + 0.08 * coating.g + 0.06 * grain;
       diffuseColor.rgb *= pigment * (1.0 - 0.13 * seam * buildingWearProfile.y);
@@ -132,9 +134,10 @@ export function addBuildingWear(material, tile, profile, dustReach) {
       normal = normalize(max(0.000001, abs(determinant)) * normal - (surfaceDamage * buildingWearProfile.z) * gradient);
     `).replace("#include <aomap_fragment>", /* glsl */ `
       #include <aomap_fragment>
-      float seamOcclusion = 1.0 - seam * buildingWearProfile.y * (0.22 + 0.12 * deposition);
+      float seamOcclusion = (1.0 - seam * buildingWearProfile.y * (0.22 + 0.12 * deposition))
+        * (1.0 - terrainSeam * 0.38);
       reflectedLight.indirectDiffuse *= seamOcclusion;
-      reflectedLight.indirectSpecular *= seamOcclusion;
+      reflectedLight.indirectSpecular *= seamOcclusion * (1.0 - terrainSeam * 0.65);
     `);
   };
 }

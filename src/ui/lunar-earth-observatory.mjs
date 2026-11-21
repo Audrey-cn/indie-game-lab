@@ -8,7 +8,7 @@ import markup from "./lunar-earth-observatory.html";
 import stylesheet from "./lunar-earth-observatory.css";
 
 export const EARTH_SITE = { id: "earth-observatory", name: "地球观测台", x: 2.75, z: -8.35, height: 1.32 };
-const interactionRange = 2.25;
+const interactionRange = 2.95;
 const up = new THREE.Vector3(0, 1, 0);
 const { clamp } = THREE.MathUtils;
 
@@ -108,8 +108,49 @@ export function installEarthTelescope(scene, height, direction) {
     mesh.receiveShadow = true;
     parent.add(mesh);
   }
+
+  // Subtle Easter-Egg guidance beacon: soft glowing ground aperture ring + floating optical prism above telescope.
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0x74ffd8, transparent: true, opacity: 0.42, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const beaconRing = new THREE.Mesh(new THREE.RingGeometry(0.74, 0.86, 36), ringMat);
+  beaconRing.rotation.x = -Math.PI / 2;
+  beaconRing.position.y = 0.05;
+  assembly.add(beaconRing);
+
+  const prismMat = new THREE.MeshBasicMaterial({
+    color: 0xffd778, transparent: true, opacity: 0.78,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const prism = new THREE.Mesh(new THREE.OctahedronGeometry(0.11, 0), prismMat);
+  prism.position.y = 1.72;
+  assembly.add(prism);
+
+  const rayMat = new THREE.MeshBasicMaterial({
+    color: 0x8cf4ff, transparent: true, opacity: 0.14, side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const rayTube = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.13, 2.2, 12, 1, true), rayMat);
+  rayTube.position.y = 1.45;
+  body.add(rayTube);
+
   scene.add(assembly);
-  return { x, z, radius: 0.58 };
+  return {
+    x, z, radius: 0.58,
+    update(time, photographed = false) {
+      const pulse = 0.5 + 0.5 * Math.sin(time * 2.8);
+      beaconRing.scale.setScalar(0.94 + pulse * 0.14);
+      ringMat.opacity = photographed ? 0.16 : (0.28 + pulse * 0.24);
+      prism.visible = !photographed;
+      if (!photographed) {
+        prism.position.y = 1.70 + Math.sin(time * 2.4) * 0.12;
+        prism.rotation.y = time * 1.4;
+        prismMat.opacity = 0.62 + pulse * 0.30;
+      }
+      rayMat.opacity = photographed ? 0.06 : (0.09 + pulse * 0.08);
+    },
+  };
 }
 
 const channels = {
@@ -439,7 +480,7 @@ export function bindLunarEarthObservatory({ earth, sun, isTouch, onOpen, onClose
     }
 
     const animated = Boolean(optics) && channel !== "ultraviolet" && !reducedMotion.matches && exposure === null;
-    if (viewport.width && (dirty || moving || (animated && now - lastPaint >= 40))) {
+    if (viewport.width && (dirty || moving || (animated && now - lastPaint >= 24))) {
       context.setTransform(view.width / viewport.width, 0, 0, view.height / viewport.height, 0, 0);
       drawFrame(context, viewport.width, viewport.height);
       lastPaint = now;

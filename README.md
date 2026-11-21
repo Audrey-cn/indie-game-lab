@@ -1,5 +1,5 @@
 <h1 align="center">月面采集站 · Lunar Field Station</h1>
-<p align="center"><strong>1.75 MB 单文件离线可运行的 WebGL 2 月面驾驶与渲染技术切片（Three.js r182）</strong></p>
+<p align="center"><strong>1.81 MB 单文件离线可运行的 WebGL 2 三模式月面 3D 游戏与图形技术切片（Three.js r182）</strong></p>
 
 <p align="center">
   <a href="https://audrey-cn.github.io/lunar-field-station/"><img src="./media/play-zh.png" width="146" height="42" alt="在线试玩"></a>
@@ -8,13 +8,13 @@
 
 <p align="center">
   <strong>简体中文</strong> · <a href="./README.en.md">English</a> ·
+  <a href="./docs/GAME_DESIGN.md">玩法与设计白皮书</a> ·
   <a href="./docs/ARCHITECTURE.md">系统架构</a> ·
   <a href="./docs/RENDERING_BREAKDOWN.md">渲染管线拆解</a> ·
   <a href="./docs/OPTIMIZATION_LOG.md">性能优化实测</a> ·
-  <a href="./docs/controls.zh-CN.md">操作手册</a> ·
   <a href="./CHANGELOG.md">更新日志</a>
 </p>
-<p align="center"><sub>v0.2.1 · WebGL 2 · Three.js r182 · 1.75 MB 单文件（Gzip 895 KB） · Draw Calls -48% · 面数 -59% · 按 <code>F2</code> 开启实时渲染 Breakdown</sub></p>
+<p align="center"><sub>v0.3.0 · WebGL 2 · Three.js r182 · 1.81 MB 单文件（Gzip 806 KB） · 3 大玩法模式 · 3D 实时变形机库 · 手机竖/横屏全适配 · 按 <code>F2</code> 开启实时渲染 Breakdown</sub></p>
 
 ---
 
@@ -49,20 +49,31 @@
 
 ---
 
-## 双模式玩法与交互体验
+## 三大玩法模式与全端交互体验（v0.3.0）
 
-1. **完整科考任务（Campaign）**：驾驶 6 轮采样车，跟随随行无人机「枝灯」在月球南极钻取岩芯、读取勘测仪，返回工坊用机械臂依次部署中继站、地形观测站与太阳能补给站，途中可停靠望远镜拍摄地球。
-2. **60 秒极速采集（Arcade Sprint）**：面向高节奏正反馈设计的街机挑战模式——高速穿环瞬时采集、`×1 → ×5` 连击倍率与递增音阶音效、低重力飞坡滞空奖励（Air Jump Bonus）+ 推进充能、Spring 镜头微震与动态 FOV 扩张。
+1. **完整任务 2.0（Campaign 2.0）**（[`src/simulation/lunar-campaign-plus.mjs`](./src/simulation/lunar-campaign-plus.mjs)）：64m×64m 环形山开放盆地、轨道空降开场、中继激光链路/观测站六边形护盾穹顶/太阳能磁轨建设、`[Q]` 地质声呐搜寻遗迹、太阳耀斑与微陨石事件、**地球光学望远镜双层动态云流拍照彩蛋**，以及 SLN-07 火箭点火升空终局。
+2. **深空搜打撤 · 肉鸽远征 & 3D 实时变形机库**（[`src/simulation/lunar-extraction.mjs`](./src/simulation/lunar-extraction.mjs)）：4 种动态月面地貌、低矮柔和收缩电磁风暴圈（联动雷达虚线圈）、野外应急中继站/跳台/陨石核、三选一战术卡牌，以及 4 台可实时 3D 变形载具与免费试驾/悬赏经济闭环。
+3. **星际磁吸竞速 · 狂野轨道（Orbital Mag-Lev GP）**（[`src/simulation/lunar-race.mjs`](./src/simulation/lunar-race.mjs)）：星港霓虹都市 / 赤峡熔岩矿区 / 天穹 360° 反重力星环三大专属 3D 赛道、5 档渐进加速与惯性滑行尾段、3D 氦-3 能量瓶续杯氮气、写实撞飞特写与 4 层物理碰撞音效。
 
-| 钻取岩芯 | GPU 地球观测（可见光 / 远紫外） |
+| 完整任务 2.0 & 地球望远镜彩蛋 | WebGL 2 双层动态云流地球观测 |
 | :---: | :---: |
-| ![机械臂钻取晶样的游戏截图](./media/expedition-demo.jpg) | ![月面望远镜里的地球全景](./media/earth-observation.jpg) |
+| ![完整任务 2.0 实机画面](./media/showcase-campaign-2.jpg) | ![地球双层流动云层与旋涡扩散](./media/showcase-earth-clouds.jpg) |
 
-## 优化成果速览（v0.1.1 → v0.2.1）
+| 星际磁吸竞速 · 氦-3 能量瓶赛道 | 写实撞毁击飞特写 |
+| :---: | :---: |
+| ![星际磁吸竞速实机画面](./media/showcase-orbital-race.jpg) | ![竞速写实撞飞特写](./media/showcase-race-knockdown.jpg) |
+
+| 手机横屏 3D 变形机库展厅 | 手机竖屏触控零遮挡布局 |
+| :---: | :---: |
+| ![手机横屏 3D 变形机库](./media/showcase-mobile-hangar.jpg) | ![手机竖屏故事模式触控界面](./media/showcase-mobile-portrait.jpg) |
+
+> 完整玩法循环、经济模型与多端设计详解见 [`docs/GAME_DESIGN.md`](./docs/GAME_DESIGN.md)。
+
+## 优化成果速览（v0.1.1 → v0.3.0）
 
 | 优化维度 | 优化前 | 优化后 | 收益 |
 | :--- | :---: | :---: | :---: |
-| **单文件离线包体** | 5.32 MB | **1.75 MB（Gzip 895 KB）** | **-67.2%**（达 Playable Ads 轻量标准） |
+| **单文件离线包体（含全三模式）** | 5.32 MB（单模式） | **1.81 MB（Gzip 806 KB）** | **-66.0%**（0 字节程序化深空合成音替代 275 KB 音频） |
 | **桌面 / 移动 Draw Calls** | 473 / 542 | **245 / 261** | **-48.2% / -51.8%**（消除 `transmission` 双 Pass + 合批） |
 | **桌面 / 移动场景面数** | 1.40M / 1.46M | **577k / 571k** | **-58.9% / -60.9%**（自适应地形细分 + 远景 LOD） |
 | **虚拟车辙显存占用** | 12.0 MB（全图 2048²） | **397 KB**（稀疏分页按需分配） | **-96.8% VRAM** |

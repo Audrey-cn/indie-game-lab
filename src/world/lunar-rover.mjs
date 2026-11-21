@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { makeEquipmentFinish } from "../rendering/lunar-equipment-finish.mjs";
+import { getAerospaceTrimSheet } from "../rendering/lunar-trim-sheet.mjs";
 
 const HALF_PI = Math.PI * 0.5;
 const TAU = Math.PI * 2;
@@ -425,21 +426,27 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
   assembly.name = "sample-handling-arm";
   rover.add(assembly);
   const shoulder = new THREE.Vector3(0.533, 0.911, 0.697);
-  const stowedMast = new THREE.Vector3(0.603, 1.074, 0.505);
-  const stowedCrosshead = new THREE.Vector3(0.628, 1.056, 0.284);
+  const stowedMast = new THREE.Vector3(0.585, 1.11, 0.53);
+  const stowedCrosshead = new THREE.Vector3(0.628, 1.24, 0.30);
   const stowedWrist = new THREE.Vector3(0.632, 1.085, 0.106);
-  const raisedMast = new THREE.Vector3(0.559, 1.79, 0.692);
-  const raisedCrosshead = new THREE.Vector3(0.628, 1.80, 0.284);
+  const raisedMast = new THREE.Vector3(0.552, 1.38, 0.688);
+  const raisedCrosshead = new THREE.Vector3(0.628, 1.82, 0.284);
   const raisedWrist = new THREE.Vector3(0.632, 1.64, 0.106);
   const mastPosition = new THREE.Vector3();
   const crossheadPosition = new THREE.Vector3();
   const wristPosition = new THREE.Vector3();
+  const smoothWrist = new THREE.Vector3().copy(stowedWrist);
+  const wristVel = new THREE.Vector3();
   const scanPoint = new THREE.Vector3(1.20, 0.55, 0.34);
   const candidate = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
   const direction = new THREE.Vector3();
   const right = new THREE.Vector3();
   const back = new THREE.Vector3();
+  const elbowSpan = new THREE.Vector3();
+  const elbowBend = new THREE.Vector3();
+  const elbowMid = new THREE.Vector3();
+  const ikElbow = new THREE.Vector3();
   const linkBasis = new THREE.Matrix4();
   const inverseVehicle = new THREE.Quaternion();
   const toolAttitude = new THREE.Quaternion();
@@ -450,70 +457,119 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
   const drillSeat = 0.037;
   const boomStowYaw = Math.atan2(raisedCrosshead.x - raisedMast.x, raisedMast.z - raisedCrosshead.z);
   const boomStowRadius = raisedMast.distanceTo(raisedCrosshead);
-  const liftRange = [0.012, 0.33];
-  const slewRange = [0.26, 0.60];
-  const reachRange = [0.42, 0.745];
-  const feedRange = [0.705, 0.974];
-  const foldRange = [0.008, 0.073];
+  // Overlapping multi-axis S-curve ranges replace the stiff 4-stage sequential step-machine,
+  // while foldRange stays [0.008, 0.075] so the vertical drill drops the core cleanly into the storage cup before locking.
+  const liftRange = [0.00, 0.42];
+  const slewRange = [0.10, 0.66];
+  const reachRange = [0.14, 0.78];
+  const feedRange = [0.46, 0.96];
+  const foldRange = [0.008, 0.075];
   const { clamp, damp, lerp, smootherstep } = THREE.MathUtils;
   const scanStatus = lenses(0x88eed9, 0.7);
+  const drillHeatMat = new THREE.MeshStandardMaterial({
+    color: 0x43484c, metalness: 0.78, roughness: 0.34,
+    emissive: 0xff5a18, emissiveIntensity: 0, toneMapped: false,
+  });
 
+  // Open aerospace truss/clevis arm link with twin machined rails, accent fairing & telescopic hydraulic inner stage.
   function makeLink(name, sleeveLength, width) {
     const frame = new THREE.Group();
     frame.name = name;
     assembly.add(frame);
     const sleeve = partBatch(frame);
-    box(sleeve, iron, width, sleeveLength, width * 0.84, 0, sleeveLength * 0.49, 0, width * 0.16);
-    box(sleeve, accent, width * 1.04, sleeveLength * 0.64, width * 0.41,
-      0, sleeveLength * 0.48, width * 0.31, 0.007);
-    box(sleeve, rim, width * 0.93, 0.023, width * 0.8, 0, sleeveLength * 0.97, 0, 0.005);
+    // Twin machined side cheek rails + cross-ribs (replaces solid rectangular box tube)
+    for (const s of [-1, 1]) {
+      box(sleeve, iron, width * 0.24, sleeveLength, width * 0.78, s * width * 0.38, sleeveLength * 0.50, 0, width * 0.06);
+      box(sleeve, rim, width * 0.10, sleeveLength * 0.86, width * 0.24, s * width * 0.49, sleeveLength * 0.50, width * 0.18, 0.003);
+    }
+    for (let r = 0; r < 3; r++) {
+      const ry = sleeveLength * (0.20 + r * 0.30);
+      box(sleeve, accent, width * 0.88, width * 0.28, width * 0.52, 0, ry, width * 0.16, 0.005);
+    }
+    box(sleeve, rim, width * 0.98, 0.024, width * 0.88, 0, sleeveLength * 0.97, 0, 0.005);
+    // Exterior hydraulic cylinder barrel bolted alongside the truss sleeve
+    pin(sleeve, iron, width * 0.16, sleeveLength * 0.78, 0, sleeveLength * 0.46, -width * 0.48, "y", 10);
+    pin(sleeve, accent, width * 0.19, 0.022, 0, sleeveLength * 0.84, -width * 0.48, "y", 10);
     sleeve.attach();
 
     const rod = new THREE.Group();
     frame.add(rod);
     const rail = partBatch(rod);
-    box(rail, rim, width * 0.53, 1, width * 0.51, 0, 0.5, 0, 0.006);
-    box(rail, rubber, width * 0.12, 1, width * 0.33, width * 0.28, 0.5, 0, 0.001);
+    // Twin chrome guide rods + central hydraulic piston + flexible dark cable conduit
+    for (const s of [-1, 1]) {
+      pin(rail, rim, width * 0.15, 1, s * width * 0.19, 0.5, 0, "y", 10);
+    }
+    pin(rail, rim, width * 0.10, 1, 0, 0.5, -width * 0.48, "y", 8);
+    box(rail, rubber, width * 0.14, 1, width * 0.26, 0, 0.5, width * 0.28, 0.003);
     rail.attach();
     return { frame, rod, sleeveLength };
   }
 
-  const mast = makeLink("sampler-mast", 0.195, 0.077);
-  const boom = makeLink("sampler-boom", 0.177, 0.069);
-  const feed = makeLink("sampler-feed", 0.132, 0.057);
+  const mast = makeLink("sampler-mast", 0.20, 0.082);
+  const boom = makeLink("sampler-boom", 0.22, 0.072);
+  const feed = makeLink("sampler-feed", 0.18, 0.058);
+
+  // High-torque circular planetary servo actuators at each joint
   function hinge(name, radius) {
     const pivot = new THREE.Group();
     pivot.name = name;
     assembly.add(pivot);
     const motor = partBatch(pivot);
-    pin(motor, iron, radius, radius * 1.8, 0, 0, 0);
-    pin(motor, rim, radius * 0.65, 0.014, radius, 0, 0, "x", 14);
-    pin(motor, accent, radius * 0.35, 0.007, radius + 0.008, 0, 0, "x", 8);
+    pin(motor, iron, radius, radius * 1.9, 0, 0, 0, "x", 16);
+    for (const s of [-1, 1]) {
+      pin(motor, rim, radius * 0.72, 0.016, s * radius * 0.96, 0, 0, "x", 14);
+      pin(motor, accent, radius * 0.42, 0.010, s * (radius * 0.96 + 0.009), 0, 0, "x", 10);
+    }
     motor.attach();
     return pivot;
   }
-  const mastHinge = hinge("sampler-mast-hinge", 0.052);
-  const feedHinge = hinge("sampler-feed-hinge", 0.037);
+  const shoulderTurret = hinge("sampler-shoulder-turret", 0.058);
+  shoulderTurret.position.copy(shoulder);
+  const mastHinge = hinge("sampler-mast-hinge", 0.054);
+  const feedHinge = hinge("sampler-feed-hinge", 0.042);
 
   const wrist = new THREE.Group();
   wrist.name = "sampler-wrist";
   assembly.add(wrist);
   const carriage = partBatch(wrist);
-  box(carriage, iron, 0.084, 0.075, 0.079, 0, 0, 0, 0.014);
-  box(carriage, accent, 0.074, 0.021, 0.067, 0, -0.041, 0, 0.007);
-  pin(carriage, rim, 0.024, 0.042, -0.037, -0.016, -0.016, "y");
-  pin(carriage, optics, 0.014, 0.007, -0.037, -0.04, -0.016, "y");
-  box(carriage, scanStatus, 0.020, 0.011, 0.031, 0.042, -0.016, 0.015, 0.002);
+  box(carriage, iron, 0.090, 0.078, 0.084, 0, 0, 0, 0.015);
+  box(carriage, accent, 0.078, 0.022, 0.072, 0, -0.042, 0, 0.007);
+  pin(carriage, rim, 0.026, 0.044, -0.039, -0.016, -0.016, "y", 14);
+  pin(carriage, optics, 0.015, 0.008, -0.039, -0.041, -0.016, "y", 12);
+  box(carriage, scanStatus, 0.022, 0.012, 0.034, 0.045, -0.016, 0.015, 0.002);
   carriage.attach();
+
+  // Holographic cyan laser pre-scan cone & target ring projected from the wrist optics before drilling bite
+  const scanBeamMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(0.32, 2.8, 2.55), toneMapped: false, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const scanBeam = new THREE.Mesh(new THREE.ConeGeometry(0.068, 0.28, 16, 1, true), scanBeamMat);
+  scanBeam.position.set(-0.036, -0.18, -0.014);
+  scanBeam.visible = false;
+  wrist.add(scanBeam);
+  const scanRingMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(0.45, 3.1, 2.8), toneMapped: false, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const scanRing = new THREE.Mesh(new THREE.RingGeometry(0.052, 0.068, 24), scanRingMat);
+  scanRing.rotation.x = -HALF_PI;
+  scanRing.position.set(0, -0.26, 0);
+  scanRing.visible = false;
+  wrist.add(scanRing);
 
   const drill = new THREE.Group();
   drill.name = "sampling-spindle";
   wrist.add(drill);
   const cutter = partBatch(drill);
-  pin(cutter, rim, 0.014, 0.094, 0, -0.047, 0, "y", 12);
-  coil(cutter, accent, [0, -0.102, 0], [0, -0.02, 0], 0.016);
-  cutter.add(iron, new THREE.ConeGeometry(0.017, 0.036, 10), [0, -0.105, 0], [Math.PI, 0, 0]);
+  pin(cutter, rim, 0.015, 0.094, 0, -0.047, 0, "y", 12);
+  coil(cutter, accent, [0, -0.102, 0], [0, -0.02, 0], 0.017);
   cutter.attach();
+  // Separate carbide tip mesh so it glows incandescent red-orange from drilling friction!
+  const drillTipMesh = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.040, 10), drillHeatMat);
+  drillTipMesh.position.set(0, -0.105, 0);
+  drillTipMesh.rotation.x = Math.PI;
+  drill.add(drillTipMesh);
 
   const gripper = new THREE.Group();
   const grip = new THREE.Object3D();
@@ -530,6 +586,7 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
     return jaw;
   });
 
+  // Illuminated Sample Storage Cup with animated dual iris petals that swing open during sample drop-off
   const storage = new THREE.Group();
   storage.name = "sample-storage-cup";
   storage.position.set(stowedWrist.x, 0.868, stowedWrist.z);
@@ -548,13 +605,32 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
   serviceBolt(storageHardware, rim, rubber, -0.083, -0.089, -0.054, "y");
   serviceBolt(storageHardware, rim, rubber, -0.084, -0.089, 0.054, "y");
   storageHardware.attach();
+  const cupGlowMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(0.42, 2.6, 2.35), toneMapped: false, transparent: true, opacity: 0.18,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const cupGlowRing = new THREE.Mesh(new THREE.RingGeometry(0.074, 0.092, 24), cupGlowMat);
+  cupGlowRing.rotation.x = -HALF_PI;
+  cupGlowRing.position.y = 0.003;
+  storage.add(cupGlowRing);
+  const cupPetals = [-1, 1].map(side => {
+    const hingeGroup = new THREE.Group();
+    hingeGroup.position.set(side * 0.092, 0.004, 0);
+    const petal = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.010, 0.142), rim);
+    petal.position.set(-side * 0.044, 0, 0);
+    hingeGroup.add(petal);
+    storage.add(hingeGroup);
+    return { hingeGroup, side };
+  });
 
   function poseLink(link, start, end, heading) {
     direction.subVectors(end, start);
     const length = direction.length();
     direction.multiplyScalar(1 / Math.max(0.001, length));
     right.set(Math.cos(heading), 0, Math.sin(heading));
-    right.addScaledVector(direction, -right.dot(direction)).normalize();
+    right.addScaledVector(direction, -right.dot(direction));
+    if (right.lengthSq() < 1e-5) right.set(1, 0, 0);
+    else right.normalize();
     back.crossVectors(right, direction).normalize();
     link.frame.position.copy(start);
     link.frame.quaternion.setFromRotationMatrix(linkBasis.makeBasis(right, direction, back));
@@ -562,11 +638,32 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
     link.rod.scale.y = Math.max(0.024, length - link.rod.position.y);
   }
 
+  // Analytical 2-Link Upward-Arching Elbow IK: computes an organic industrial elbow joint between A (shoulder) and B (wrist).
+  function solveElbow(origin, target, baseLen, out) {
+    elbowSpan.subVectors(target, origin);
+    const dist = Math.max(0.08, elbowSpan.length());
+    const seg = Math.max(baseLen, dist * 0.56);
+    const halfDist = dist * 0.5;
+    const arch = Math.sqrt(Math.max(0.0001, seg * seg - halfDist * halfDist));
+    // Project global UP orthogonal to the span vector so the elbow always arches gracefully upward in the arm's reach plane.
+    elbowBend.copy(up).addScaledVector(elbowSpan, -elbowSpan.y / (dist * dist));
+    if (elbowBend.lengthSq() < 1e-4) elbowBend.set(0, 0, -1);
+    else elbowBend.normalize();
+    elbowMid.copy(origin).addScaledVector(elbowSpan, 0.5);
+    return out.copy(elbowMid).addScaledVector(elbowBend, Math.min(arch, 0.76));
+  }
+
   let extension = 0;
   let actuatorVelocity = 0;
   let scanProgress = 0;
   let spindleSpeed = 0;
+  let drillHeat = 0;
+  let lidOpen = 0;
+  let animTime = 0;
   let targetHeading = boomStowYaw;
+  let currentHeadingSmooth = boomStowYaw;
+  let headingVel = 0;
+
   function canReachSample(target) {
     if (!target?.isVector3) return false;
     rover.worldToLocal(candidate.copy(target));
@@ -588,16 +685,17 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
     return 30 * t * t * (1 - t) * (1 - t) / (end - start);
   }
 
-  function updateSampler(dt, { active = false, progress = 0, target, mode = "precision" } = {}) {
+  function updateSampler(dt, { active = false, progress = 0, target, mode = "precision", delivering = false, smoothRetract = true } = {}) {
     drill.visible = true;
     gripper.visible = false;
+    animTime += dt;
     const operating = active && canReachSample(target);
     const rapid = mode === "rapid";
     if (operating) {
       scanProgress = damp(scanProgress, clamp(progress, 0, 1), 20, dt);
       scanPoint.copy(candidate);
       const heading = Math.atan2(scanPoint.x - raisedMast.x, raisedMast.z - scanPoint.z);
-      const previous = extension < 0.27 ? boomStowYaw : targetHeading;
+      const previous = extension < 0.20 ? boomStowYaw : targetHeading;
       const turn = Math.atan2(Math.sin(heading - previous), Math.cos(heading - previous));
       targetHeading = previous + turn;
     } else if (extension < 0.22) {
@@ -610,28 +708,28 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
     const currentReach = smootherstep(extension, ...reachRange);
     const sweepRadius = lerp(boomStowRadius, goalRadius, currentReach) + 0.18 * (1 - currentReach);
     const rotationTravel = Math.abs(targetHeading - boomStowYaw) * sweepRadius;
-    // Convert actuator phase speed to approximate tool speed so long, far-side reaches do not whip.
     const horizontal = Math.hypot(
       reachTravel * phaseDerivative(extension, reachRange),
       rotationTravel * phaseDerivative(extension, slewRange),
     );
-    const vertical = 0.61 * phaseDerivative(extension, liftRange)
+    const vertical = 0.45 * phaseDerivative(extension, liftRange)
       + Math.max(0.55, raisedWrist.y - scanPoint.y) * phaseDerivative(extension, feedRange);
-    const foldedTip = 0.25 * phaseDerivative(extension, foldRange);
-    const motionSlope = Math.max(1, horizontal + vertical + foldedTip);
-    const maxToolSpeed = operating ? (rapid ? 7.2 : 6.4) : 7.0;
+    const motionSlope = Math.max(1, horizontal + vertical);
+    const gentleReturn = !operating && smoothRetract;
+    const maxToolSpeed = operating ? (rapid ? 8.2 : 7.0) : (gentleReturn ? (delivering ? 2.5 : 3.0) : 7.8);
     const speedLimit = maxToolSpeed / motionSlope;
-    const requestedVelocity = clamp((destination - extension) * (rapid ? 12 : 8.6),
-      -Math.min(1.20, speedLimit), Math.min(rapid ? 1.76 : 1.17, speedLimit));
-    actuatorVelocity = damp(actuatorVelocity, requestedVelocity, 34, dt);
+    const maxRetractRate = gentleReturn ? (delivering ? 0.58 : 0.68) : 1.45;
+    const gain = gentleReturn ? 4.4 : (rapid ? 13 : 9.4);
+    const requestedVelocity = clamp((destination - extension) * gain,
+      -Math.min(maxRetractRate, speedLimit), Math.min(rapid ? 1.95 : 1.38, speedLimit));
+    actuatorVelocity = damp(actuatorVelocity, requestedVelocity, gentleReturn ? 9.5 : 28, dt);
     extension = clamp(extension + actuatorVelocity * dt, 0, 1);
 
-    // Shared phase boundaries preserve clearance on reversal, including after an interrupted scan.
     const lift = smootherstep(extension, ...liftRange);
     const slew = smootherstep(extension, ...slewRange);
     const reach = smootherstep(extension, ...reachRange);
     const feedDepth = smootherstep(extension, ...feedRange);
-    const align = smootherstep(scanProgress, 0.18, 0.296);
+    const align = smootherstep(scanProgress, 0.16, 0.296);
     const bite = smootherstep(scanProgress, 0.307, 0.72);
     const seal = smootherstep(scanProgress, 0.78, 0.971);
     const toolStroke = 0.024 * bite;
@@ -639,76 +737,146 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
     const travelAboveCut = drillTipLength + drillSeat + toolStroke + tipClearance;
     rover.getWorldQuaternion(inverseVehicle).invert();
     drillAxis.copy(up).applyQuaternion(inverseVehicle);
-    drillAxis.lerp(up, 1 - smootherstep(feedDepth, 0.56, 0.98)).normalize();
+    drillAxis.lerp(up, 1 - smootherstep(feedDepth, 0.48, 0.96)).normalize();
     resolvedWrist.copy(scanPoint).addScaledVector(drillAxis, travelAboveCut);
-    const raisedWristY = Math.max(raisedWrist.y, resolvedWrist.y + 0.18);
-    const raisedCrossheadY = Math.max(raisedCrosshead.y, raisedWristY + 0.21);
 
+    // Coordinated multi-axis shoulder + spring-damped turret yaw + curved overhead sweep trajectory for wrist
     mastPosition.copy(stowedMast).lerp(raisedMast, lift);
-    crossheadPosition.copy(stowedCrosshead).lerp(raisedCrosshead, lift);
-    wristPosition.copy(stowedWrist).lerp(raisedWrist, lift);
-    const foldedHeading = Math.atan2(crossheadPosition.x - mastPosition.x, mastPosition.z - crossheadPosition.z);
-    const foldedRadius = Math.hypot(crossheadPosition.x - mastPosition.x, crossheadPosition.z - mastPosition.z);
-    const scanRadius = Math.hypot(scanPoint.x - mastPosition.x, scanPoint.z - mastPosition.z);
-    const currentHeading = lerp(foldedHeading, targetHeading, slew);
-    const currentRadius = lerp(foldedRadius, scanRadius, reach);
-    direction.subVectors(wristPosition, crossheadPosition)
-      .applyAxisAngle(up, foldedHeading - currentHeading).multiplyScalar(1 - reach);
-    crossheadPosition.x = mastPosition.x + Math.sin(currentHeading) * currentRadius;
-    crossheadPosition.z = mastPosition.z - Math.cos(currentHeading) * currentRadius;
-    crossheadPosition.y += (raisedCrossheadY - raisedCrosshead.y) * reach;
-    wristPosition.x = lerp(crossheadPosition.x + direction.x, resolvedWrist.x, feedDepth);
-    wristPosition.z = lerp(crossheadPosition.z + direction.z, resolvedWrist.z, feedDepth);
-    wristPosition.y = lerp(wristPosition.y + (raisedWristY - raisedWrist.y) * reach, resolvedWrist.y, feedDepth);
+    const foldedHeading = Math.atan2(stowedWrist.x - mastPosition.x, mastPosition.z - stowedWrist.z);
+    const desiredHeading = lerp(foldedHeading, targetHeading, slew);
+    if (dt > 0) {
+      const springK = 54, damperC = 11.5;
+      headingVel += ((desiredHeading - currentHeadingSmooth) * springK - headingVel * damperC) * dt;
+      currentHeadingSmooth += headingVel * dt;
+    } else {
+      currentHeadingSmooth = desiredHeading;
+      headingVel = 0;
+    }
 
+    // Arcing wrist path: lifts smoothly along a sweeping cylindrical arc before descending precisely onto resolvedWrist
+    const settledHeading = lerp(foldedHeading, currentHeadingSmooth, smootherstep(slew, 0.0, 0.14));
+    const stowedRad = Math.hypot(stowedWrist.x - mastPosition.x, stowedWrist.z - mastPosition.z);
+    const targetRad = Math.hypot(resolvedWrist.x - mastPosition.x, resolvedWrist.z - mastPosition.z);
+    const arcRadius = lerp(stowedRad, targetRad, reach);
+    const sweepArchY = lerp(stowedWrist.y, Math.max(raisedWrist.y, resolvedWrist.y + 0.26), smootherstep(lift, 0.18, 0.95));
+    const arcX = mastPosition.x + Math.sin(settledHeading) * arcRadius;
+    const arcZ = mastPosition.z - Math.cos(settledHeading) * arcRadius;
+    wristPosition.set(
+      lerp(arcX, resolvedWrist.x, feedDepth),
+      lerp(sweepArchY, resolvedWrist.y, feedDepth),
+      lerp(arcZ, resolvedWrist.z, feedDepth),
+    );
+    // Subtle 2nd-order inertial smoothing (fades off at high feedDepth AND near stow so both drilling & cup drop stay exact)
+    const springBlend = smootherstep(slew, 0.02, 0.18) * (1 - smootherstep(feedDepth, 0.72, 0.96));
+    if (dt > 0 && extension > 0.01) {
+      const settleStiff = lerp(75, 190, feedDepth);
+      const settleDamp = lerp(14, 26, feedDepth);
+      wristVel.x += ((wristPosition.x - smoothWrist.x) * settleStiff - wristVel.x * settleDamp) * dt;
+      wristVel.y += ((wristPosition.y - smoothWrist.y) * settleStiff - wristVel.y * settleDamp) * dt;
+      wristVel.z += ((wristPosition.z - smoothWrist.z) * settleStiff - wristVel.z * settleDamp) * dt;
+      smoothWrist.addScaledVector(wristVel, dt);
+      wristPosition.lerp(smoothWrist, springBlend);
+    } else {
+      smoothWrist.copy(wristPosition);
+      wristVel.set(0, 0, 0);
+    }
+
+    // High-frequency mechanical recoil micro-vibration during active cutting
+    const cutting = operating ? align * (1 - seal) * smootherstep(feedDepth, 0.63, 0.98) : 0;
+    if (cutting > 0.02) {
+      const recoilAmp = cutting * (rapid ? 0.0085 : 0.0052);
+      wristPosition.x += Math.sin(animTime * 112) * recoilAmp * 0.45;
+      wristPosition.y += Math.sin(animTime * 148) * recoilAmp;
+      wristPosition.z += Math.cos(animTime * 97) * recoilAmp * 0.45;
+    }
+
+    // Solve true upward-arching 2-link analytical elbow IK and blend cleanly into stowed posture
+    solveElbow(mastPosition, wristPosition, 0.78, ikElbow);
+    crossheadPosition.copy(stowedCrosshead).lerp(ikElbow, smootherstep(extension, 0.02, 0.26));
+
+    const armYaw = Math.atan2(wristPosition.x - mastPosition.x, mastPosition.z - wristPosition.z);
     poseLink(mast, shoulder, mastPosition, foldedHeading);
-    poseLink(boom, mastPosition, crossheadPosition, currentHeading);
-    poseLink(feed, crossheadPosition, wristPosition, currentHeading);
+    poseLink(boom, mastPosition, crossheadPosition, armYaw);
+    poseLink(feed, crossheadPosition, wristPosition, armYaw);
+    shoulderTurret.rotation.y = -armYaw;
     mastHinge.position.copy(mastPosition);
     mastHinge.quaternion.copy(boom.frame.quaternion);
     feedHinge.position.copy(crossheadPosition);
     feedHinge.quaternion.copy(feed.frame.quaternion);
     wrist.position.copy(wristPosition);
+
+    const idleBreath = extension < 0.02 ? Math.sin(animTime * 1.15) * 0.045 : 0;
     const fold = (1 - smootherstep(extension, ...foldRange)) * HALF_PI;
-    headingAndFold.set(0, -currentHeading, fold, "YZX");
+    headingAndFold.set(0, -armYaw + idleBreath, fold, "YZX");
     toolAttitude.setFromEuler(headingAndFold);
     wrist.quaternion.setFromUnitVectors(up, drillAxis).multiply(toolAttitude);
+
     drill.position.y = -drillSeat - toolStroke;
-    const cutting = operating ? align * (1 - seal) * smootherstep(feedDepth, 0.63, 0.98) : 0;
-    const nextSpeed = damp(spindleSpeed, (rapid ? 49 : 34) * cutting, 11, dt);
+    const nextSpeed = damp(spindleSpeed, (rapid ? 54 : 38) * cutting, 11, dt);
     drill.rotation.y = (drill.rotation.y + (spindleSpeed + nextSpeed) * 0.5 * dt) % TAU;
     spindleSpeed = nextSpeed;
-    scanStatus.emissiveIntensity = 0.36 + slew * (0.82 + cutting * 0.32);
+
+    // Thermal red-orange heat glow on the carbide drill tip during cutting
+    drillHeat = damp(drillHeat, cutting > 0.08 ? (rapid ? 1.0 : 0.72) : 0, cutting > 0.08 ? 3.5 : 1.4, dt);
+    drillHeatMat.emissiveIntensity = drillHeat * 3.1;
+    scanStatus.emissiveIntensity = 0.40 + slew * (0.95 + cutting * 0.55);
+
+    // Pre-drill cyan holographic laser targeting cone & reticle ring
+    const preScan = operating && feedDepth > 0.52 && scanProgress < 0.36 ? smootherstep(feedDepth, 0.52, 0.88) * (1 - smootherstep(scanProgress, 0.28, 0.36)) : 0;
+    scanBeam.visible = preScan > 0.02;
+    scanRing.visible = preScan > 0.02;
+    if (preScan > 0.02) {
+      const pulse = 0.72 + 0.28 * Math.sin(animTime * 24);
+      scanBeamMat.opacity = preScan * 0.34 * pulse;
+      scanRingMat.opacity = preScan * 0.78 * pulse;
+      const ringScale = 1.25 - preScan * 0.35 + Math.sin(animTime * 16) * 0.06;
+      scanRing.scale.setScalar(ringScale);
+      scanRing.rotation.z = animTime * 3.2;
+    }
+
+    // Auto-opening glowing sample storage cup petals while stowing/delivering a core
+    const wantLidOpen = delivering || (operating && seal > 0.25) ? 1 : 0;
+    lidOpen = damp(lidOpen, wantLidOpen, 12, dt);
+    cupGlowMat.opacity = 0.14 + lidOpen * 0.72 * (0.85 + 0.15 * Math.sin(animTime * 10));
+    for (const { hingeGroup, side } of cupPetals) {
+      hingeGroup.rotation.z = -side * lidOpen * 1.65;
+    }
   }
 
   function poseKitArm(target, amount, clamped, caseAttitude) {
     drill.visible = false;
     gripper.visible = true;
-    for (const [index, jaw] of jaws.entries()) jaw.position.x = (index * 2 - 1) * lerp(0.046, 0.026, clamped);
+    scanBeam.visible = false;
+    scanRing.visible = false;
+    // Crisp hydraulic snap clamp curve on jaws
+    const jawClose = Math.pow(clamp(clamped, 0, 1), 0.45);
+    for (const [index, jaw] of jaws.entries()) jaw.position.x = (index * 2 - 1) * lerp(0.050, 0.025, jawClose);
     rover.getWorldQuaternion(inverseVehicle).invert();
     toolAttitude.copy(inverseVehicle).multiply(caseAttitude);
     drillAxis.copy(up).applyQuaternion(toolAttitude);
     resolvedWrist.copy(target);
     rover.worldToLocal(resolvedWrist).addScaledVector(drillAxis, -grip.position.y);
 
-    mastPosition.copy(stowedMast).lerp(raisedMast, amount);
-    wristPosition.copy(stowedWrist).lerp(resolvedWrist, amount);
-    wristPosition.y += 0.66 * Math.sin(Math.PI * amount);
-    const heading = Math.atan2(wristPosition.x - mastPosition.x, mastPosition.z - wristPosition.z);
-    crossheadPosition.copy(stowedCrosshead);
-    direction.copy(resolvedWrist);
-    direction.y = Math.max(raisedCrosshead.y, resolvedWrist.y + 0.19);
-    crossheadPosition.lerp(direction, amount);
+    const smoothAmt = smootherstep(amount, 0, 1);
+    mastPosition.copy(stowedMast).lerp(raisedMast, smoothAmt);
+    wristPosition.copy(stowedWrist).lerp(resolvedWrist, smoothAmt);
+    // Graceful overhead industrial arc with slight heavy-load dip that zeroes cleanly at amount === 1 (preserves gripGap === 0)
+    wristPosition.y += 0.58 * Math.sin(Math.PI * smoothAmt) - 0.022 * jawClose * Math.sin(Math.PI * smoothAmt);
+    solveElbow(mastPosition, wristPosition, 0.82, ikElbow);
+    crossheadPosition.copy(stowedCrosshead).lerp(ikElbow, smootherstep(smoothAmt, 0.0, 0.28));
 
+    const heading = Math.atan2(wristPosition.x - mastPosition.x, mastPosition.z - wristPosition.z);
     poseLink(mast, shoulder, mastPosition, boomStowYaw);
     poseLink(boom, mastPosition, crossheadPosition, heading);
     poseLink(feed, crossheadPosition, wristPosition, heading);
+    shoulderTurret.rotation.y = -heading;
     mastHinge.position.copy(mastPosition);
     mastHinge.quaternion.copy(boom.frame.quaternion);
     feedHinge.position.copy(crossheadPosition);
     feedHinge.quaternion.copy(feed.frame.quaternion);
     wrist.position.copy(wristPosition);
     wrist.quaternion.copy(toolAttitude);
+    smoothWrist.copy(wristPosition);
   }
 
   function getKitGrip(out) { return grip.getWorldPosition(out); }
@@ -718,8 +886,14 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
     actuatorVelocity = 0;
     scanProgress = 0;
     spindleSpeed = 0;
+    drillHeat = 0;
+    lidOpen = 0;
     targetHeading = boomStowYaw;
+    currentHeadingSmooth = boomStowYaw;
+    headingVel = 0;
     drill.rotation.y = 0;
+    smoothWrist.copy(stowedWrist);
+    wristVel.set(0, 0, 0);
     updateSampler(0);
   }
 
@@ -727,7 +901,7 @@ function createSampler(rover, { iron, rim, accent, rubber, optics }) {
   return { canReachSample, updateSampler, getSamplerTip, getSamplerStorage, resetSampler, poseKitArm, getKitGrip };
 }
 
-function makeRearGuard(chassis, mount, side, { paint, iron, machine }) {
+function makeRearGuard(chassis, mount, side, { paint, iron, machine, undercarriage, accent }) {
   const guard = new THREE.Group();
   guard.name = "rear-wheel-mudguard";
   mount.add(guard);
@@ -832,6 +1006,17 @@ function makeRearGuard(chassis, mount, side, { paint, iron, machine }) {
     pin(parts, machine, 0.009, 0.007, side * 0.144, y, z, "x", 9);
     pin(parts, iron, 0.004, 0.002, side * 0.148, y, z, "x", 6);
   }
+  // Sculpted external stiffening ribs, dark edge trim & amber clearance markers break up the smooth white fender arc.
+  for (const ribAngle of [-0.56, 0.0, 0.56]) {
+    const ry = 0.336 * Math.cos(ribAngle);
+    const rz = 0.336 * Math.sin(ribAngle);
+    box(parts, iron, 0.252, 0.015, 0.024, side * 0.012, ry, rz, 0.004, [ribAngle, 0, 0]);
+    box(parts, machine, 0.236, 0.007, 0.010, side * 0.012, ry + 0.009 * Math.cos(ribAngle), rz + 0.009 * Math.sin(ribAngle), 0.002, [ribAngle, 0, 0]);
+  }
+  // Trailing dark rubber/titanium debris flap & recessed side clearance marker.
+  const trailA = 0.94;
+  box(parts, undercarriage, 0.242, 0.056, 0.016, side * 0.012, 0.318 * Math.cos(trailA) - 0.022, 0.318 * Math.sin(trailA) + 0.016, 0.005, [0.42, 0, 0]);
+  box(parts, accent, 0.012, 0.018, 0.044, side * 0.143, 0.316 * Math.cos(0.42), 0.316 * Math.sin(0.42), 0.003, [0.42, 0, 0]);
   parts.attach();
 
   const sleeve = new THREE.Group();
@@ -950,10 +1135,16 @@ export function createLunarRover({ glow } = {}) {
   rover.name = "Selene L-07 lunar rover";
   rover.rotation.y = -0.53;
   const body = partBatch(rover);
+  const trim = getAerospaceTrimSheet();
   const paint = coatedPanels();
+  paint.normalMap = trim.normalMap;
+  paint.normalScale = new THREE.Vector2(0.42, 0.42);
   const { foil, fabric } = blanketMaterials();
   const machine = machinedMetal();
-  const iron = new THREE.MeshStandardMaterial({ color: 0x353b3d, metalness: 0.46, roughness: 0.57 });
+  const iron = new THREE.MeshStandardMaterial({
+    color: 0x353b3d, metalness: 0.50, roughness: 0.54,
+    normalMap: trim.normalMap, normalScale: new THREE.Vector2(0.35, 0.35),
+  });
   const undercarriage = new THREE.MeshStandardMaterial({ color: 0x565a57, metalness: 0.50, roughness: 0.65 });
   const rim = new THREE.MeshStandardMaterial({ color: 0x9ca0a1, metalness: 0.70, roughness: 0.68,
     roughnessMap: machine.roughnessMap, bumpMap: machine.bumpMap, bumpScale: 0.0042 });
@@ -962,7 +1153,11 @@ export function createLunarRover({ glow } = {}) {
   const lowerArmor = weatherRoverBody(iron.clone(), dustMask, 0.98, 0.65);
   const lowerHardware = weatherRoverBody(undercarriage.clone(), dustMask, 0.94, 0.56);
   const sillMetal = weatherRoverBody(rim.clone(), dustMask, 0.63, 0.76);
-  const sideBlanket = weatherRoverBody(foil.clone(), dustMask, 0.68, 0.40);
+  const goldFoil = foil.clone();
+  goldFoil.color.setHex(0xdcb056);
+  goldFoil.metalness = 0.72;
+  goldFoil.roughness = 0.34;
+  const sideBlanket = weatherRoverBody(goldFoil, dustMask, 0.52, 0.40);
   const latchMetal = makeEquipmentFinish(0x96958b, "anodized", 73);
   const tread = new THREE.MeshStandardMaterial({ color: 0x737876, metalness: 0.61, roughness: 0.61 });
   const accent = new THREE.MeshStandardMaterial({ color: 0xae7547, metalness: 0.49, roughness: 0.53 });
@@ -976,25 +1171,68 @@ export function createLunarRover({ glow } = {}) {
   const optics = new THREE.MeshPhysicalMaterial({
     color: 0x243a48, metalness: 0.37, roughness: 0.17, clearcoat: 1, clearcoatRoughness: 0.1,
   });
-  const frontLamps = lenses(0xdaf1ff, 1.65);
-  const rearLamps = lenses(0xff6940, 1.6);
-  const indicator = lenses(0xffba6a, 0.65);
+  const frontLamps = lenses(0xdaf1ff, 3.1);
+  const rearLamps = lenses(0xff6940, 2.85);
+  const indicator = lenses(0xffba6a, 1.45);
 
+  // Redesigned Wedge-Stance Tapered Armored Hull (forward-leaning explorer silhouette instead of flat boxy tub).
   const hull = [
-    [-0.33, -0.78], [0.30, -0.81], [0.43, -0.57], [0.465, -0.16], [0.433, 0.15],
-    [0.461, 0.55], [0.36, 0.723], [-0.341, 0.723], [-0.46, 0.55], [-0.46, -0.49],
+    [-0.27, -0.85], [0.26, -0.85], [0.42, -0.60], [0.475, -0.18], [0.445, 0.16],
+    [0.468, 0.56], [0.35, 0.735], [-0.34, 0.735], [-0.468, 0.56], [-0.46, -0.52],
   ];
-  armoredDeck(body, lowerArmor, hull.map(([x, z]) => [x * 0.82, z * 0.97]), 0.272, 0.166, 0.022);
-  armoredDeck(body, hullCoating, hull, 0.442, 0.169, 0.018);
-  armoredDeck(body, undercarriage, hull.map(([x, z]) => [x * 0.94, z * 0.95]), 0.624, 0.031, 0.015);
-  box(body, paint, 0.582, 0.141, 0.720, -0.079, 0.718, 0.269, 0.014);
-  box(body, iron, 0.61, 0.034, 0.79, -0.075, 0.655, 0.227, 0.013);
-  box(body, undercarriage, 0.332, 0.12, 0.281, 0.262, 0.689, -0.5, 0.025);
+  armoredDeck(body, lowerArmor, hull.map(([x, z]) => [x * 0.80, z * 0.96]), 0.268, 0.168, 0.024);
+  armoredDeck(body, hullCoating, hull, 0.440, 0.164, 0.020);
+  armoredDeck(body, undercarriage, hull.map(([x, z]) => [x * 0.92, z * 0.94]), 0.618, 0.032, 0.015);
+  // Sculpted tiered wedge upper avionics cowl with raked front glacis
+  const upperCowl = [
+    [-0.29, -0.11], [0.15, -0.11], [0.23, 0.02], [0.23, 0.57],
+    [0.14, 0.67], [-0.28, 0.67], [-0.37, 0.55], [-0.37, 0.02],
+  ];
+  armoredDeck(body, paint, upperCowl, 0.664, 0.098, 0.024);
+  // Dark recessed structural spine & stepped mechanical top cap
+  box(body, iron, 0.61, 0.034, 0.79, -0.075, 0.652, 0.227, 0.013);
+  box(body, undercarriage, 0.46, 0.048, 0.54, -0.078, 0.766, 0.31, 0.014);
+  for (let rib = 0; rib < 6; rib++) {
+    box(body, iron, 0.49, 0.014, 0.018, -0.078, 0.764, 0.07 + rib * 0.092, 0.004);
+  }
+  // Sculpted domed pressurized cryo/fuel cylinders tucked into the starboard & port cheek recesses.
+  const tankProfile = [
+    new THREE.Vector2(0.001, -0.175), new THREE.Vector2(0.038, -0.168), new THREE.Vector2(0.056, -0.135),
+    new THREE.Vector2(0.058, 0.135), new THREE.Vector2(0.038, 0.168), new THREE.Vector2(0.001, 0.175),
+  ];
+  for (const [tx, tz, mat] of [[0.235, 0.04, rim], [-0.375, -0.24, accent]]) {
+    const vessel = new THREE.LatheGeometry(tankProfile, 14);
+    body.add(mat, vessel, [tx, 0.72, tz], [HALF_PI, 0, 0]);
+    for (const band of [-0.085, 0.085]) {
+      body.add(iron, new THREE.TorusGeometry(0.061, 0.008, 6, 14), [tx, 0.72, tz + band]);
+    }
+  }
+  // Forward sloped armored nose glacis & beveled under-nose bash-plate ribs
+  box(body, paint, 0.44, 0.042, 0.24, 0, 0.60, -0.71, 0.012, [0.34, 0, 0]);
+  for (let r = -2; r <= 2; r++) {
+    box(body, rim, 0.024, 0.022, 0.16, r * 0.12, 0.335, -0.81, 0.005, [0.42, 0, 0]);
+  }
+  // Sculpted chamfered starboard nav/lidar sensor pod
+  const sensorPod = [
+    [0.105, -0.62], [0.355, -0.62], [0.412, -0.56], [0.412, -0.40],
+    [0.355, -0.35], [0.135, -0.35], [0.095, -0.41], [0.095, -0.56],
+  ];
+  armoredDeck(body, undercarriage, sensorPod, 0.635, 0.098, 0.016);
+  box(body, iron, 0.26, 0.018, 0.21, 0.255, 0.742, -0.485, 0.006);
+  for (let f = 0; f < 5; f++) {
+    box(body, rim, 0.23, 0.012, 0.012, 0.255, 0.754, -0.56 + f * 0.036, 0.002);
+  }
+  for (const lx of [0.195, 0.315]) {
+    pin(body, iron, 0.034, 0.024, lx, 0.688, -0.634, "z", 14);
+    pin(body, rim, 0.028, 0.008, lx, 0.688, -0.646, "z", 14);
+    pin(body, optics, 0.021, 0.006, lx, 0.688, -0.649, "z", 12);
+  }
+  box(body, indicator, 0.022, 0.009, 0.008, 0.255, 0.722, -0.638, 0.002);
   box(body, lowerHardware, 0.86, 0.12, 0.105, 0, 0.361, 0.747, 0.022);
-  box(body, lowerHardware, 0.81, 0.1, 0.126, 0, 0.39, -0.766, 0.029);
-  box(body, iron, 0.36, 0.101, 0.037, 0, 0.554, -0.78, 0.009);
+  box(body, lowerHardware, 0.74, 0.10, 0.126, 0, 0.39, -0.785, 0.029);
+  box(body, iron, 0.36, 0.101, 0.037, 0, 0.554, -0.81, 0.009);
   for (let i = 0; i < 7; i++) {
-    box(body, rim, 0.044, 0.011, 0.012, (i - 3) * 0.047, 0.566, -0.799, 0.003);
+    box(body, rim, 0.044, 0.011, 0.012, (i - 3) * 0.047, 0.566, -0.83, 0.003);
   }
   // Removable rear backplane separates the radiator from the protected service ports.
   box(body, iron, 0.688, 0.157, 0.055, 0, 0.594, 0.721, 0.017);
@@ -1028,6 +1266,57 @@ export function createLunarRover({ glow } = {}) {
     box(body, lowerArmor, 0.109, 0.027, 0.091, x, 0.242, -0.645, 0.005);
     strut(body, lowerHardware, [x, 0.260, -0.61], [x, 0.270, 0.62], 0.013);
   }
+
+  // Sculpted LatheGeometry twin rear ion thruster bell nozzles + canted aerodynamic thruster cowlings.
+  const nozzleProfile = [
+    new THREE.Vector2(0.032, 0.0),
+    new THREE.Vector2(0.044, 0.025),
+    new THREE.Vector2(0.040, 0.055),
+    new THREE.Vector2(0.068, 0.125),
+    new THREE.Vector2(0.075, 0.140),
+    new THREE.Vector2(0.062, 0.140),
+    new THREE.Vector2(0.032, 0.052),
+  ];
+  for (const side of [-1, 1]) {
+    const x = side * 0.23;
+    const bell = new THREE.LatheGeometry(nozzleProfile, 16);
+    body.add(iron, bell, [x, 0.43, 0.71], [HALF_PI, 0, 0]);
+    body.add(rim, new THREE.TorusGeometry(0.070, 0.008, 8, 18), [x, 0.43, 0.845]);
+    body.add(accent, new THREE.TorusGeometry(0.048, 0.006, 6, 16), [x, 0.43, 0.772]);
+    // Angled armored thruster wing-cowls flanking each bell nozzle
+    box(body, paint, 0.028, 0.125, 0.165, side * 0.345, 0.435, 0.77, 0.006, [0, side * 0.14, -side * 0.18]);
+    box(body, accent, 0.014, 0.068, 0.135, side * 0.358, 0.435, 0.775, 0.003, [0, side * 0.14, -side * 0.18]);
+  }
+
+  // Signature Aerospace Tubular Exo-Cage Roll Frame (sweeps from front bull-bar over upper deck to rear bulkhead).
+  cable(body, rim, [
+    [-0.36, 0.43, -0.82], [-0.34, 0.56, -0.92], [-0.16, 0.58, -0.95],
+    [0.16, 0.58, -0.95], [0.34, 0.56, -0.92], [0.36, 0.43, -0.82],
+  ], 0.0155);
+  // Sweeping side exo-cage rails rising toward the aft power deck
+  for (const side of [-1, 1]) {
+    cable(body, rim, [
+      [side * 0.35, 0.56, -0.86],
+      [side * 0.40, 0.76, -0.58],
+      [side * 0.41, 0.91, -0.02],
+      [side * 0.40, 0.94, 0.52],
+      [side * 0.36, 0.73, 0.68],
+    ], 0.0135);
+    // Diagonal gusset struts tying exo-cage into chassis
+    strut(body, iron, [side * 0.40, 0.76, -0.58], [side * 0.44, 0.62, -0.34], 0.011);
+    strut(body, iron, [side * 0.41, 0.91, -0.02], [side * 0.42, 0.68, 0.18], 0.011);
+    // Compact canted outboard heat-rejection winglets on upper rear flanks
+    box(body, iron, 0.095, 0.014, 0.34, side * 0.465, 0.74, 0.34, 0.004, [0, 0, side * 0.38]);
+    box(body, accent, 0.072, 0.008, 0.28, side * 0.472, 0.752, 0.34, 0.002, [0, 0, side * 0.38]);
+  }
+  // Overhead exo-cage brow arch & auxiliary high-mount HDR LED light bar
+  cable(body, rim, [[-0.41, 0.91, -0.02], [-0.22, 0.97, -0.05], [0.22, 0.97, -0.05], [0.41, 0.91, -0.02]], 0.012);
+  box(body, iron, 0.34, 0.030, 0.036, 0, 0.968, -0.062, 0.006);
+  for (const lx of [-0.11, 0, 0.11]) {
+    box(body, frontLamps, 0.072, 0.014, 0.010, lx, 0.968, -0.082, 0.002);
+  }
+  // Rear exo-cage stabilizer bridge bar
+  cable(body, rim, [[-0.40, 0.94, 0.52], [-0.18, 0.98, 0.54], [0.18, 0.98, 0.54], [0.40, 0.94, 0.52]], 0.012);
 
   // The batteries and tools are wrapped in sewn, wrinkled thermal blankets.
   box(body, rubber, 0.41, 0.086, 0.449, -0.109, 0.792, 0.331, 0.019);
@@ -1093,9 +1382,18 @@ export function createLunarRover({ glow } = {}) {
   kitRack.name = "Rear construction case rack";
   kitRack.position.set(-0.145, 0.684, 0.97);
   rover.add(kitRack);
-  box(body, iron, 0.51, 0.046, 0.37, -0.145, 0.654, 0.97, 0.013);
+  // Open slatted tubular aerospace cargo rack (replaces a solid thick slab).
+  for (const zOff of [-0.165, 0.165]) {
+    box(body, iron, 0.52, 0.028, 0.032, -0.145, 0.656, 0.97 + zOff, 0.008);
+  }
+  for (const xOff of [-0.245, 0.245]) {
+    box(body, iron, 0.032, 0.028, 0.36, -0.145 + xOff, 0.656, 0.97, 0.008);
+  }
+  for (let s = 0; s < 5; s++) {
+    box(body, undercarriage, 0.46, 0.014, 0.028, -0.145, 0.656, 0.85 + s * 0.06, 0.003);
+  }
   for (const x of [-0.384, 0.094]) {
-    strut(body, iron, [x, 0.51, 0.75], [x, 0.64, 1.12], 0.035, 0.044);
+    strut(body, iron, [x, 0.51, 0.75], [x, 0.64, 1.12], 0.030, 0.038);
     box(body, accent, 0.03, 0.039, 0.32, x, 0.686, 0.97, 0.006);
     pin(body, rim, 0.014, 0.009, x, 0.710, 1.086, "y", 8);
   }
@@ -1137,22 +1435,28 @@ export function createLunarRover({ glow } = {}) {
     box(body, frontLamps, 0.134, 0.036, 0.016, side * 0.33, 0.598, -0.816, 0.007);
     box(body, iron, 0.137, 0.067, 0.041, side * 0.37, 0.493, 0.735, 0.015);
     box(body, rearLamps, 0.091, 0.022, 0.013, side * 0.37, 0.496, 0.757, 0.004);
-    glow?.(rover, 0xd8f4ff, 0.34, 0.50, side * 0.33, 0.60, -0.824);
-    glow?.(rover, 0xff5a42, 0.25, 0.65, side * 0.37, 0.499, 0.769);
+    glow?.(rover, 0xd8f4ff, 0.20, 0.22, side * 0.33, 0.60, -0.824);
+    glow?.(rover, 0xff5a42, 0.16, 0.28, side * 0.37, 0.499, 0.769);
   }
 
-  // Remote sensing mast, a steerable-looking optical head, and a high-gain dish.
+  // Remote sensing mast, articulated scanning optical head, and a high-gain dish.
   box(body, rim, 0.129, 0.069, 0.136, -0.292, 0.825, 0.12, 0.015);
   strut(body, rim, [-0.292, 0.842, 0.12], [-0.31, 1.19, 0.1], 0.026, 0.017);
   strut(body, rubber, [-0.284, 0.849, 0.144], [-0.3, 1.155, 0.133], 0.014, 0.008);
-  box(body, undercarriage, 0.155, 0.086, 0.102, -0.31, 1.202, 0.074, 0.014);
-  for (const x of [-0.35, -0.273]) {
-    pin(body, rim, 0.028, 0.015, x, 1.203, 0.018, "z");
-    pin(body, optics, 0.020, 0.007, x, 1.203, 0.008, "z");
+  const mastHead = new THREE.Group();
+  mastHead.position.set(-0.31, 1.202, 0.095);
+  rover.add(mastHead);
+  const headParts = partBatch(mastHead);
+  box(headParts, undercarriage, 0.158, 0.086, 0.106, 0, 0, -0.021, 0.014);
+  for (const x of [-0.04, 0.037]) {
+    pin(headParts, rim, 0.028, 0.016, x, 0.001, -0.077, "z", 14);
+    pin(headParts, optics, 0.020, 0.008, x, 0.001, -0.087, "z", 12);
   }
-  box(body, machine, 0.111, 0.051, 0.014, -0.31, 1.204, 0.130, 0.0055);
-  for (const x of [-0.354, -0.266]) serviceBolt(body, rim, rubber, x, 1.209, 0.140, "z");
-  box(body, iron, 0.048, 0.017, 0.010, -0.31, 1.205, 0.140, 0.002);
+  box(headParts, indicator, 0.016, 0.010, 0.008, 0, 0.030, -0.076, 0.002);
+  box(headParts, machine, 0.111, 0.051, 0.014, 0, 0.002, 0.035, 0.0055);
+  for (const x of [-0.044, 0.044]) serviceBolt(headParts, rim, rubber, x, 0.007, 0.045, "z");
+  box(headParts, iron, 0.048, 0.017, 0.010, 0, 0.003, 0.045, 0.002);
+  headParts.attach();
   strut(body, rim, [0.346, 0.813, 0.307], [0.362, 1.30, 0.283], 0.010, 0.004);
   pin(body, indicator, 0.023, 0.038, 0.363, 1.299, 0.283, "y", 12);
   glow?.(rover, 0xffb655, 0.138, 0.58, 0.363, 1.307, 0.283);
@@ -1186,6 +1490,21 @@ export function createLunarRover({ glow } = {}) {
       dishRotation.setFromUnitVectors(dishUp, dishBearing);
     } else dishRotation.copy(parkedDish);
     dataDish.quaternion.slerp(dishRotation, 1 - Math.exp(-12 * dt));
+  }
+
+  // Exposed Caged HDR Reactor Energy Core Spine atop the rear power deck (syncs with thruster theme & boost power).
+  const reactorCoreMat = new THREE.MeshStandardMaterial({
+    color: 0x74ffd8, emissive: 0x52f2d2, emissiveIntensity: 1.55,
+    roughness: 0.18, metalness: 0.12, toneMapped: false,
+  });
+  for (const rx of [-0.175, -0.045]) {
+    const coreTube = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.34, 12), reactorCoreMat);
+    coreTube.rotation.x = HALF_PI;
+    coreTube.position.set(rx, 0.916, 0.33);
+    rover.add(coreTube);
+    for (const bz of [0.19, 0.33, 0.47]) {
+      body.add(iron, new THREE.TorusGeometry(0.027, 0.005, 6, 12), [rx, 0.916, bz]);
+    }
   }
 
   body.attach();
@@ -1261,13 +1580,26 @@ export function createLunarRover({ glow } = {}) {
     beam.renderOrder = 3;
     rover.add(beam);
   }
+  const standardRoverParts = [...rover.children];
 
   // Twin rear HDR ion boost thruster plumes (triggers selective Bloom when boosting).
   const plumeGeo = new THREE.ConeGeometry(0.078, 0.62, 12, 1, true);
   plumeGeo.translate(0, -0.31, 0);
   plumeGeo.rotateX(-Math.PI / 2);
+  const THRUSTER_THEMES = {
+    cyan: { outer: [0.32, 1.75, 2.2], inner: [2.8, 3.1, 2.6], light: 0x74ffd8 },
+    gold: { outer: [2.4, 1.35, 0.22], inner: [3.4, 2.9, 1.6], light: 0xffc864 },
+    crimson: { outer: [2.6, 0.28, 0.52], inner: [3.4, 1.85, 1.2], light: 0xff5a7a },
+    ufo: { outer: [0.45, 2.6, 1.35], inner: [2.6, 3.6, 2.9], light: 0x6bffb8 },
+    shockwave: { outer: [2.4, 0.35, 3.4], inner: [3.8, 2.9, 3.8], light: 0xe08cff },
+  };
   const plumeMat = new THREE.ShaderMaterial({
-    uniforms: { uPower: { value: 0 }, uTime: { value: 0 } },
+    uniforms: {
+      uPower: { value: 0 },
+      uTime: { value: 0 },
+      uOuterColor: { value: new THREE.Vector3(...THRUSTER_THEMES.cyan.outer) },
+      uInnerColor: { value: new THREE.Vector3(...THRUSTER_THEMES.cyan.inner) },
+    },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
       void main() {
@@ -1278,13 +1610,15 @@ export function createLunarRover({ glow } = {}) {
     fragmentShader: /* glsl */ `
       uniform float uPower;
       uniform float uTime;
+      uniform vec3 uOuterColor;
+      uniform vec3 uInnerColor;
       varying vec2 vUv;
       void main() {
         float y = clamp(vUv.y, 0.0, 1.0);
         float flicker = 0.86 + 0.14 * sin(uTime * 54.0 + y * 18.0);
         float tipFade = smoothstep(0.02, 0.34, y) * smoothstep(0.0, 0.14, 1.0 - y);
         float core = pow(max(0.0001, y), 1.35) * tipFade * flicker;
-        vec3 col = mix(vec3(0.32, 1.75, 2.2), vec3(2.8, 3.1, 2.6), pow(max(0.0001, y), 2.8));
+        vec3 col = mix(uOuterColor, uInnerColor, pow(max(0.0001, y), 2.8));
         gl_FragColor = vec4(col * uPower, core * uPower * 0.88);
       }
     `,
@@ -1292,7 +1626,7 @@ export function createLunarRover({ glow } = {}) {
   });
   const thrusterPlumes = [-0.23, 0.23].map(x => {
     const plume = new THREE.Mesh(plumeGeo, plumeMat);
-    plume.position.set(x, 0.43, 0.81);
+    plume.position.set(x, 0.43, 0.85);
     plume.visible = false;
     plume.renderOrder = 4;
     rover.add(plume);
@@ -1301,24 +1635,330 @@ export function createLunarRover({ glow } = {}) {
   const thrusterLight = new THREE.PointLight(0x74ffd8, 0, 2.8, 2);
   thrusterLight.position.set(0, 0.44, 0.98);
   rover.add(thrusterLight);
+  let activeTheme = "cyan";
+  function applyThemeColors(theme = "cyan") {
+    const spec = THRUSTER_THEMES[theme] ?? THRUSTER_THEMES.cyan;
+    plumeMat.uniforms.uOuterColor.value.set(...spec.outer);
+    plumeMat.uniforms.uInnerColor.value.set(...spec.inner);
+    thrusterLight.color.setHex(spec.light);
+    reactorCoreMat.color.setHex(spec.light);
+    reactorCoreMat.emissive.setHex(spec.light);
+  }
+  function setThrusterTheme(theme = "cyan") {
+    activeTheme = theme;
+    applyThemeColors(theme);
+  }
+
+  // --- 3 Morphable 3D Chassis Kits (reusing existing aerospace PBR materials -> zero extra bundle weight!) ---
+  // 1) V-12 Falcon Speedster Kit: low-slung aero front splitter, side aero pods, high swept twin-pylon rear spoiler + gold glow strips
+  const falconKit = new THREE.Group();
+  falconKit.name = "chassis-falcon-kit";
+  falconKit.visible = false;
+  rover.add(falconKit);
+  const falconBatch = partBatch(falconKit);
+  const goldStripMat = lenses(0xffcc66, 2.8);
+  // Front low-slung aerodynamic splitter & twin dive canards
+  box(falconBatch, undercarriage, 0.84, 0.032, 0.24, 0, 0.25, -0.96, 0.008, [0.08, 0, 0]);
+  box(falconBatch, accent, 0.78, 0.014, 0.06, 0, 0.27, -1.06, 0.004);
+  for (const side of [-1, 1]) {
+    box(falconBatch, paint, 0.04, 0.14, 0.26, side * 0.44, 0.31, -0.92, 0.006, [0, side * 0.12, 0]);
+    // Sleek side aero intake pods
+    box(falconBatch, paint, 0.14, 0.16, 0.68, side * 0.56, 0.56, 0.12, 0.022);
+    box(falconBatch, goldStripMat, 0.02, 0.03, 0.54, side * 0.635, 0.58, 0.12, 0.004);
+    // Swept rear wing stanchions
+    strut(falconBatch, iron, [side * 0.34, 0.72, 0.62], [side * 0.42, 1.18, 0.88], 0.024, 0.018);
+    // Wingtip endplates
+    box(falconBatch, paint, 0.026, 0.18, 0.30, side * 0.68, 1.18, 0.90, 0.005, [0.08, 0, 0]);
+    box(falconBatch, goldStripMat, 0.012, 0.12, 0.024, side * 0.692, 1.18, 1.04, 0.002);
+  }
+  // Wide swept high-downforce rear wing airfoil
+  box(falconBatch, undercarriage, 1.38, 0.034, 0.24, 0, 1.20, 0.88, 0.008, [-0.14, 0, 0]);
+  box(falconBatch, accent, 1.32, 0.014, 0.05, 0, 1.22, 0.99, 0.003, [-0.14, 0, 0]);
+  // Center third ion boost nozzle
+  pin(falconBatch, iron, 0.065, 0.14, 0, 0.43, 0.79, "z", 14);
+  falconBatch.attach();
+
+  // 2) T-88 Titan Heavy Mining Juggernaut Kit: heavy articulated front bulldozer ore plow, dorsal twin pulse coils, side sponsons & armored cargo hopper
+  const titanKit = new THREE.Group();
+  titanKit.name = "chassis-titan-kit";
+  titanKit.visible = false;
+  rover.add(titanKit);
+  const titanBatch = partBatch(titanKit);
+  const crimsonCoilMat = lenses(0xff5a7a, 2.9);
+  // Massive twin-angled front bulldozer ore ram plow + twin hydraulic rams
+  for (const side of [-1, 1]) {
+    box(titanBatch, undercarriage, 0.56, 0.28, 0.08, side * 0.25, 0.34, -1.03, 0.012, [-0.28, -side * 0.24, 0]);
+    box(titanBatch, accent, 0.52, 0.055, 0.03, side * 0.25, 0.44, -1.07, 0.006, [-0.28, -side * 0.24, 0]);
+    box(titanBatch, rim, 0.54, 0.045, 0.04, side * 0.25, 0.21, -1.09, 0.004, [-0.18, -side * 0.24, 0]);
+    strut(titanBatch, rim, [side * 0.30, 0.40, -0.78], [side * 0.34, 0.35, -1.00], 0.022);
+    // Heavy armored side fender sponsons
+    box(titanBatch, lowerArmor, 0.16, 0.22, 1.18, side * 0.57, 0.56, 0.04, 0.020);
+    box(titanBatch, accent, 0.04, 0.08, 0.92, side * 0.655, 0.62, 0.04, 0.006);
+    // Dorsal twin electromagnetic resonance pulse towers
+    pin(titanBatch, iron, 0.072, 0.34, side * 0.26, 0.96, 0.36, "y", 14);
+    for (const cy of [0.88, 0.98, 1.08]) {
+      titanBatch.add(crimsonCoilMat, new THREE.TorusGeometry(0.082, 0.011, 6, 16), [side * 0.26, cy, 0.36], [HALF_PI, 0, 0]);
+    }
+    pin(titanBatch, rim, 0.052, 0.06, side * 0.26, 1.16, 0.36, "y", 12);
+    // Heavy rear armored ore hopper side walls
+    box(titanBatch, iron, 0.045, 0.24, 0.46, side * 0.38 - 0.14, 0.78, 0.98, 0.008);
+  }
+  box(titanBatch, iron, 0.74, 0.20, 0.045, -0.14, 0.77, 1.20, 0.008);
+  box(titanBatch, crimsonCoilMat, 0.58, 0.028, 0.02, -0.14, 0.85, 1.225, 0.004);
+  titanBatch.attach();
+
+  // 3) X-00 Pocket UFO Saucer Kit (Easter Egg Mini Flying Saucer with spinning plasma rim, glass cockpit dome, pilot & anti-grav rings!)
+  const ufoKit = new THREE.Group();
+  ufoKit.name = "chassis-ufo-kit";
+  ufoKit.visible = false;
+  rover.add(ufoKit);
+  const ufoNeonMat = lenses(0x6bffb8, 3.0);
+  const ufoVioletMat = lenses(0xd580ff, 2.8);
+  const ufoHullBatch = partBatch(ufoKit);
+  // Upper & lower spun titanium saucer disc + beveled rim collar
+  ufoHullBatch.add(paint, new THREE.CylinderGeometry(0.38, 0.84, 0.13, 28), [0, 0.52, 0]);
+  ufoHullBatch.add(undercarriage, new THREE.CylinderGeometry(0.84, 0.34, 0.11, 28), [0, 0.40, 0]);
+  ufoHullBatch.add(iron, new THREE.TorusGeometry(0.84, 0.042, 10, 32), [0, 0.46, 0], [HALF_PI, 0, 0]);
+  ufoHullBatch.add(ufoNeonMat, new THREE.TorusGeometry(0.39, 0.018, 8, 24), [0, 0.59, 0], [HALF_PI, 0, 0]);
+  // Twin rear warp thruster pods
+  for (const side of [-1, 1]) {
+    box(ufoHullBatch, iron, 0.14, 0.11, 0.24, side * 0.23, 0.44, 0.72, 0.02);
+    pin(ufoHullBatch, rim, 0.055, 0.08, side * 0.23, 0.44, 0.83, "z", 12);
+  }
+  // 3 mini swept landing skids beneath saucer
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU + HALF_PI;
+    const sx = Math.cos(a) * 0.44, sz = Math.sin(a) * 0.44;
+    strut(ufoHullBatch, iron, [sx * 0.65, 0.36, sz * 0.65], [sx, 0.18, sz], 0.018);
+    box(ufoHullBatch, rim, 0.09, 0.025, 0.16, sx, 0.17, sz, 0.005, [0, -a + HALF_PI, 0]);
+  }
+  ufoHullBatch.attach();
+
+  // Spinning outer plasma ring with 8 glowing gravity nodes
+  const ufoSpinRing = new THREE.Group();
+  ufoSpinRing.position.set(0, 0.46, 0);
+  ufoKit.add(ufoSpinRing);
+  const spinBatch = partBatch(ufoSpinRing);
+  spinBatch.add(ufoNeonMat, new THREE.TorusGeometry(0.885, 0.016, 8, 32), [0, 0, 0], [HALF_PI, 0, 0]);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU;
+    const nx = Math.cos(a) * 0.86, nz = Math.sin(a) * 0.86;
+    box(spinBatch, i % 2 === 0 ? ufoNeonMat : ufoVioletMat, 0.075, 0.048, 0.11, nx, 0, nz, 0.012, [0, -a, 0]);
+  }
+  spinBatch.attach();
+
+  // Cute Little Pilot inside the transparent cockpit bubble dome!
+  const ufoPilot = new THREE.Group();
+  ufoPilot.position.set(0, 0.60, -0.02);
+  ufoKit.add(ufoPilot);
+  const pilotBatch = partBatch(ufoPilot);
+  pilotBatch.add(paint, new THREE.SphereGeometry(0.135, 16, 12), [0, 0.06, 0]);
+  box(pilotBatch, ufoNeonMat, 0.17, 0.055, 0.08, 0, 0.07, -0.10, 0.018);
+  for (const side of [-1, 1]) {
+    strut(pilotBatch, iron, [side * 0.09, 0.15, 0], [side * 0.15, 0.24, 0], 0.010);
+    pilotBatch.add(ufoVioletMat, new THREE.SphereGeometry(0.022, 8, 8), [side * 0.15, 0.25, 0]);
+  }
+  pilotBatch.attach();
+
+  const ufoDomeMat = new THREE.MeshPhysicalMaterial({
+    color: 0x9ef8ee, transmission: 0.72, transparent: true, opacity: 0.52,
+    roughness: 0.12, metalness: 0.05, ior: 1.45,
+  });
+  const ufoDome = new THREE.Mesh(new THREE.SphereGeometry(0.36, 24, 14, 0, TAU, 0, HALF_PI), ufoDomeMat);
+  ufoDome.position.set(0, 0.57, 0);
+  ufoKit.add(ufoDome);
+
+  // Underside pulsing anti-gravity tractor rings
+  const ufoGravRing1 = new THREE.Mesh(new THREE.RingGeometry(0.32, 0.44, 28), new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(0.45, 2.8, 1.7), toneMapped: false, transparent: true, opacity: 0.65,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  }));
+  ufoGravRing1.rotation.x = HALF_PI;
+  ufoGravRing1.position.set(0, 0.24, 0);
+  const ufoGravRing2 = new THREE.Mesh(new THREE.RingGeometry(0.16, 0.25, 24), new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(2.1, 0.75, 3.1), toneMapped: false, transparent: true, opacity: 0.55,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  }));
+  ufoGravRing2.rotation.x = HALF_PI;
+  ufoGravRing2.position.set(0, 0.14, 0);
+  ufoKit.add(ufoGravRing1, ufoGravRing2);
+
+  let currentChassis = "explorer";
+  function setChassis(id = "explorer") {
+    currentChassis = id;
+    const isUfo = id === "ufo";
+    for (const part of standardRoverParts) part.visible = !isUfo;
+    falconKit.visible = id === "falcon";
+    titanKit.visible = id === "titan";
+    ufoKit.visible = isUfo;
+    if (id === "falcon") {
+      rover.scale.set(1.04, 0.88, 1.14);
+      setThrusterTheme("gold");
+    } else if (id === "titan") {
+      rover.scale.set(1.20, 1.13, 1.08);
+      setThrusterTheme("crimson");
+    } else if (isUfo) {
+      rover.scale.set(0.86, 0.86, 0.86);
+      setThrusterTheme("ufo");
+    } else {
+      rover.scale.set(1, 1, 1);
+      setThrusterTheme("cyan");
+    }
+  }
+
+  // --- 3D Roguelite Visual Evolution Attachments (Crystal-Clear Rim-Only Shield Halo, Tesla Arc Lightning, Neon Wheel Rings, Shockwave Aura) ---
+  const shieldMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 0 } },
+    vertexShader: /* glsl */ `
+      varying vec3 vNorm;
+      varying vec3 vView;
+      varying vec3 vPos;
+      void main() {
+        vPos = position;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vNorm = normalize(normalMatrix * normal);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uTime;
+      uniform float uOpacity;
+      varying vec3 vNorm;
+      varying vec3 vView;
+      varying vec3 vPos;
+      void main() {
+        // Steep rim-only Fresnel: 100% transparent over the rover body so zero milky fog ever obscures the chassis!
+        float ndv = abs(dot(normalize(vNorm), normalize(vView)));
+        float rim = pow(max(0.0, 1.0 - ndv), 4.2);
+        float scan = smoothstep(0.92, 1.0, sin(vPos.y * 9.0 - uTime * 3.8));
+        float grid = 0.72 + 0.28 * sin(vPos.x * 22.0 + uTime * 2.0) * cos(vPos.z * 22.0 - uTime * 1.8);
+        vec3 col = mix(vec3(0.24, 0.92, 1.15), vec3(0.65, 1.45, 1.55), scan);
+        float a = (rim * 0.56 + scan * rim * 0.34) * grid * uOpacity;
+        gl_FragColor = vec4(col, clamp(a, 0.0, 0.42));
+      }
+    `,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.FrontSide, toneMapped: false,
+  });
+  const shieldDome = new THREE.Mesh(new THREE.SphereGeometry(1.42, 32, 20), shieldMat);
+  shieldDome.scale.set(0.84, 0.64, 1.06);
+  shieldDome.position.set(0, 0.64, 0.04);
+  shieldDome.visible = false;
+  shieldDome.renderOrder = 5;
+  rover.add(shieldDome);
+
+  // Crackling HDR Tesla Magnet Arc Lightning Beam leaping from Rover to active Crystal Vein!
+  const teslaPositions = new Float32Array(12 * 3);
+  const teslaGeo = new THREE.BufferGeometry();
+  teslaGeo.setAttribute("position", new THREE.BufferAttribute(teslaPositions, 3));
+  const teslaMat = new THREE.LineBasicMaterial({
+    color: new THREE.Color().setRGB(0.55, 3.2, 3.1), toneMapped: false, transparent: true, opacity: 0.92,
+    blending: THREE.AdditiveBlending,
+  });
+  const teslaLine = new THREE.Line(teslaGeo, teslaMat);
+  teslaLine.frustumCulled = false;
+  teslaLine.visible = false;
+  rover.add(teslaLine);
+  const teslaLocalTarget = new THREE.Vector3();
+
+  // Shockwave Super-Boost Aura Ring (Asphalt-style Shockwave burst!)
+  const shockwaveRingMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(2.4, 0.65, 3.4), toneMapped: false, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const shockwaveRing = new THREE.Mesh(new THREE.RingGeometry(0.75, 1.15, 32), shockwaveRingMat);
+  shockwaveRing.rotation.x = HALF_PI;
+  shockwaveRing.position.set(0, 0.56, 0.65);
+  shockwaveRing.visible = false;
+  rover.add(shockwaveRing);
+
   let boostVis = 0;
-  function setBoostVisual(active, dt = 0.016, time = 0) {
-    boostVis = THREE.MathUtils.damp(boostVis, active ? 1 : 0, active ? 18 : 11, dt);
+  let shockVis = 0;
+  function setBoostVisual(active, dt = 0.016, time = 0, shockwave = false) {
+    boostVis = THREE.MathUtils.damp(boostVis, active ? (shockwave ? 1.55 : 1) : 0, active ? 18 : 11, dt);
+    shockVis = THREE.MathUtils.damp(shockVis, shockwave ? 1 : 0, shockwave ? 16 : 9, dt);
+    if (shockwave) applyThemeColors("shockwave");
+    else applyThemeColors(activeTheme);
     const visible = boostVis > 0.02;
     plumeMat.uniforms.uPower.value = boostVis;
     plumeMat.uniforms.uTime.value = time;
-    thrusterLight.intensity = boostVis * 2.2;
-    const stretch = 0.55 + boostVis * (0.72 + 0.12 * Math.sin(time * 48));
+    thrusterLight.intensity = boostVis * (shockwave ? 3.8 : 2.2);
+    reactorCoreMat.emissiveIntensity = 1.25 + 0.25 * Math.sin(time * 2.8) + boostVis * 2.4;
+    mastHead.rotation.y = Math.sin(time * 0.72) * 0.22 * (1 - Math.min(1, boostVis) * 0.8);
+    mastHead.rotation.x = -Math.min(1, boostVis) * 0.14;
+    const stretch = 0.55 + boostVis * (0.76 + 0.14 * Math.sin(time * 52));
     for (const plume of thrusterPlumes) {
       plume.visible = visible;
-      plume.scale.set(0.75 + boostVis * 0.35, 0.75 + boostVis * 0.35, stretch);
+      plume.scale.set(0.75 + boostVis * 0.42, 0.75 + boostVis * 0.42, stretch);
+    }
+    if (ufoKit.visible) {
+      ufoKit.position.y = 0.06 + Math.sin(time * 5.2) * 0.045;
+      ufoSpinRing.rotation.y = time * (5.2 + boostVis * 9.5);
+      ufoPilot.rotation.y = Math.sin(time * 2.4) * 0.35;
+      const gPulse = 0.85 + 0.22 * Math.sin(time * 9.5);
+      ufoGravRing1.scale.setScalar(gPulse);
+      ufoGravRing2.scale.setScalar(1.7 - gPulse * 0.65);
+    }
+    shockwaveRing.visible = shockVis > 0.03;
+    if (shockwaveRing.visible) {
+      const pulse = (time * 4.5) % 1;
+      shockwaveRing.scale.setScalar(0.85 + pulse * 1.45);
+      shockwaveRing.position.z = 0.55 + pulse * 0.95;
+      shockwaveRingMat.opacity = shockVis * (1 - pulse) * 0.85;
     }
   }
 
   const wheelMaterials = { tire: wireTireMaterial(), tread, rim, undercarriage, iron, accent, rimFlash, chalk, paint, machine };
   const wheelHubs = [];
+  const wheelGlowMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color().setRGB(0.45, 2.8, 2.6), toneMapped: false, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const wheelGlowGeo = new THREE.RingGeometry(0.185, 0.218, 20);
   for (const side of [-1, 1]) {
-    for (const [index, z] of [-0.59, 0.04, 0.62].entries()) wheelHubs.push(makeWheel(rover, side, z, index, wheelMaterials));
+    for (const [index, z] of [-0.59, 0.04, 0.62].entries()) {
+      const wh = makeWheel(rover, side, z, index, wheelMaterials);
+      const glowRing = new THREE.Mesh(wheelGlowGeo, wheelGlowMat);
+      glowRing.rotation.y = side * HALF_PI;
+      glowRing.position.x = side * 0.116;
+      wh.hub.add(glowRing);
+      wheelHubs.push(wh);
+    }
+  }
+
+  let shieldVis = 0;
+  function setVisualEvolution({ shield = 0, magnetTarget = null, stuntGlow = 0, fever = false, shockwave = false, dt = 0.016, time = 0 } = {}) {
+    shieldVis = THREE.MathUtils.damp(shieldVis, shield > 0 ? 1 : 0, 8, dt);
+    shieldDome.visible = shieldVis > 0.02;
+    if (shieldDome.visible) {
+      shieldMat.uniforms.uTime.value = time;
+      shieldMat.uniforms.uOpacity.value = shieldVis * 0.85;
+    }
+    const wantWheelGlow = Math.max(stuntGlow, fever ? 0.9 : 0, shockwave ? 1.0 : 0);
+    wheelGlowMat.opacity = THREE.MathUtils.damp(wheelGlowMat.opacity, wantWheelGlow * 0.78, 10, dt);
+    if (shockwave) wheelGlowMat.color.setRGB(2.6, 0.7, 3.6);
+    else if (fever) wheelGlowMat.color.setRGB(3.1, 2.1, 0.55);
+    else wheelGlowMat.color.setRGB(0.45, 2.8, 2.6);
+
+    if (magnetTarget) {
+      rover.worldToLocal(teslaLocalTarget.copy(magnetTarget));
+      const sx = 0, sy = 0.92, sz = 0.25;
+      const ex = teslaLocalTarget.x, ey = teslaLocalTarget.y + 0.45, ez = teslaLocalTarget.z;
+      for (let i = 0; i < 12; i++) {
+        const f = i / 11;
+        const jitter = (i === 0 || i === 11) ? 0 : Math.sin(f * Math.PI) * 0.16;
+        const px = THREE.MathUtils.lerp(sx, ex, f) + Math.sin(time * 64 + i * 2.9) * jitter;
+        const py = THREE.MathUtils.lerp(sy, ey, f) + Math.cos(time * 57 + i * 3.7) * jitter + Math.sin(f * Math.PI) * 0.24;
+        const pz = THREE.MathUtils.lerp(sz, ez, f) + Math.sin(time * 71 + i * 2.1) * jitter;
+        teslaPositions[i * 3] = px;
+        teslaPositions[i * 3 + 1] = py;
+        teslaPositions[i * 3 + 2] = pz;
+      }
+      teslaGeo.attributes.position.needsUpdate = true;
+      teslaLine.visible = true;
+    } else {
+      teslaLine.visible = false;
+    }
   }
 
   const suspension = [];
@@ -1355,6 +1995,7 @@ export function createLunarRover({ glow } = {}) {
     const spring = suspensionMesh(springGeometry, accent, "damper-spring");
     shock.add(sleeve, piston, spring);
     rover.add(trailingLink, shock);
+    standardRoverParts.push(wheel.mount, trailingLink, shock);
     suspension.push({ wheel, side, linkagePivot, trailingLink, shock, piston, spring });
   }
   function updateSuspension(wheelLoad = []) {
@@ -1385,6 +2026,6 @@ export function createLunarRover({ glow } = {}) {
   }
   updateSuspension();
 
-  return { rover, wheelHubs, updateSuspension, setBoostVisual, kitRack, ...sampler, aimDataDish,
+  return { rover, wheelHubs, updateSuspension, setBoostVisual, setThrusterTheme, setChassis, getChassis: () => currentChassis, setVisualEvolution, kitRack, ...sampler, aimDataDish,
     getDataFeed: target => dataFeed.getWorldPosition(target) };
 }
