@@ -2,8 +2,8 @@
 <p align="center"><strong>A 1.81 MB standalone WebGL 2 three-mode lunar 3D game & rendering vertical slice built with Three.js r182</strong></p>
 
 <p align="center">
-  <a href="https://audrey-cn.github.io/lunar-field-station/"><img src="./media/play-en.png" width="146" height="42" alt="Play in browser"></a>
-  <a href="https://audrey-cn.github.io/lunar-field-station/?debug=1"><img src="./media/download-en.png" width="146" height="42" alt="Open with Render Debug HUD"></a>
+  <a href="https://audrey-cn.github.io/lunar-field-station/projects/lunar-field-station/"><img src="./media/play-en.png" width="146" height="42" alt="Play in browser"></a>
+  <a href="https://audrey-cn.github.io/lunar-field-station/projects/lunar-field-station/?debug=1"><img src="./media/download-en.png" width="146" height="42" alt="Open with Render Debug HUD"></a>
 </p>
 
 <p align="center">
