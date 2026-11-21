@@ -1,0 +1,104 @@
+{
+  "bundle": {
+    "profile": "playable",
+    "output": "~/Documents/Codex/2026-11-16/files-mentioned-by-the-user-codex/outputs/threejs-lunar-station.html",
+    "totalBytes": 1902153,
+    "totalMB": 1.814,
+    "gzipBytes": 972669,
+    "gzipKB": 949.9,
+    "breakdownBytes": {
+      "jsBundleMinified": 1573996,
+      "musicBase64": 275212,
+      "titleVideoBase64": 0,
+      "titlePosterBase64": 0,
+      "htmlCssShell": 51909
+    },
+    "sourceEstimateBytes": {
+      "threeRaw": 2120525,
+      "appRaw": 810898,
+      "embeddedImagesRaw": 356408
+    }
+  },
+  "desktop": {
+    "bootMs": 2052,
+    "high": {
+      "drawCalls": 473,
+      "triangles": 1404066,
+      "geometries": 435,
+      "textures": 62,
+      "tracks": {
+        "stamps": 127,
+        "texels": 4523,
+        "allocatedTiles": 6,
+        "capacityTiles": 8,
+        "cpuBytes": 406112,
+        "gpuBytes": 406112
+      },
+      "trackFullMapBytes": 12582912,
+      "bloomEnabled": true,
+      "softShadows": true,
+      "qualityTier": "high"
+    },
+    "balanced": {
+      "drawCalls": 473,
+      "triangles": 1403906,
+      "geometries": 435,
+      "textures": 62,
+      "tracks": {
+        "stamps": 130,
+        "texels": 4650,
+        "allocatedTiles": 6,
+        "capacityTiles": 8,
+        "cpuBytes": 406112,
+        "gpuBytes": 406112
+      },
+      "trackFullMapBytes": 12582912,
+      "bloomEnabled": true,
+      "softShadows": true,
+      "qualityTier": "balanced"
+    },
+    "low": {
+      "drawCalls": 466,
+      "triangles": 1403154,
+      "geometries": 435,
+      "textures": 62,
+      "tracks": {
+        "stamps": 134,
+        "texels": 4807,
+        "allocatedTiles": 8,
+        "capacityTiles": 8,
+        "cpuBytes": 406112,
+        "gpuBytes": 406112
+      },
+      "trackFullMapBytes": 12582912,
+      "bloomEnabled": true,
+      "softShadows": true,
+      "qualityTier": "low"
+    }
+  },
+  "mobile": {
+    "bootMs": 2298,
+    "stats": {
+      "drawCalls": 542,
+      "triangles": 1460400,
+      "geometries": 406,
+      "textures": 47,
+      "tracks": {
+        "stamps": 0,
+        "texels": 0,
+        "allocatedTiles": 0,
+        "capacityTiles": 0,
+        "cpuBytes": 515,
+        "gpuBytes": 515
+      },
+      "trackFullMapBytes": 12582912,
+      "bloomEnabled": false,
+      "softShadows": false,
+      "qualityTier": "low"
+    }
+  },
+  "arcade": {
+    "score": 100,
+    "comboText": "×2"
+  }
+}

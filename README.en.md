@@ -1,49 +1,76 @@
 <h1 align="center">Lunar Field Station</h1>
-<p align="center"><sub>月面采集站</sub></p>
-<p align="center"><strong>Drive the Moon’s south pole. Leave a station for the crew that follows.</strong></p>
+<p align="center"><strong>A 1.81 MB standalone WebGL 2 lunar rover technical vertical slice built with Three.js r182</strong></p>
 
 <p align="center">
   <a href="https://audrey-cn.github.io/lunar-field-station/"><img src="./media/play-en.png" width="146" height="42" alt="Play in browser"></a>
-  <a href="https://github.com/Audrey-cn/lunar-field-station/releases/download/v0.1.1/lunar-field-station.html"><img src="./media/download-en.png" width="146" height="42" alt="Download the standalone HTML"></a>
+  <a href="https://audrey-cn.github.io/lunar-field-station/?debug=1"><img src="./media/download-en.png" width="146" height="42" alt="Open with Render Debug HUD"></a>
 </p>
 
 <p align="center">
   <a href="./README.md">简体中文</a> · <strong>English</strong> ·
-  <a href="./docs/controls.md">Field manual</a> · <a href="./CREDITS.md">Credits and licenses</a>
+  <a href="./docs/ARCHITECTURE.md">Architecture</a> ·
+  <a href="./docs/RENDERING_BREAKDOWN.md">Rendering Breakdown</a> ·
+  <a href="./docs/OPTIMIZATION_LOG.md">Benchmarks</a> ·
+  <a href="./docs/controls.md">Controls</a> ·
+  <a href="./CHANGELOG.md">Changelog</a>
 </p>
-<p align="center"><sub>Preview 0.1.1 · Three.js r182 · WebGL 2 · 5.6 MB standalone HTML</sub></p>
+<p align="center"><sub>v0.2.0 · WebGL 2 · Three.js r182 · 1.81 MB single-file HTML (950 KB gzip) · Press <code>F2</code> for live Render Breakdown &amp; Profiler</sub></p>
 
-## Gameplay demo
+---
 
-https://github.com/user-attachments/assets/b35aa8f3-f045-4200-9282-ae3757f8c6ed
+![Lunar Field Station real-time WebGL 2 title view](./media/lunar-field-station.jpg)
 
-Approach a crystal, drill a core, stow it, and set off again in about 13 seconds. Unmute the player to hear the piano, wheels, and drill in the game’s own mix.
+## Engineering & Graphics Highlights
 
-## The expedition
+Built under a strict **< 2 MB single-file offline HTML budget** with zero external 3D mesh downloads, combining custom WebGL 2 shader passes, decoupled 120Hz vehicle dynamics, granular Web Audio synthesis, and deterministic Playwright QA.
 
-Drive a six-wheeled sampler through lunar craters with your companion drone, Zhideng. Leave wheel tracks in the regolith and working equipment for the next crew.
+| Subsystem | Technical Highlights | Source |
+| :--- | :--- | :--- |
+| **Custom Lighting & Post** | Patched **PCSS variable-penumbra shadows**, analytical local bounce irradiance, half-res depth-reconstructed bilateral **SSAO**, quarter-res **HDR selective Bloom**, and **AgX** tonemapping | [`src/lunar-lighting.mjs`](./src/lunar-lighting.mjs) |
+| **Sparse Virtual Wheel Tracks** | WebGL 2 `sampler2DArray` + 16×16 page-directory indirection + 1-texel gutter borders; reduces track VRAM from **12 MB to 397 KB (-96.8%)** | [`src/lunar-tracks.mjs`](./src/lunar-tracks.mjs) |
+| **Dynamic Contact Shadows** | 192² orthographic underside-height pass with dirty tracking, projected onto uneven terrain | [`src/lunar-contact.mjs`](./src/lunar-contact.mjs) |
+| **Procedural Weathering** | Vertex-attribute (`equipmentFinish`) regolith dust accumulation, UV-edge paint chipping to bare alloy, and `dFdx/dFdy` micro-normal relief | [`src/lunar-building-wear.mjs`](./src/lunar-building-wear.mjs) |
+| **GPU Earth Optics Shader** | WebGL 2 Fragment Shader inverse orthographic projection, continuous wind-driven MODIS cloud drift, atmospheric limb glow, and far-UV aurora simulation | [`src/lunar-earth-optics.mjs`](./src/lunar-earth-optics.mjs) |
+| **120Hz Rover Physics** | Engine-agnostic simulation: 6-wheel spring-damper suspension, 1.62 m/s² lunar gravity, traction ellipse, pitch/roll inertia | [`src/lunar-rules.mjs`](./src/lunar-rules.mjs) |
+| **Granular Web Audio** | 3 CC0 clips granulated into 6 stereo-panned wheel tread loops, motor harmonics, drill acoustics, and ascending combo chimes | [`src/lunar-audio.mjs`](./src/lunar-audio.mjs) |
+| **Deterministic E2E QA** | Virtualized `requestAnimationFrame` Playwright autopilot clearing all 10 campaign stages + automated multi-viewport profiling | [`scripts/lunar-campaign-qa.mjs`](./scripts/lunar-campaign-qa.mjs) |
 
-1. **Survey and sample.** Park at crystals and survey instruments. Collect cores and readings, then return your initial survey to the landing zone.
-2. **Fabricate and deploy.** Assemble kits at the workshop and use the rover’s arm to deploy a relay, a survey station, and a solar charging post.
-3. **Return and transmit.** Bring the equipment online and return to the landing zone to send your expedition log. On the way, stop at the telescope to take a picture of Earth.
+---
 
-| Core sampling | Earth observation |
+## Live Render Breakdown (Press `F2` In-Game)
+
+Press **`F2`** (or open with `?debug=1`) to inspect FPS sparklines, draw calls, triangle counts, sparse track VRAM savings, live 6-wheel suspension load bars, live quality tier switching (`High / Balanced / Mobile Low`), and 7 render breakdown views.
+
+![Render Breakdown 4-Panel](./media/render-breakdown-grid.jpg)
+
+| Live Breakdown & Profiler (`F2`) | 60-Second Arcade Sprint Mode |
 | :---: | :---: |
-| ![In-game close-up of the sampling arm drilling a core](./media/expedition-demo.jpg) | ![Full Earth through the Moon-based telescope](./media/earth-observation.jpg) |
+| ![WebGL2 Breakdown HUD](./media/render-debug-hud.jpg) | ![60s Arcade Sprint](./media/arcade-sprint.jpg) |
 
-## How to play
+---
 
-Use a WebGL 2 browser and choose **Start expedition**. You can also [download the standalone HTML](https://github.com/Audrey-cn/lunar-field-station/releases/download/v0.1.1/lunar-field-station.html) and open it directly for offline play.
+## Optimization Summary (v0.1.1 → v0.2.0)
 
-| Input | Controls |
-| --- | --- |
-| **Keyboard and mouse** | **WASD** or arrow keys to drive, **Space** to brake, **Shift** to boost. Move the mouse to look. Hold **E** to sample or read an instrument, or use **R** to fabricate and install equipment. |
-| **Touch** | Drive with the left joystick and look by swiping on the right side of the scene. Tap the action button near a valid target. |
+| Metric | v0.1.1 | v0.2.0 | Improvement |
+| :--- | :---: | :---: | :---: |
+| **Standalone HTML Size** | 5.32 MB | **1.81 MB (950 KB gzip)** | **-65.9%** (Playable-ad grade) |
+| **Title Screen Media** | 1.18 MB MP4 + WebP | **0 KB (Real-time 3D orbit)** | **-100%** + seamless transition |
+| **Wheel Track VRAM** | 12.0 MB (full 2048²) | **397 KB** (sparse paging) | **-96.8% VRAM** |
+| **Earth Observatory Render** | 4M-pixel CPU JS loop | **WebGL 2 Fragment Shader** | Eliminates main-thread freeze |
 
-[See all controls and instructions for construction and the telescope](./docs/controls.md)
+## Build & Verify Locally
 
-## Development
+```sh
+npm install
+npm run build        # Build <2 MB standalone index.html
+npm run build:qa     # Build deterministic QA bundle
+npm run qa:campaign  # Run full 10-stage Playwright autopilot campaign test
+npm run qa:earth     # Run desktop + mobile Earth observatory suite
+npm run qa:bench     # Run performance benchmark + Arcade + breakdown captures
+```
 
-**Fable 5.2** was the primary model for the early prototype. Codex helped refine the game through later rounds of playtesting. Development model usage cost approximately **US$50**. The game uses Three.js r182 and WebGL 2 for rendering, mixes sound with Web Audio, and ships as one HTML file.
+## Credits & Workflow
 
-The piano score is Scott Buckley’s “In This Moment,” released under CC BY 4.0. [Asset sources, credits and licenses](./CREDITS.md)
+Early prototyping explored AI-assisted workflows (Fable 5.2 + Codex), followed by hands-on engineering passes covering `<2 MB` single-file optimization, GPU Earth shader migration, HDR selective Bloom, real-time Render Breakdown tooling, modular decomposition, and deterministic Playwright QA.
+
+Music: “In This Moment” by Scott Buckley (CC BY 4.0, trimmed to a seamless 40s loop in the lightweight single-file build). Full attributions in [`CREDITS.md`](./CREDITS.md).
