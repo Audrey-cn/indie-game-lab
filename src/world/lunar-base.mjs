@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { makeEquipmentFinish } from "./lunar-equipment-finish.mjs";
-import { addBuildingWear, buildingWearTile } from "./lunar-building-wear.mjs";
+import { makeEquipmentFinish } from "../rendering/lunar-equipment-finish.mjs";
+import { addBuildingWear, buildingWearTile } from "../rendering/lunar-building-wear.mjs";
 
 const PI = Math.PI;
 const HALF_PI = PI * 0.5;

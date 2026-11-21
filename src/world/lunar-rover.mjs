@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { makeEquipmentFinish } from "./lunar-equipment-finish.mjs";
+import { makeEquipmentFinish } from "../rendering/lunar-equipment-finish.mjs";
 
 const HALF_PI = Math.PI * 0.5;
 const TAU = Math.PI * 2;
@@ -1223,6 +1223,98 @@ export function createLunarRover({ glow } = {}) {
   headlight.target.position.set(0, 0.092, -4.75);
   rover.add(headlight, headlight.target);
 
+  // Subtle Fresnel-faded volumetric headlight cones for deep crater shadow atmosphere.
+  const coneGeo = new THREE.ConeGeometry(0.62, 3.6, 16, 1, true);
+  coneGeo.translate(0, -1.8, 0);
+  coneGeo.rotateX(Math.PI / 2 + 0.14);
+  const coneMat = new THREE.ShaderMaterial({
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vView;
+      void main() {
+        vUv = uv;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vNormal = normalize(normalMatrix * normal);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vView;
+      void main() {
+        float y = clamp(vUv.y, 0.0, 1.0);
+        float axial = smoothstep(0.0, 0.25, 1.0 - y) * smoothstep(0.04, 0.55, y) * pow(max(0.0001, y), 1.4);
+        float ndotv = clamp(abs(dot(normalize(vNormal), normalize(vView))), 0.0001, 1.0);
+        float edge = pow(ndotv, 1.85);
+        float alpha = axial * edge * 0.075;
+        gl_FragColor = vec4(0.82, 0.92, 1.0, alpha);
+      }
+    `,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
+  });
+  for (const side of [-1, 1]) {
+    const beam = new THREE.Mesh(coneGeo, coneMat);
+    beam.position.set(side * 0.34, 0.56, -0.82);
+    beam.renderOrder = 3;
+    rover.add(beam);
+  }
+
+  // Twin rear HDR ion boost thruster plumes (triggers selective Bloom when boosting).
+  const plumeGeo = new THREE.ConeGeometry(0.078, 0.62, 12, 1, true);
+  plumeGeo.translate(0, -0.31, 0);
+  plumeGeo.rotateX(-Math.PI / 2);
+  const plumeMat = new THREE.ShaderMaterial({
+    uniforms: { uPower: { value: 0 }, uTime: { value: 0 } },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uPower;
+      uniform float uTime;
+      varying vec2 vUv;
+      void main() {
+        float y = clamp(vUv.y, 0.0, 1.0);
+        float flicker = 0.86 + 0.14 * sin(uTime * 54.0 + y * 18.0);
+        float tipFade = smoothstep(0.02, 0.34, y) * smoothstep(0.0, 0.14, 1.0 - y);
+        float core = pow(max(0.0001, y), 1.35) * tipFade * flicker;
+        vec3 col = mix(vec3(0.32, 1.75, 2.2), vec3(2.8, 3.1, 2.6), pow(max(0.0001, y), 2.8));
+        gl_FragColor = vec4(col * uPower, core * uPower * 0.88);
+      }
+    `,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
+  });
+  const thrusterPlumes = [-0.23, 0.23].map(x => {
+    const plume = new THREE.Mesh(plumeGeo, plumeMat);
+    plume.position.set(x, 0.43, 0.81);
+    plume.visible = false;
+    plume.renderOrder = 4;
+    rover.add(plume);
+    return plume;
+  });
+  const thrusterLight = new THREE.PointLight(0x74ffd8, 0, 2.8, 2);
+  thrusterLight.position.set(0, 0.44, 0.98);
+  rover.add(thrusterLight);
+  let boostVis = 0;
+  function setBoostVisual(active, dt = 0.016, time = 0) {
+    boostVis = THREE.MathUtils.damp(boostVis, active ? 1 : 0, active ? 18 : 11, dt);
+    const visible = boostVis > 0.02;
+    plumeMat.uniforms.uPower.value = boostVis;
+    plumeMat.uniforms.uTime.value = time;
+    thrusterLight.intensity = boostVis * 2.2;
+    const stretch = 0.55 + boostVis * (0.72 + 0.12 * Math.sin(time * 48));
+    for (const plume of thrusterPlumes) {
+      plume.visible = visible;
+      plume.scale.set(0.75 + boostVis * 0.35, 0.75 + boostVis * 0.35, stretch);
+    }
+  }
+
   const wheelMaterials = { tire: wireTireMaterial(), tread, rim, undercarriage, iron, accent, rimFlash, chalk, paint, machine };
   const wheelHubs = [];
   for (const side of [-1, 1]) {
@@ -1293,6 +1385,6 @@ export function createLunarRover({ glow } = {}) {
   }
   updateSuspension();
 
-  return { rover, wheelHubs, updateSuspension, kitRack, ...sampler, aimDataDish,
+  return { rover, wheelHubs, updateSuspension, setBoostVisual, kitRack, ...sampler, aimDataDish,
     getDataFeed: target => dataFeed.getWorldPosition(target) };
 }

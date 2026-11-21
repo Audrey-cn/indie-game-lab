@@ -1,12 +1,12 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
-import { addLunarBackdrop, LUNAR_SUN_OFFSET } from "./three-visuals.mjs";
-import { makeEquipmentFinish } from "./lunar-equipment-finish.mjs";
-import { ORE_RADIUS } from "./lunar-collision.mjs";
+import { addLunarBackdrop, LUNAR_SUN_OFFSET } from "../rendering/three-visuals.mjs";
+import { makeEquipmentFinish } from "../rendering/lunar-equipment-finish.mjs";
+import { ORE_RADIUS } from "../simulation/lunar-collision.mjs";
 import { createBore } from "./lunar-mining.mjs";
 import { makeMineralStyle } from "./lunar-mineral-styles.mjs";
 import { createLunarSurface, addEmbeddedRocks, regolithHeight, regolithTint } from "./lunar-surface.mjs";
-import { ARENA_LIMIT, RETURN_RADIUS } from "./lunar-rules.mjs";
+import { ARENA_LIMIT, RETURN_RADIUS } from "../simulation/lunar-rules.mjs";
 
 export const ARENA_RADIUS = 37.4;
 
@@ -120,7 +120,7 @@ export function block(parent, material, width, depth, length, x, y, z, radius = 
   return place(parent, new RoundedBoxGeometry(width, depth, length, 2, radius), material, x, y, z);
 }
 
-export function buildLunarTerrain(scene, renderer, camera, sun) {
+export function buildLunarTerrain(scene, renderer, camera, sun, { mobile = false } = {}) {
   const surface = createLunarSurface(renderer);
   const rimColor = new THREE.Color(0x85817b);
   addLunarBackdrop(scene, {
@@ -129,7 +129,8 @@ export function buildLunarTerrain(scene, renderer, camera, sun) {
     surfaceNormalScale: surface.normalScale, sunDirection: sun.position.clone().normalize(),
   });
   const arenaDiameter = 2 * ARENA_RADIUS + 0.025;
-  const terrain = new THREE.PlaneGeometry(arenaDiameter, arenaDiameter, 258, 258);
+  const segments = mobile ? 136 : 184;
+  const terrain = new THREE.PlaneGeometry(arenaDiameter, arenaDiameter, segments, segments);
   terrain.rotateX(-Math.PI / 2);
   const terrainPositions = terrain.attributes.position;
   const terrainUvs = terrain.attributes.uv;
@@ -164,16 +165,25 @@ export function buildLunarTerrain(scene, renderer, camera, sun) {
 }
 
 export function buildStationFurniture(scene, { silver, slateMetal, amber, roadMarks }, glow) {
+  // Batch all 28 perimeter boundary markings into a single InstancedMesh (-27 draw calls).
+  const markGeo = new THREE.BoxGeometry(0.37, 0.012, 0.075);
+  const markMesh = new THREE.InstancedMesh(markGeo, roadMarks, 28);
+  markMesh.receiveShadow = true;
+  const markPose = new THREE.Object3D();
+  let markIdx = 0;
   for (const side of [-1, 1]) {
     for (let offset = -15; offset <= 15; offset += 5) {
       for (const alongX of [false, true]) {
         const [x, z] = alongX ? [offset, side * (ARENA_LIMIT - 0.32)] : [side * (ARENA_LIMIT - 0.32), offset];
-        const mark = place(scene, new THREE.BoxGeometry(alongX ? 0.37 : 0.075, 0.012, alongX ? 0.075 : 0.37),
-          roadMarks, x, terrainHeight(x, z) + 0.027, z);
-        mark.castShadow = false;
+        markPose.position.set(x, terrainHeight(x, z) + 0.027, z);
+        markPose.rotation.set(0, alongX ? 0 : Math.PI / 2, 0);
+        markPose.updateMatrix();
+        markMesh.setMatrixAt(markIdx++, markPose.matrix);
       }
     }
   }
+  markMesh.instanceMatrix.needsUpdate = true;
+  scene.add(markMesh);
 
   for (const side of [-1, 1]) for (const other of [-1, 1]) {
     const bx = side * (ARENA_LIMIT - 0.55), bz = other * (ARENA_LIMIT - 0.55);
@@ -287,9 +297,11 @@ export function buildCrystalField(scene, { slateMetal }) {
   const crystals = [[0, -3], [-6, -5], [5.8, -6], [6.5, 4.8], [-5.5, 5.9]]
     .map(([x, z]) => ({ x, z, radius: ORE_RADIUS }));
   const mineralStyles = crystals.map((_, i) => makeMineralStyle(i, hash));
+  // Avoid Three.js `transmission` full-scene double pass; simulate mineral translucency via
+  // sheen + clearcoat + tinted inner emissive + Fresnel specular rim (cuts scene draw calls & tris ~50%).
   const crystalMaterial = new THREE.MeshPhysicalMaterial({
-    metalness: 0.06, thickness: 0.32, ior: 1.56, attenuationDistance: 0.45, dispersion: 0.10,
-    envMapIntensity: 1.85, clearcoat: 0.58, clearcoatRoughness: 0.10, flatShading: true, vertexColors: true,
+    metalness: 0.08, sheen: 0.68, sheenRoughness: 0.24,
+    envMapIntensity: 2.0, clearcoat: 0.85, clearcoatRoughness: 0.09, flatShading: true, vertexColors: true,
   });
   const crystalEdge = new THREE.ShaderMaterial({
     vertexShader: /* glsl */ `
@@ -310,9 +322,9 @@ export function buildCrystalField(scene, { slateMetal }) {
       void main() {
         vec3 n = normalize(facingNormal);
         vec3 v = normalize(towardCamera);
-        float fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 3.6);
-        float gleam = pow(max(0.0, dot(reflect(-v, n), normalize(vec3(-0.63, 0.56, 0.42)))), 28.0);
-        gl_FragColor = vec4(mix(mineralTint * 2.1, vec3(1.12, 1.18, 1.10), gleam), fresnel * 0.22 + gleam * 0.28);
+        float fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 3.1);
+        float gleam = pow(max(0.0, dot(reflect(-v, n), normalize(vec3(-0.63, 0.56, 0.42)))), 24.0);
+        gl_FragColor = vec4(mix(mineralTint * 2.35, vec3(1.18, 1.24, 1.15), gleam), fresnel * 0.28 + gleam * 0.34);
         #include <colorspace_fragment>
       }
     `,
@@ -324,6 +336,13 @@ export function buildCrystalField(scene, { slateMetal }) {
     color: 0x625d56, roughness: 0.94, metalness: 0.02, flatShading: true,
   });
   const collarChunkGeo = new THREE.DodecahedronGeometry(1, 0);
+  // Batch all 35 natural regolith rock collar chunks across all 5 crystal veins into 1 InstancedMesh.
+  const collarMesh = new THREE.InstancedMesh(collarChunkGeo, regolithRockMat, crystals.length * 7);
+  collarMesh.castShadow = true;
+  collarMesh.receiveShadow = true;
+  const collarPose = new THREE.Object3D();
+  let collarIdx = 0;
+
   const boreRay = new THREE.Raycaster();
   const down = new THREE.Vector3(0, -1, 0);
   const boreRayStart = new THREE.Vector3();
@@ -339,11 +358,12 @@ export function buildCrystalField(scene, { slateMetal }) {
     for (let c = 0; c < 7; c++) {
       const theta = (c / 7) * Math.PI * 2 + hash(siteIndex, c + 19) * 0.55;
       const rad = 0.16 + hash(c, siteIndex + 41) * 0.14;
-      const chunk = place(marker, collarChunkGeo, regolithRockMat,
-        Math.cos(theta) * rad, 0.012 + hash(c + 5, siteIndex) * 0.032, Math.sin(theta) * rad);
       const sx = 0.08 + hash(c + 11, siteIndex) * 0.095;
-      chunk.scale.set(sx, sx * (0.36 + hash(c + 23, siteIndex) * 0.28), sx * (0.72 + hash(c + 31, siteIndex) * 0.52));
-      chunk.rotation.set(hash(c, 3) * 0.6, theta, hash(c, 7) * 0.5);
+      collarPose.position.set(x + Math.cos(theta) * rad, y + 0.012 + hash(c + 5, siteIndex) * 0.032, z + Math.sin(theta) * rad);
+      collarPose.scale.set(sx, sx * (0.36 + hash(c + 23, siteIndex) * 0.28), sx * (0.72 + hash(c + 31, siteIndex) * 0.52));
+      collarPose.rotation.set(hash(c, 3) * 0.6, theta, hash(c, 7) * 0.5);
+      collarPose.updateMatrix();
+      collarMesh.setMatrixAt(collarIdx++, collarPose.matrix);
     }
 
     const specimen = new THREE.Group();
@@ -357,8 +377,9 @@ export function buildCrystalField(scene, { slateMetal }) {
     const shards = [];
     const mineral = crystalMaterial.clone(), edge = crystalEdge.clone();
     mineral.color.setHex(style.color);
-    mineral.attenuationColor.setHex(style.tint);
-    mineral.transmission = style.transmission;
+    mineral.sheenColor = new THREE.Color(style.tint);
+    mineral.emissive = new THREE.Color(style.tint);
+    mineral.emissiveIntensity = 0.14;
     mineral.roughness = style.roughness;
     edge.uniforms.mineralTint.value.setHex(style.tint);
     for (const { geometry, x: ox, z: oz, size, bank, yaw, rake } of style.shards) {
@@ -401,5 +422,7 @@ export function buildCrystalField(scene, { slateMetal }) {
     crystalMeshes.push({ patchMaterial, gleam, indicator, boreSurface, bore });
   }
 
+  collarMesh.instanceMatrix.needsUpdate = true;
+  scene.add(collarMesh);
   return { crystals, crystalMeshes };
 }

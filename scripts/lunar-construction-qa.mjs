@@ -3,7 +3,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { COLLECT_RADIUS, CONSTRUCTION_MISSION_SECONDS, DEFAULT_OBSERVATORY_SITE, OBSERVATORY_RADIUS,
-  RETURN_RADIUS, SURVEY_RADIUS } from "../src/lunar-rules.mjs";
+  RETURN_RADIUS, SURVEY_RADIUS } from "../src/simulation/lunar-rules.mjs";
 import { samples } from "./lunar-qa-route.mjs";
 import { applyRouteKeys, defaultSurveySites } from "./lunar-survey-qa.mjs";
 

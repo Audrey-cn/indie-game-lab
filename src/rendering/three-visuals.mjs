@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { BLUE_MARBLE_DATA } from "./lunar-presentation.mjs";
-import { fracturedStoneGeometry, peripheralFragments, peripheralTint } from "./lunar-surface.mjs";
-import { createLunarOutlands } from "./lunar-outlands.mjs";
+import earthSurfaceUrl from "../assets/lunar-earth-color.webp";
+import { fracturedStoneGeometry, peripheralFragments, peripheralTint } from "../world/lunar-surface.mjs";
+import { createLunarOutlands } from "../world/lunar-outlands.mjs";
 
 const skyVertex = /* glsl */ `
   varying vec2 screenUv;
@@ -86,7 +86,10 @@ const skyFragment = /* glsl */ `
       float z = sqrt(max(0.0, 1.0 - dot(p, p)));
       vec3 normal = normalize(p.x * planetRight + p.y * planetUp - z * earthDirection);
       float day = dot(normal, sunDirection);
-      vec3 earth = mix(vec3(0.017, 0.046, 0.11), texture2D(blueMarble, vec2(0.5) + p * 0.447).rgb, earthReady);
+      float lon = atan(p.x, z);
+      float lat = asin(clamp(p.y, -1.0, 1.0));
+      vec2 earthUV = clamp(vec2(0.5 + lon / 3.59538, 0.5 + lat / 3.1415926), vec2(0.002), vec2(0.998));
+      vec3 earth = mix(vec3(0.017, 0.046, 0.11), texture2D(blueMarble, earthUV).rgb, earthReady);
       earth *= 0.009 + 1.25 * pow(smoothstep(-0.065, 0.85, day), 0.7);
       earth += vec3(0.025, 0.14, 0.31) * pow(1.0 - z, 5.0) * smoothstep(-0.15, 0.40, day);
       float cover = 1.0 - smoothstep(1.0 - edge, 1.0 + edge, r);
@@ -102,7 +105,7 @@ function createSky(sunDirection) {
   const cameraBasis = new THREE.Matrix3();
   const viewScale = new THREE.Vector2(1, 1);
   const earthReady = { value: 0 };
-  const blueMarble = new THREE.TextureLoader().load(BLUE_MARBLE_DATA, () => {
+  const blueMarble = new THREE.TextureLoader().load(earthSurfaceUrl, () => {
     earthReady.value = 1;
   });
   blueMarble.colorSpace = THREE.SRGBColorSpace;
@@ -530,7 +533,7 @@ function createRockField(radius, awayAngle, terrain) {
   for (const [batch, [variant, count]] of [[6289, 38], [15177, 36], [92031, 32]].entries()) {
     const localDeposits = deposits.filter(({ variant }) => variant % 3 === batch);
     const capacity = count + localDeposits.length;
-    const geometry = fracturedStoneGeometry(2, variant);
+    const geometry = fracturedStoneGeometry(1, variant);
     const sunlight = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
     geometry.setAttribute("solarVisibility", sunlight);
     const rocks = new THREE.InstancedMesh(geometry, material, capacity);
@@ -560,7 +563,7 @@ function createRockField(radius, awayAngle, terrain) {
       const scale = (0.008 + random() ** 3.7 * (outcrop ? 0.037 : 0.045)) * radius;
       const floor = sampleBackdrop(terrain, radius, x, z, color);
       sunlight.setX(i, floor.sunlight);
-      pose.position.set(x, floor.elevation + scale * (0.04 + random() * 0.11), z);
+      pose.position.set(x, floor.elevation - scale * (0.12 + random() * 0.08), z);
       pose.scale.set(
         scale * (0.89 + random() * 1.39),
         scale * (outcrop ? 0.32 + random() * 0.44 : 0.42 + random() * 0.64),

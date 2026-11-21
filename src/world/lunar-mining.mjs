@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { LUNAR_GRAVITY } from "./lunar-rules.mjs";
+import { LUNAR_GRAVITY } from "../simulation/lunar-rules.mjs";
 
 export const CUT_START = 0.33;
 export const CUT_END = 0.78;
@@ -12,8 +12,8 @@ const cutWall = new THREE.MeshStandardMaterial({
   color: 0x455952, roughness: 0.91, side: THREE.DoubleSide, vertexColors: true,
 });
 const coreMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0x9fb9ac, roughness: 0.38, transmission: 0.32, thickness: 0.04,
-  ior: 1.54, envMapIntensity: 1.1, flatShading: true,
+  color: 0x9fb9ac, emissive: 0x2d5e50, emissiveIntensity: 0.24, roughness: 0.28,
+  clearcoat: 0.72, clearcoatRoughness: 0.14, envMapIntensity: 1.35, flatShading: true,
 });
 const fragmentGeometry = new THREE.DodecahedronGeometry(1, 0);
 const coreGeometry = new THREE.CylinderGeometry(1, 0.78, 1, 10);

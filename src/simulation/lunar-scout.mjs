@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { RELAY_SITE } from "./lunar-expansion.mjs";
+import { RELAY_SITE } from "../world/lunar-expansion.mjs";
 
 const HALF_PI = Math.PI / 2;
 const UP = new THREE.Vector3(0, 1, 0);

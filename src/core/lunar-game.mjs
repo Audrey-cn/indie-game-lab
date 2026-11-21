@@ -1,38 +1,38 @@
 import * as THREE from "three";
-import { earthDirection, LUNAR_SUN_OFFSET } from "./three-visuals.mjs";
-import { createRoverContactPass } from "./lunar-contact.mjs";
-import { createLunarLighting } from "./lunar-lighting.mjs";
-import { oreClearance } from "./lunar-collision.mjs";
-import { createMiningEffects, CUT_END, CUT_START } from "./lunar-mining.mjs";
-import { createLunarDust } from "./lunar-dust.mjs";
-import { createLunarTracks } from "./lunar-tracks.mjs";
-import { createMissionNotices } from "./lunar-mission-notices.mjs";
-import { createExpeditionAudio, renderExpeditionAudio } from "./lunar-audio.mjs";
-import { addLunarFieldDetails } from "./lunar-field-details.mjs";
-import { createLunarSurvey, SURVEY_SITES } from "./lunar-survey.mjs";
-import { bindLunarEarthObservatory, canObserveEarth, EARTH_SITE, installEarthTelescope, isNearEarthObservatory } from "./lunar-earth-observatory.mjs";
-import { createLunarAmbientActivity, DUST_MONITOR_SITE } from "./lunar-ambient-activity.mjs";
-import { createLunarBase } from "./lunar-base.mjs";
-import { createRelay, createObservatory, RELAY_SITE, OBSERVATORY_SITE } from "./lunar-expansion.mjs";
-import { createPowerStation } from "./lunar-power-station.mjs";
-import { createScoutDrone } from "./lunar-scout.mjs";
-import { createLunarCompanion } from "./lunar-companion.mjs";
-import { createLunarUplink } from "./lunar-uplink.mjs";
-import { createCompanionLines } from "./lunar-companion-lines.mjs";
+import { earthDirection, LUNAR_SUN_OFFSET } from "../rendering/three-visuals.mjs";
+import { createRoverContactPass } from "../rendering/lunar-contact.mjs";
+import { createLunarLighting } from "../rendering/lunar-lighting.mjs";
+import { oreClearance } from "../simulation/lunar-collision.mjs";
+import { createMiningEffects, CUT_END, CUT_START } from "../world/lunar-mining.mjs";
+import { createLunarDust } from "../rendering/lunar-dust.mjs";
+import { createLunarTracks } from "../rendering/lunar-tracks.mjs";
+import { createMissionNotices } from "../ui/lunar-mission-notices.mjs";
+import { createExpeditionAudio, renderExpeditionAudio } from "../audio/lunar-audio.mjs";
+import { addLunarFieldDetails } from "../world/lunar-field-details.mjs";
+import { createLunarSurvey, SURVEY_SITES } from "../world/lunar-survey.mjs";
+import { bindLunarEarthObservatory, canObserveEarth, EARTH_SITE, installEarthTelescope, isNearEarthObservatory } from "../ui/lunar-earth-observatory.mjs";
+import { createLunarAmbientActivity, DUST_MONITOR_SITE } from "../world/lunar-ambient-activity.mjs";
+import { createLunarBase } from "../world/lunar-base.mjs";
+import { createRelay, createObservatory, RELAY_SITE, OBSERVATORY_SITE } from "../world/lunar-expansion.mjs";
+import { createPowerStation } from "../world/lunar-power-station.mjs";
+import { createScoutDrone } from "../simulation/lunar-scout.mjs";
+import { createLunarCompanion } from "../simulation/lunar-companion.mjs";
+import { createLunarUplink } from "../rendering/lunar-uplink.mjs";
+import { createCompanionLines } from "../ui/lunar-companion-lines.mjs";
 import { createLunarLocale } from "./lunar-ui-locale.mjs";
-import { createOnboarding } from "./lunar-onboarding.mjs";
+import { createOnboarding } from "../ui/lunar-onboarding.mjs";
 import { createTitleCinematic } from "./lunar-title-cinematic.mjs";
-import { createMissionGuidance } from "./lunar-guidance.mjs";
-import { createLunarActionCamera } from "./lunar-action-camera.mjs";
-import { createFoundationPreview } from "./lunar-foundation.mjs";
-import { createConstructionTransfer } from "./lunar-construction-transfer.mjs";
-import { bindLunarFullscreen, bindLunarJoystick, bindLunarLook } from "./lunar-mobile.mjs";
-import { createLunarRover, roverTireDeflection } from "./lunar-rover.mjs";
-import { ARENA_LIMIT, BUILD_SAMPLES, BUILD_SURVEYS, DATA_TRANSFER_SECONDS, OBSERVATORY_SAMPLES, OBSERVATORY_SURVEYS, HIT_PENALTY, POWER_SITE, RETURN_RADIUS, SURVEY_MIN_ORE, SURVEY_REQUIRED, createState, expeditionGrade, readyToUpload, step } from "./lunar-rules.mjs";
-import { buildCrystalField, buildLunarTerrain, buildStationFurniture, createGlowFactory, createReflectionEnvironment, createSharedMaterials, terrainHeight as height } from "./lunar-world.mjs";
-import { createRadarRenderer } from "./lunar-radar.mjs";
-import { createArcadeSprint, createCameraJuice } from "./lunar-arcade.mjs";
-import { createLunarDebugOverlay } from "./lunar-debug-overlay.mjs";
+import { createMissionGuidance } from "../ui/lunar-guidance.mjs";
+import { createLunarActionCamera } from "../ui/lunar-action-camera.mjs";
+import { createFoundationPreview } from "../world/lunar-foundation.mjs";
+import { createConstructionTransfer } from "../world/lunar-construction-transfer.mjs";
+import { bindLunarFullscreen, bindLunarJoystick, bindLunarLook } from "../ui/lunar-mobile.mjs";
+import { createLunarRover, roverTireDeflection } from "../world/lunar-rover.mjs";
+import { ARENA_LIMIT, BUILD_SAMPLES, BUILD_SURVEYS, DATA_TRANSFER_SECONDS, OBSERVATORY_SAMPLES, OBSERVATORY_SURVEYS, HIT_PENALTY, POWER_SITE, RETURN_RADIUS, SURVEY_MIN_ORE, SURVEY_REQUIRED, createState, expeditionGrade, readyToUpload, step } from "../simulation/lunar-rules.mjs";
+import { buildCrystalField, buildLunarTerrain, buildStationFurniture, createGlowFactory, createReflectionEnvironment, createSharedMaterials, terrainHeight as height } from "../world/lunar-world.mjs";
+import { createRadarRenderer } from "../ui/lunar-radar.mjs";
+import { createArcadeSprint, createCameraJuice } from "../simulation/lunar-arcade.mjs";
+import { createLunarDebugOverlay } from "../ui/lunar-debug-overlay.mjs";
 
 const locale = createLunarLocale();
 const { t } = locale;
@@ -97,7 +97,7 @@ scene.environment = createReflectionEnvironment(renderer);
 scene.environmentIntensity = 0.45;
 
 await bootStep(28, t("烘制月壤、远坡与科研站", "Preparing terrain and the field station"));
-const { ground, tallRockFixtures, sampleRockSupport, lowRockSupports, wheelSurface } = buildLunarTerrain(scene, renderer, camera, sun);
+const { ground, tallRockFixtures, sampleRockSupport, lowRockSupports, wheelSurface } = buildLunarTerrain(scene, renderer, camera, sun, { mobile: mobileGraphics });
 const ambientActivity = createLunarAmbientActivity(scene, height, { sunlight: solarKeyOffset });
 const sharedMats = createSharedMaterials();
 const { silver, slateMetal, ice, amber, roadMarks } = sharedMats;
@@ -216,8 +216,11 @@ const buildButton = document.querySelector("#build-action");
 const brakeButton = document.querySelector("#brake-touch");
 const restart = document.querySelector("#restart");
 const score = document.querySelector("#score");
+const scoreMetricLabel = score.closest(".metric")?.querySelector("dt");
 const qualityCount = document.querySelector("#quality-count");
+const qualityLabel = qualityCount.previousElementSibling;
 const surveyCount = document.querySelector("#survey-count");
+const surveyLabel = surveyCount.previousElementSibling;
 const musicToggle = document.querySelector("#music-toggle");
 const timer = document.querySelector("#timer");
 const speed = document.querySelector("#speed");
@@ -401,6 +404,18 @@ document.addEventListener("keydown", (event) => {
   if (onboarding.manualOpen || settings.open || earthObservatory.open) return;
   if (event.code === "KeyE" && !event.repeat && openEarthObservatory()) {
     event.preventDefault();
+    return;
+  }
+  if (event.code === "KeyK" && state.phase === "playing" && !paused && !event.repeat) {
+    event.preventDefault();
+    state.y = Math.max(state.y, wheelSurface(state.x, state.z)) + 0.32;
+    state.vy = 0.65;
+    state.pitch = state.roll = state.pitchRate = state.rollRate = 0;
+    state.vx *= 0.25;
+    state.vz *= 0.25;
+    playCue("boost");
+    cameraJuice.impulse(0.22);
+    missionNotices.post(`recover:${Math.floor(motionTime)}`, ["姿态已回正脱困", "Rover stabilized"], "result", motionTime);
     return;
   }
   if (["Escape", "KeyP"].includes(event.code) && state.phase === "playing" && !event.repeat) {
@@ -856,10 +871,16 @@ function reportCompanionScan(target) {
 
 function updateHud() {
   if (arcade.active) {
+    if (scoreMetricLabel) setText(scoreMetricLabel, t("得分", "Score"));
+    if (qualityLabel) setText(qualityLabel, t("连击", "Combo"));
+    if (surveyLabel) setText(surveyLabel, t("信标", "Beacons"));
     setText(score, `${arcade.score}`);
     setText(qualityCount, `×${arcade.combo}`);
     setText(surveyCount, `${arcade.captures}`);
   } else {
+    if (scoreMetricLabel) setText(scoreMetricLabel, t("晶样", "Samples"));
+    if (qualityLabel) setText(qualityLabel, t("完整", "Intact"));
+    if (surveyLabel) setText(surveyLabel, t("勘测", "Surveys"));
     setText(score, `${state.collected} / ${crystals.length}`);
     setText(qualityCount, String(state.qualityCount));
     setText(surveyCount, `${state.surveyCount} / ${SURVEY_REQUIRED}`);
@@ -1385,6 +1406,7 @@ renderer.setAnimationLoop((now) => {
     selectedRelay.site, workshopPoint, selectedObservatory.site);
   if (arcade.active && state.phase === "playing") {
     arcadeTargetGoal = arcade.update(state, dt, visualTime, {
+      hazard,
       onCapture: ({ gained, combo }) => {
         playCue("combo", combo / 5);
         cameraJuice.impulse(0.32, 2.8);
@@ -1396,6 +1418,12 @@ renderer.setAnimationLoop((now) => {
         cameraJuice.impulse(0.42, 3.2);
         missionNotices.post(`arcade-air:${arcade.jumps}`,
           [`低重力飞跃 +${bonus} · 推进已充能！`, `Low-G Air Jump +${bonus} · Boost Recharged!`], "result", motionTime);
+      },
+      onNearMiss: ({ bonus, combo }) => {
+        playCue("combo", combo / 5);
+        cameraJuice.impulse(0.26, 2.4);
+        missionNotices.post(`arcade-miss:${Math.floor(motionTime)}`,
+          [`险过巡检机 +${bonus}！`, `Patrol Near Miss +${bonus}!`], "result", motionTime);
       },
     });
   } else {
@@ -1473,6 +1501,7 @@ renderer.setAnimationLoop((now) => {
     missionNotices.post(`sample:${state.collected}`, [`晶样已采集 · ${state.collected} 份`, `Samples collected · ${state.collected}`], "result", motionTime);
   }
   updateRover(dt, controls);
+  roverRig.setBoostVisual?.(state.boosting && state.phase === "playing" && !paused, dt, visualTime);
   if (state.dataTransfer || prevTransfer) {
     roverRig.aimDataDish(dataDestination, dt);
     roverRig.getDataFeed(dataOrigin);

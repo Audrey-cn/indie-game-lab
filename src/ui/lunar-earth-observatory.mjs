@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { makeEquipmentFinish } from "./lunar-equipment-finish.mjs";
-import { loadEarthOptics } from "./lunar-earth-optics.mjs";
-import apollo16 from "./lunar-earth-apollo16-fuv.jpg";
+import { makeEquipmentFinish } from "../rendering/lunar-equipment-finish.mjs";
+import { loadEarthOptics } from "../rendering/lunar-earth-optics.mjs";
+import apollo16 from "../assets/lunar-earth-apollo16-fuv.jpg";
 import markup from "./lunar-earth-observatory.html";
 import stylesheet from "./lunar-earth-observatory.css";
 

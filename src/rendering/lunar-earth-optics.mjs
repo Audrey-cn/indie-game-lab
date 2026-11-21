@@ -1,6 +1,5 @@
-import { BLUE_MARBLE_DATA } from "./lunar-presentation.mjs";
-import surfaceMap from "./lunar-earth-color.webp";
-import cloudMap from "./lunar-earth-clouds.webp";
+import surfaceMap from "../assets/lunar-earth-color.webp";
+import cloudMap from "../assets/lunar-earth-clouds.webp";
 
 // NASA Blue Marble Next Generation (August 2004 surface) and NASA MODIS
 // Blue Marble (2002 cloud composite). The offline maps are cropped to the
@@ -357,7 +356,5 @@ export async function loadEarthOptics({ earth, sun, signal }) {
   if (image.status === "fulfilled") {
     return prepareEarthOptics({ image: image.value, clouds: clouds.value, earth, sun });
   }
-  const fallback = await loadImage(BLUE_MARBLE_DATA);
-  signal?.throwIfAborted();
-  return prepareEarthOptics({ image: fallback, earth, sun });
+  throw new Error("Earth surface map failed to load.");
 }

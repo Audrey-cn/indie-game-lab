@@ -1,4 +1,4 @@
-import { COLLECT_RADIUS, createState, MISSION_SECONDS, step } from "../src/lunar-rules.mjs";
+import { COLLECT_RADIUS, createState, MISSION_SECONDS, step } from "../src/simulation/lunar-rules.mjs";
 
 export const samples = [
   { x: 0, z: -3 }, { x: -6, z: -5 }, { x: 5.8, z: -6 },

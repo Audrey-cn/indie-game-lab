@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
-import { COLLECT_RADIUS, MISSION_SECONDS, RETURN_RADIUS, SURVEY_RADIUS, expeditionGrade } from "../src/lunar-rules.mjs";
+import { COLLECT_RADIUS, MISSION_SECONDS, RETURN_RADIUS, SURVEY_RADIUS, expeditionGrade } from "../src/simulation/lunar-rules.mjs";
 import { samples } from "./lunar-qa-route.mjs";
 
 export const defaultSurveySites = [{ x: -7.4, z: 1.4 }, { x: 4, z: 7.45 }];

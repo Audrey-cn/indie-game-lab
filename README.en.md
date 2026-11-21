@@ -1,5 +1,5 @@
 <h1 align="center">Lunar Field Station</h1>
-<p align="center"><strong>A 1.81 MB standalone WebGL 2 lunar rover technical vertical slice built with Three.js r182</strong></p>
+<p align="center"><strong>A 1.75 MB standalone WebGL 2 lunar rover technical vertical slice built with Three.js r182</strong></p>
 
 <p align="center">
   <a href="https://audrey-cn.github.io/lunar-field-station/"><img src="./media/play-en.png" width="146" height="42" alt="Play in browser"></a>
@@ -14,7 +14,7 @@
   <a href="./docs/controls.md">Controls</a> ·
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
-<p align="center"><sub>v0.2.0 · WebGL 2 · Three.js r182 · 1.81 MB single-file HTML (950 KB gzip) · Press <code>F2</code> for live Render Breakdown &amp; Profiler</sub></p>
+<p align="center"><sub>v0.2.1 · WebGL 2 · Three.js r182 · 1.75 MB single-file HTML (895 KB gzip) · -48% Draw Calls · -59% Triangles · Press <code>F2</code> for live Render Breakdown</sub></p>
 
 ---
 
@@ -26,13 +26,13 @@ Built under a strict **< 2 MB single-file offline HTML budget** with zero extern
 
 | Subsystem | Technical Highlights | Source |
 | :--- | :--- | :--- |
-| **Custom Lighting & Post** | Patched **PCSS variable-penumbra shadows**, analytical local bounce irradiance, half-res depth-reconstructed bilateral **SSAO**, quarter-res **HDR selective Bloom**, and **AgX** tonemapping | [`src/lunar-lighting.mjs`](./src/lunar-lighting.mjs) |
-| **Sparse Virtual Wheel Tracks** | WebGL 2 `sampler2DArray` + 16×16 page-directory indirection + 1-texel gutter borders; reduces track VRAM from **12 MB to 397 KB (-96.8%)** | [`src/lunar-tracks.mjs`](./src/lunar-tracks.mjs) |
-| **Dynamic Contact Shadows** | 192² orthographic underside-height pass with dirty tracking, projected onto uneven terrain | [`src/lunar-contact.mjs`](./src/lunar-contact.mjs) |
-| **Procedural Weathering** | Vertex-attribute (`equipmentFinish`) regolith dust accumulation, UV-edge paint chipping to bare alloy, and `dFdx/dFdy` micro-normal relief | [`src/lunar-building-wear.mjs`](./src/lunar-building-wear.mjs) |
-| **GPU Earth Optics Shader** | WebGL 2 Fragment Shader inverse orthographic projection, continuous wind-driven MODIS cloud drift, atmospheric limb glow, and far-UV aurora simulation | [`src/lunar-earth-optics.mjs`](./src/lunar-earth-optics.mjs) |
-| **120Hz Rover Physics** | Engine-agnostic simulation: 6-wheel spring-damper suspension, 1.62 m/s² lunar gravity, traction ellipse, pitch/roll inertia | [`src/lunar-rules.mjs`](./src/lunar-rules.mjs) |
-| **Granular Web Audio** | 3 CC0 clips granulated into 6 stereo-panned wheel tread loops, motor harmonics, drill acoustics, and ascending combo chimes | [`src/lunar-audio.mjs`](./src/lunar-audio.mjs) |
+| **Custom Lighting & Post** | Patched **PCSS variable-penumbra shadows**, analytical local bounce irradiance, half-res depth-reconstructed bilateral **SSAO**, quarter-res **HDR selective Bloom**, and **AgX** tonemapping | [`src/rendering/lunar-lighting.mjs`](./src/rendering/lunar-lighting.mjs) |
+| **Sparse Virtual Wheel Tracks** | WebGL 2 `sampler2DArray` + 16×16 page-directory indirection + 1-texel gutter borders; reduces track VRAM from **12 MB to 397 KB (-96.8%)** | [`src/rendering/lunar-tracks.mjs`](./src/rendering/lunar-tracks.mjs) |
+| **Dynamic Contact Shadows** | 192² orthographic underside-height pass with dirty tracking, projected onto uneven terrain | [`src/rendering/lunar-contact.mjs`](./src/rendering/lunar-contact.mjs) |
+| **Procedural Weathering** | Vertex-attribute (`equipmentFinish`) regolith dust accumulation, UV-edge paint chipping to bare alloy, and `dFdx/dFdy` micro-normal relief | [`src/rendering/lunar-building-wear.mjs`](./src/rendering/lunar-building-wear.mjs) |
+| **GPU Earth Optics Shader** | WebGL 2 Fragment Shader inverse orthographic projection, continuous wind-driven MODIS cloud drift, atmospheric limb glow, and far-UV aurora simulation | [`src/rendering/lunar-earth-optics.mjs`](./src/rendering/lunar-earth-optics.mjs) |
+| **120Hz Rover Physics** | Engine-agnostic simulation: 6-wheel spring-damper suspension, 1.62 m/s² lunar gravity, traction ellipse, pitch/roll inertia | [`src/simulation/lunar-rules.mjs`](./src/simulation/lunar-rules.mjs) |
+| **Granular Web Audio** | 3 CC0 clips granulated into 6 stereo-panned wheel tread loops, motor harmonics, drill acoustics, and ascending combo chimes | [`src/audio/lunar-audio.mjs`](./src/audio/lunar-audio.mjs) |
 | **Deterministic E2E QA** | Virtualized `requestAnimationFrame` Playwright autopilot clearing all 10 campaign stages + automated multi-viewport profiling | [`scripts/lunar-campaign-qa.mjs`](./scripts/lunar-campaign-qa.mjs) |
 
 ---
@@ -49,12 +49,13 @@ Press **`F2`** (or open with `?debug=1`) to inspect FPS sparklines, draw calls, 
 
 ---
 
-## Optimization Summary (v0.1.1 → v0.2.0)
+## Optimization Summary (v0.1.1 → v0.2.1)
 
-| Metric | v0.1.1 | v0.2.0 | Improvement |
+| Metric | v0.1.1 | v0.2.1 | Improvement |
 | :--- | :---: | :---: | :---: |
-| **Standalone HTML Size** | 5.32 MB | **1.81 MB (950 KB gzip)** | **-65.9%** (Playable-ad grade) |
-| **Title Screen Media** | 1.18 MB MP4 + WebP | **0 KB (Real-time 3D orbit)** | **-100%** + seamless transition |
+| **Standalone HTML Size** | 5.32 MB | **1.75 MB (895 KB gzip)** | **-67.2%** (Playable-ad grade) |
+| **Desktop / Mobile Draw Calls** | 473 / 542 | **245 / 261** | **-48.2% / -51.8%** (eliminated transmission double-pass + batching) |
+| **Desktop / Mobile Triangles** | 1.40M / 1.46M | **577k / 571k** | **-58.9% / -60.9%** (adaptive terrain + far rock LOD) |
 | **Wheel Track VRAM** | 12.0 MB (full 2048²) | **397 KB** (sparse paging) | **-96.8% VRAM** |
 | **Earth Observatory Render** | 4M-pixel CPU JS loop | **WebGL 2 Fragment Shader** | Eliminates main-thread freeze |
 

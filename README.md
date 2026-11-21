@@ -1,5 +1,5 @@
 <h1 align="center">月面采集站 · Lunar Field Station</h1>
-<p align="center"><strong>1.81 MB 单文件离线可运行的 WebGL 2 月面驾驶与渲染技术切片（Three.js r182）</strong></p>
+<p align="center"><strong>1.75 MB 单文件离线可运行的 WebGL 2 月面驾驶与渲染技术切片（Three.js r182）</strong></p>
 
 <p align="center">
   <a href="https://audrey-cn.github.io/lunar-field-station/"><img src="./media/play-zh.png" width="146" height="42" alt="在线试玩"></a>
@@ -14,7 +14,7 @@
   <a href="./docs/controls.zh-CN.md">操作手册</a> ·
   <a href="./CHANGELOG.md">更新日志</a>
 </p>
-<p align="center"><sub>v0.2.0 · WebGL 2 · Three.js r182 · 1.81 MB 单文件（Gzip 950 KB） · 按 <code>F2</code> 开启实时渲染 Breakdown &amp; 性能面板</sub></p>
+<p align="center"><sub>v0.2.1 · WebGL 2 · Three.js r182 · 1.75 MB 单文件（Gzip 895 KB） · Draw Calls -48% · 面数 -59% · 按 <code>F2</code> 开启实时渲染 Breakdown</sub></p>
 
 ---
 
@@ -26,20 +26,20 @@
 
 | 技术模块 | 核心实现亮点 | 核心源码 |
 | :--- | :--- | :--- |
-| **自定义光影与后处理** | 注入 ShaderChunk 实现类 **PCSS 变半影软阴影**、车底/工坊解析局部弹射光、半分辨率深度重建双边 **SSAO**、1/4 分辨率 **HDR 选择性 Bloom** 与 **AgX** 映射 | [`src/lunar-lighting.mjs`](./src/lunar-lighting.mjs) |
-| **稀疏虚拟纹理车辙** | WebGL 2 `sampler2DArray` + 16×16 页表索引纹理 + 1-texel gutter 消除跨页滤波接缝；按需分配 128² 瓦片，实测显存从 **12 MB 降至 397 KB（-96.8%）** | [`src/lunar-tracks.mjs`](./src/lunar-tracks.mjs) |
-| **车底动态接触阴影** | 192² 正交底视高度捕获 Pass + 脏标记跳过重绘，实时贴合崎岖月面投射底盘阴影 | [`src/lunar-contact.mjs`](./src/lunar-contact.mjs) |
-| **程序化材质做旧** | 基于自定义顶点属性 `equipmentFinish` 驱动离地积灰、UV 边缘掉漆露底漆与裸金属、`dFdx/dFdy` 微法线 | [`src/lunar-building-wear.mjs`](./src/lunar-building-wear.mjs) |
-| **GPU 地球光学着色器** | WebGL 2 Fragment Shader 实时完成球面正交反投影、连续风场云层漂移、大气边缘散射与假彩远紫外极光 | [`src/lunar-earth-optics.mjs`](./src/lunar-earth-optics.mjs) |
-| **120Hz 解耦车辆物理** | 零引擎依赖纯逻辑层：6 轮独立弹簧阻尼悬挂、月球 1.62 m/s² 重力、纵横向摩擦椭圆、俯仰/侧倾惯量 | [`src/lunar-rules.mjs`](./src/lunar-rules.mjs) |
-| **Web Audio 颗粒合成** | 仅用 3 段 CC0 采样实时粒化合成 6 轮立体声像胎噪、电机谐波、钻切声与连击递增音阶 | [`src/lunar-audio.mjs`](./src/lunar-audio.mjs) |
+| **自定义光影与后处理** | 注入 ShaderChunk 实现类 **PCSS 变半影软阴影**、车底/工坊解析局部弹射光、半分辨率深度重建双边 **SSAO**、1/4 分辨率 **HDR 选择性 Bloom** 与 **AgX** 映射 | [`src/rendering/lunar-lighting.mjs`](./src/rendering/lunar-lighting.mjs) |
+| **稀疏虚拟纹理车辙** | WebGL 2 `sampler2DArray` + 16×16 页表索引纹理 + 1-texel gutter 消除跨页滤波接缝；按需分配 128² 瓦片，实测显存从 **12 MB 降至 397 KB（-96.8%）** | [`src/rendering/lunar-tracks.mjs`](./src/rendering/lunar-tracks.mjs) |
+| **车底动态接触阴影** | 192² 正交底视高度捕获 Pass + 脏标记跳过重绘，实时贴合崎岖月面投射底盘阴影 | [`src/rendering/lunar-contact.mjs`](./src/rendering/lunar-contact.mjs) |
+| **程序化材质做旧** | 基于自定义顶点属性 `equipmentFinish` 驱动离地积灰、UV 边缘掉漆露底漆与裸金属、`dFdx/dFdy` 微法线 | [`src/rendering/lunar-building-wear.mjs`](./src/rendering/lunar-building-wear.mjs) |
+| **GPU 地球光学着色器** | WebGL 2 Fragment Shader 实时完成球面正交反投影、连续风场云层漂移、大气边缘散射与假彩远紫外极光 | [`src/rendering/lunar-earth-optics.mjs`](./src/rendering/lunar-earth-optics.mjs) |
+| **120Hz 解耦车辆物理** | 零引擎依赖纯逻辑层：6 轮独立弹簧阻尼悬挂、月球 1.62 m/s² 重力、纵横向摩擦椭圆、俯仰/侧倾惯量 | [`src/simulation/lunar-rules.mjs`](./src/simulation/lunar-rules.mjs) |
+| **Web Audio 颗粒合成** | 仅用 3 段 CC0 采样实时粒化合成 6 轮立体声像胎噪、电机谐波、钻切声与连击递增音阶 | [`src/audio/lunar-audio.mjs`](./src/audio/lunar-audio.mjs) |
 | **确定性自动化 QA** | Playwright 接管 `requestAnimationFrame` 实现虚拟时钟 10 阶段全流程自动通关 + 三端性能基线采集 | [`scripts/lunar-campaign-qa.mjs`](./scripts/lunar-campaign-qa.mjs) |
 
 ---
 
 ## 实时渲染 Breakdown（游戏内按 `F2` 一键切换）
 
-游戏内置可交互的 **WebGL2 Breakdown & Profiling HUD**（[`src/lunar-debug-overlay.mjs`](./src/lunar-debug-overlay.mjs)），支持实时查看帧时间曲线、Draw Calls、面数、虚拟车辙显存占用、6 轮 120Hz 实时载荷，并在 `Final / SSAO / HDR Bloom / No Post / Depth / Track Pages / Wireframe` 与三档画质预设间实时切换。
+游戏内置可交互的 **WebGL2 Breakdown & Profiling HUD**（[`src/ui/lunar-debug-overlay.mjs`](./src/ui/lunar-debug-overlay.mjs)），支持实时查看帧时间曲线、Draw Calls、面数、虚拟车辙显存占用、6 轮 120Hz 实时载荷，并在 `Final / SSAO / HDR Bloom / No Post / Depth / Track Pages / Wireframe` 与三档画质预设间实时切换。
 
 ![Render Breakdown 4-Panel](./media/render-breakdown-grid.jpg)
 
@@ -58,12 +58,13 @@
 | :---: | :---: |
 | ![机械臂钻取晶样的游戏截图](./media/expedition-demo.jpg) | ![月面望远镜里的地球全景](./media/earth-observation.jpg) |
 
-## 优化成果速览（v0.1.1 → v0.2.0）
+## 优化成果速览（v0.1.1 → v0.2.1）
 
 | 优化维度 | 优化前 | 优化后 | 收益 |
 | :--- | :---: | :---: | :---: |
-| **单文件离线包体** | 5.32 MB | **1.81 MB（Gzip 950 KB）** | **-65.9%**（达 Playable Ads 轻量标准） |
-| **片头加载策略** | 1.18 MB 内嵌 MP4 + WebP | **0 KB（引擎实时 3D 轨道运镜）** | **-100%** 且进入任务无缝平滑运镜 |
+| **单文件离线包体** | 5.32 MB | **1.75 MB（Gzip 895 KB）** | **-67.2%**（达 Playable Ads 轻量标准） |
+| **桌面 / 移动 Draw Calls** | 473 / 542 | **245 / 261** | **-48.2% / -51.8%**（消除 `transmission` 双 Pass + 合批） |
+| **桌面 / 移动场景面数** | 1.40M / 1.46M | **577k / 571k** | **-58.9% / -60.9%**（自适应地形细分 + 远景 LOD） |
 | **虚拟车辙显存占用** | 12.0 MB（全图 2048²） | **397 KB**（稀疏分页按需分配） | **-96.8% VRAM** |
 | **地球观测渲染** | JS 主线程 400 万像素循环 | **WebGL 2 Fragment Shader** | 消除主线程阻塞，云层连续平滑漂移 |
 

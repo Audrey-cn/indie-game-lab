@@ -1,5 +1,5 @@
-import { ARENA_LIMIT, RETURN_RADIUS, readyToUpload } from "./lunar-rules.mjs";
-import { SURVEY_SITES } from "./lunar-survey.mjs";
+import { ARENA_LIMIT, RETURN_RADIUS, readyToUpload } from "../simulation/lunar-rules.mjs";
+import { SURVEY_SITES } from "../world/lunar-survey.mjs";
 import { EARTH_SITE } from "./lunar-earth-observatory.mjs";
 
 const RADAR_INSET = 12;

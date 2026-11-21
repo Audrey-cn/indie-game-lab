@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { makeEquipmentFinish } from "./lunar-equipment-finish.mjs";
+import { makeEquipmentFinish } from "../rendering/lunar-equipment-finish.mjs";
 
 export const SURVEY_SITES = [
   { x: -7.4, z: 1.4, seconds: 2.7, name: "浅层震动", nameEn: "Seismic probe",

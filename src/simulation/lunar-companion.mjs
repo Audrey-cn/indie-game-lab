@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { createCompanionModel } from "./lunar-companion-model.mjs";
+import { createCompanionModel } from "../world/lunar-companion-model.mjs";
 import { createScanningFan } from "./lunar-scout.mjs";
 
 const { clamp, damp, lerp, smootherstep } = THREE.MathUtils;

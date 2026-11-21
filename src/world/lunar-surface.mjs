@@ -939,7 +939,7 @@ export function addEmbeddedRocks(scene, height, { arenaRadius = 15.4, playableLi
     const fringeCount = Math.round(fringeAreaRatio * (boulders ? 11 : 50));
     const scatterCount = count + outerCount + fringeCount;
     const localDeposits = deposits.filter(({ variant }) => variant === batch);
-    const rocks = new THREE.InstancedMesh(fracturedStoneGeometry(boulders ? 2 : 1, batch + 1), material, scatterCount + localDeposits.length);
+    const rocks = new THREE.InstancedMesh(fracturedStoneGeometry(1, batch + 1), material, scatterCount + localDeposits.length);
     for (let i = 0; i < count; i++) {
       const theta = random() * Math.PI * 2;
       const radius = boulders

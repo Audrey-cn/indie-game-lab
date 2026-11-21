@@ -124,7 +124,7 @@ async function run() {
     }, shots);
     await writeFile(resolve(mediaOut, "render-breakdown-grid.jpg"), Buffer.from(gridDataUrl.split(",")[1], "base64"));
 
-    // 2. Verify 60s Arcade Sprint mode
+    // 2. Verify 60s Arcade Sprint mode + capture HUD pop-up & boost thruster shot
     await page.evaluate(() => window.__lunarDebug.setMode("final"));
     await page.keyboard.press("Escape");
     await waitFrames(page, 3);
@@ -132,18 +132,19 @@ async function run() {
     await waitFrames(page, 4);
     await page.locator("#start-arcade").click();
     await waitFrames(page, 6);
-    await page.screenshot({ path: resolve(mediaOut, "arcade-sprint.jpg"), type: "jpeg", quality: 90 });
 
-    // Drive toward the first arcade beacon (-1.8, -4.8)
+    // Drive toward the first arcade beacon (-1.8, -4.8) with boost engaged
     await page.keyboard.down("KeyW");
     await page.keyboard.down("KeyA");
     await page.waitForTimeout(320);
     await page.keyboard.up("KeyA");
     await page.keyboard.down("ShiftLeft");
-    await page.waitForTimeout(1400);
+    await page.waitForTimeout(1350);
+    // Capture mid-boost right after crossing beacon so pop-up, combo bar, and HDR thrusters are visible!
+    await page.screenshot({ path: resolve(mediaOut, "arcade-sprint.jpg"), type: "jpeg", quality: 90 });
     await page.keyboard.up("ShiftLeft");
     await page.keyboard.up("KeyW");
-    await waitFrames(page, 6);
+    await waitFrames(page, 4);
     const arcadeScoreText = await page.locator("#score").innerText();
     const arcadeComboText = await page.locator("#quality-count").innerText();
     report.arcade = { score: Number(arcadeScoreText), comboText: arcadeComboText };

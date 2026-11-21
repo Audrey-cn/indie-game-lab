@@ -19,6 +19,120 @@ const SPRINT_SPOTS = [
   { x: 11.8, z: 10.8, label: "南极跃坡", labelEn: "Polar Jump" },
 ];
 
+function createArcadeHud() {
+  if (!document.getElementById("lunar-arcade-style")) {
+    const style = document.createElement("style");
+    style.id = "lunar-arcade-style";
+    style.textContent = `
+      #arcade-hud {
+        position: fixed;
+        top: max(76px, calc(env(safe-area-inset-top) + 64px));
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 60;
+        pointer-events: none;
+        display: grid;
+        justify-items: center;
+        gap: 6px;
+        font-family: "IBM Plex Mono", "SF Mono", Consolas, monospace;
+      }
+      #arcade-hud[hidden] { display: none !important; }
+      #arcade-combo-wrap {
+        width: 196px;
+        opacity: 0;
+        transition: opacity .18s ease;
+      }
+      #arcade-combo-wrap[data-active="true"] { opacity: 1; }
+      .arcade-combo-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        letter-spacing: .12em;
+        color: #94edeb;
+        margin-bottom: 3px;
+        text-shadow: 0 1px 8px #000a;
+      }
+      .arcade-combo-track {
+        height: 4px;
+        background: #0b141eb8;
+        border: 1px solid #94edeb40;
+        overflow: hidden;
+      }
+      #arcade-combo-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #74ffd8, #ffd28a);
+      }
+      #arcade-popup {
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: .08em;
+        color: #fff6df;
+        text-shadow: 0 0 16px #74ffd8aa, 0 2px 10px #000c;
+        opacity: 0;
+        transform: translateY(6px) scale(0.92);
+        transition: opacity .18s ease, transform .18s ease;
+      }
+      #arcade-popup[data-show="true"] {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+      #arcade-popup[data-tone="gold"] {
+        color: #ffd28a;
+        text-shadow: 0 0 18px #ffb461cc, 0 2px 10px #000c;
+      }
+    `;
+    document.head.append(style);
+  }
+  const root = document.createElement("div");
+  root.id = "arcade-hud";
+  root.hidden = true;
+  root.innerHTML = `
+    <div id="arcade-combo-wrap" data-active="false">
+      <div class="arcade-combo-row"><span id="arcade-combo-label">COMBO ×1</span><span id="arcade-combo-sec">0.0s</span></div>
+      <div class="arcade-combo-track"><div id="arcade-combo-fill"></div></div>
+    </div>
+    <div id="arcade-popup" data-show="false"></div>
+  `;
+  document.body.append(root);
+  const comboWrap = root.querySelector("#arcade-combo-wrap");
+  const comboLabel = root.querySelector("#arcade-combo-label");
+  const comboSec = root.querySelector("#arcade-combo-sec");
+  const comboFill = root.querySelector("#arcade-combo-fill");
+  const popup = root.querySelector("#arcade-popup");
+  let popupTimer = 0;
+
+  return {
+    setVisible(v) {
+      root.hidden = !v;
+      if (!v) {
+        comboWrap.dataset.active = "false";
+        popup.dataset.show = "false";
+        popupTimer = 0;
+      }
+    },
+    flash(text, tone = "cyan") {
+      popup.textContent = text;
+      popup.dataset.tone = tone;
+      popup.dataset.show = "true";
+      popupTimer = 1.35;
+    },
+    tick(dt, combo, comboTimer) {
+      if (popupTimer > 0) {
+        popupTimer = Math.max(0, popupTimer - dt);
+        if (popupTimer === 0) popup.dataset.show = "false";
+      }
+      const showBar = combo > 1 && comboTimer > 0;
+      comboWrap.dataset.active = String(showBar);
+      if (showBar) {
+        comboLabel.textContent = `COMBO ×${combo}`;
+        comboSec.textContent = `${comboTimer.toFixed(1)}s`;
+        comboFill.style.width = `${Math.min(100, (comboTimer / COMBO_WINDOW) * 100).toFixed(1)}%`;
+      }
+    },
+  };
+}
+
 export function createCameraJuice() {
   let shake = 0;
   let shakeTime = 0;
@@ -53,6 +167,7 @@ export function createCameraJuice() {
 }
 
 export function createArcadeSprint(scene, height) {
+  const hud = createArcadeHud();
   const group = new THREE.Group();
   group.visible = false;
   scene.add(group);
@@ -87,6 +202,7 @@ export function createArcadeSprint(scene, height) {
   let comboTimer = 0;
   let airTime = 0;
   let jumps = 0;
+  let nearMissCooldown = 0;
   let spotIndex = 0;
   let best = { score: 0, maxCombo: 1 };
   try {
@@ -104,15 +220,17 @@ export function createArcadeSprint(scene, height) {
     active = true;
     score = captures = jumps = 0;
     combo = maxCombo = 1;
-    comboTimer = airTime = 0;
+    comboTimer = airTime = nearMissCooldown = 0;
     state.time = ARCADE_SECONDS;
     placeSpot(0);
     group.visible = true;
+    hud.setVisible(true);
   }
 
   function stop() {
     active = false;
     group.visible = false;
+    hud.setVisible(false);
   }
 
   function saveBest() {
@@ -130,6 +248,8 @@ export function createArcadeSprint(scene, height) {
       comboTimer = Math.max(0, comboTimer - dt);
       if (comboTimer === 0) combo = 1;
     }
+    nearMissCooldown = Math.max(0, nearMissCooldown - dt);
+    hud.tick(dt, combo, comboTimer);
 
     // Animate beacon ring and floating core
     outerRing.rotation.z = visualTime * 1.4;
@@ -138,6 +258,19 @@ export function createArcadeSprint(scene, height) {
     coreCrystal.rotation.y = visualTime * 2.2;
     coreCrystal.position.y = 0.88 + 0.14 * Math.sin(visualTime * 3.8);
     beamMat.opacity = 0.13 + 0.05 * Math.sin(visualTime * 5.2);
+
+    // Patrol Near-Miss Bonus when boosting right past the scout drone!
+    if (callbacks?.hazard && state.boosting && nearMissCooldown === 0 && state.cooldown <= 0) {
+      const hd = Math.hypot(state.x - callbacks.hazard.x, state.z - callbacks.hazard.z);
+      if (hd > 1.35 && hd < 3.45) {
+        const bonus = 120 * combo;
+        score += bonus;
+        nearMissCooldown = 5.0;
+        comboTimer = Math.min(COMBO_WINDOW, comboTimer + 3.0);
+        hud.flash(`NEAR MISS +${bonus}`, "gold");
+        callbacks?.onNearMiss?.({ bonus, combo });
+      }
+    }
 
     // Track low-gravity air jumps!
     if (!state.grounded && Math.abs(state.speed) > 1.8) {
@@ -151,6 +284,7 @@ export function createArcadeSprint(scene, height) {
       comboTimer = COMBO_WINDOW;
       state.boostCharge = Math.min(1, state.boostCharge + 0.45);
       state.boostLocked = false;
+      hud.flash(`AIR JUMP +${airBonus} · ×${combo}`, "gold");
       callbacks?.onAirBonus?.({ bonus: airBonus, combo, airTime });
       airTime = 0;
     } else if (state.grounded) {
@@ -171,6 +305,7 @@ export function createArcadeSprint(scene, height) {
       state.boostCharge = Math.min(1, state.boostCharge + 0.35);
       state.boostLocked = false;
       state.energy = Math.min(1, state.energy + 0.14);
+      hud.flash(`+${gained} · COMBO ×${combo}`, "cyan");
       // Pick next spot at least 9m away for exhilarating cross-crater runs
       let next = (spotIndex + 1) % SPRINT_SPOTS.length;
       for (let step = 1; step < SPRINT_SPOTS.length; step++) {
@@ -187,6 +322,7 @@ export function createArcadeSprint(scene, height) {
 
     if (state.time <= 0) {
       state.phase = "won";
+      hud.setVisible(false);
       const isNewBest = saveBest();
       callbacks?.onFinish?.({ score, captures, maxCombo, jumps, isNewBest, best });
     }

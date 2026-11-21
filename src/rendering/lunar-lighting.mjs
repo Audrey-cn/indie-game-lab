@@ -403,8 +403,6 @@ export function createLunarLighting(renderer, scene, camera, { mobile = false } 
     setAoEnabled(value) { aoEnabled = Boolean(value); },
     setDebugMode(mode) { debugMode = mode in debugMap ? mode : "final"; },
     getDebugMode() { return debugMode; },
-    get bloomEnabled() { return bloomEnabled; },
-    get aoEnabled() { return aoEnabled; },
   };
   function renderScene() {
     renderer.render(scene, camera);
@@ -417,7 +415,9 @@ export function createLunarLighting(renderer, scene, camera, { mobile = false } 
     }
   }
   if (!renderer.extensions.has("EXT_color_buffer_float")) {
-    return { ...effects, get softShadows() { return softShadows; }, enabled: false,
+    return { ...effects, get softShadows() { return softShadows; }, get bloomEnabled() { return false; },
+      get aoEnabled() { return false; }, get lastSceneTriangles() { return 0; }, get lastSceneCalls() { return 0; },
+      enabled: false,
       render() {
         bounce.update();
         renderScene();
@@ -548,5 +548,6 @@ export function createLunarLighting(renderer, scene, camera, { mobile = false } 
   }
 
   return { ...effects, setOcclusionScale, get softShadows() { return softShadows; },
+    get bloomEnabled() { return bloomEnabled; }, get aoEnabled() { return aoEnabled; },
     get lastSceneTriangles() { return lastSceneTriangles; }, get lastSceneCalls() { return lastSceneCalls; }, render, enabled: true };
 }

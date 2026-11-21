@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { oreClearance } from "./lunar-collision.mjs";
+import { oreClearance } from "../simulation/lunar-collision.mjs";
 
 export function createFoundationPreview(scene, groundHeight, site, obstacle, t = zh => zh) {
   const footprint = new THREE.BufferGeometry();

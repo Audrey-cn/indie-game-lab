@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { makeEquipmentFinish } from "./lunar-equipment-finish.mjs";
+import { makeEquipmentFinish } from "../rendering/lunar-equipment-finish.mjs";
 
 const ease = THREE.MathUtils.smootherstep;
 let crateFinishes;

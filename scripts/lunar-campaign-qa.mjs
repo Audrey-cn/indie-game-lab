@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { chromium } from "playwright-core";
-import { CAMPAIGN_MISSION_SECONDS, POWER_SITE, RETURN_RADIUS } from "../src/lunar-rules.mjs";
-import { oreClearance } from "../src/lunar-collision.mjs";
+import { CAMPAIGN_MISSION_SECONDS, POWER_SITE, RETURN_RADIUS } from "../src/simulation/lunar-rules.mjs";
+import { oreClearance } from "../src/simulation/lunar-collision.mjs";
 import { makeConstructionRoute } from "./lunar-construction-qa.mjs";
 import { applyRouteKeys, routeCommand as surveyCommand, surveyRouteTargets } from "./lunar-survey-qa.mjs";
 

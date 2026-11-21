@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { LUNAR_GRAVITY } from "./lunar-rules.mjs";
+import { LUNAR_GRAVITY } from "../simulation/lunar-rules.mjs";
 
 const CHIP_COUNT = 38;
 const GRAIN_COUNT = 736;
