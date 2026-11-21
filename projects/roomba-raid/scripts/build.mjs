@@ -21,6 +21,7 @@ const result = await esbuild.build({
   format: "iife",
   platform: "browser",
   target: "es2020",
+  loader: { ".webp": "dataurl" },
 });
 
 const [{ text: bundle }] = result.outputFiles;

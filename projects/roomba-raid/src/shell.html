@@ -116,6 +116,42 @@
     #toast.green { border-color: var(--green); color: #b8ffda; }
     #toast.pink { border-color: var(--pink); color: #ffd0dc; }
 
+    /* Big Gold Jackpot Center Banner */
+    #jackpot-banner {
+      position: absolute; top: 126px; left: 50%; transform: translateX(-50%);
+      z-index: 20; pointer-events: none; text-align: center;
+      background: linear-gradient(135deg, rgba(46, 22, 8, 0.94), rgba(28, 12, 36, 0.94));
+      border: 2.5px solid var(--gold); border-radius: 18px;
+      padding: 10px 20px; box-shadow: 0 0 36px rgba(255, 213, 74, 0.55);
+      animation: jackPop 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+    }
+    #jackpot-banner[hidden] { display: none; }
+    #jackpot-banner .jt-sub { font-size: 11px; font-weight: 900; color: #ffe58f; letter-spacing: 0.1em; }
+    #jackpot-banner .jt-main { font-size: 20px; font-weight: 900; color: #fff; margin-top: 2px; text-shadow: 0 2px 0 #141122; }
+    #jackpot-banner .jt-val { font-size: 18px; font-weight: 900; color: var(--gold); }
+    @keyframes jackPop { from { transform: translateX(-50%) scale(0.6); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
+
+    /* Bottom-Right Active Overdrive Burst Button (Space / Thumb Tap) */
+    #btn-overdrive {
+      position: absolute; right: 16px; bottom: max(22px, env(safe-area-inset-bottom));
+      z-index: 16; width: 76px; height: 76px; border-radius: 50%;
+      border: 3px solid rgba(56, 243, 255, 0.45);
+      background: rgba(16, 22, 44, 0.86); color: #94a3b8;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-weight: 900; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      transition: transform 0.12s, border-color 0.2s, box-shadow 0.2s;
+    }
+    #btn-overdrive[hidden] { display: none; }
+    #btn-overdrive.ready {
+      border-color: var(--gold); color: #1d1100;
+      background: radial-gradient(circle at 35% 30%, #fff4b8, #ffd54a 60%, #ff8c1a);
+      box-shadow: 0 0 28px rgba(255, 213, 74, 0.72);
+      animation: pulse 0.55s infinite alternate;
+    }
+    #btn-overdrive:active { transform: scale(0.92); }
+    #btn-overdrive .od-ico { font-size: 22px; line-height: 1; }
+    #btn-overdrive .od-txt { font-size: 11px; margin-top: 2px; }
+
     /* Fullscreen Overlays */
     .overlay {
       position: absolute; inset: 0; z-index: 30;
@@ -258,6 +294,15 @@
     </div>
 
     <div id="toast" hidden></div>
+    <div id="jackpot-banner" hidden>
+      <div class="jt-sub">✨ 沙发底爆出大金 ✨</div>
+      <div class="jt-main" id="jt-name">24K 纯金猫罐头</div>
+      <div class="jt-val" id="jt-val">+¥28,000</div>
+    </div>
+    <button id="btn-overdrive" hidden>
+      <span class="od-ico">⚡</span>
+      <span class="od-txt" id="od-txt">0%</span>
+    </button>
 
     <!-- Title Screen -->
     <div class="overlay" id="screen-title">
