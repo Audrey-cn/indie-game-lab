@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright-core";
-const url = "https://audrey-cn.github.io/lunar-field-station/";
+const url = "https://audrey-cn.github.io/indie-game-lab/";
 const browser = await chromium.launch({
   executablePath: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   args: ["--enable-webgl", "--use-angle=metal"],
@@ -18,11 +18,13 @@ try {
   await page.locator("#settings-open").click();
   await page.locator("#language-select").selectOption("en");
   assert.match(await page.title(), /Lunar Field Station/);
-  assert.match(await page.locator(".music-credit").innerText(), /In This Moment/);
+  assert.ok((await page.locator(".music-credit").innerText()).trim().length > 0);
   await page.locator("#settings form button").click();
   await page.locator("#start-campaign").click();
-  await page.waitForFunction(() => document.body.dataset.phase === "playing"
-    && document.querySelector("#lunar-music").currentTime > 0.25);
+  // v0.3.0 lean bundle plays a zero-byte procedural synth (no embedded .m4a),
+  // so assert gameplay + audio-enabled rather than media-element currentTime.
+  await page.waitForFunction(() => document.body.dataset.phase === "playing");
+  assert.equal(await page.locator("#music-toggle").getAttribute("aria-pressed"), "true");
   await page.keyboard.down("w");
   await page.waitForTimeout(500);
   await page.keyboard.up("w");
@@ -30,5 +32,5 @@ try {
   await page.waitForFunction(() => document.body.dataset.paused === "true");
   assert.deepEqual(errors, []);
   assert.deepEqual(requests.filter(request => !request.startsWith(url)), []);
-  console.log("Live Pages verified: version loads, settings switch to English, expedition begins with embedded music, keyboard and pause respond, zero off-origin asset requests.");
+  console.log("Live Pages verified: version loads, settings switch to English, expedition begins with audio enabled, keyboard and pause respond, zero off-origin asset requests.");
 } finally { await browser.close(); }

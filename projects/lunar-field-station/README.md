@@ -2,8 +2,8 @@
 <p align="center"><strong>1.81 MB 单文件离线可运行的 WebGL 2 三模式月面 3D 游戏与图形技术切片（Three.js r182）</strong></p>
 
 <p align="center">
-  <a href="https://audrey-cn.github.io/lunar-field-station/projects/lunar-field-station/"><img src="./media/play-zh.png" width="146" height="42" alt="在线试玩"></a>
-  <a href="https://audrey-cn.github.io/lunar-field-station/projects/lunar-field-station/?debug=1"><img src="./media/download-zh.png" width="146" height="42" alt="开启渲染调试面板"></a>
+  <a href="https://audrey-cn.github.io/indie-game-lab/projects/lunar-field-station/"><img src="./media/play-zh.png" width="146" height="42" alt="在线试玩"></a>
+  <a href="https://audrey-cn.github.io/indie-game-lab/projects/lunar-field-station/?debug=1"><img src="./media/download-zh.png" width="146" height="42" alt="开启渲染调试面板"></a>
 </p>
 
 <p align="center">
@@ -43,9 +43,9 @@
 
 ![Render Breakdown 4-Panel](./media/render-breakdown-grid.jpg)
 
-| 实时性能与调试面板（`F2`） | 60 秒极速采集模式（Arcade Sprint） |
+| 实时性能与调试面板（`F2`） | 完整任务 2.0 · 实机动作帧 |
 | :---: | :---: |
-| ![WebGL2 Breakdown HUD](./media/render-debug-hud.jpg) | ![60s Arcade Sprint](./media/arcade-sprint.jpg) |
+| ![WebGL2 Breakdown HUD](./media/render-debug-hud.jpg) | ![Campaign 2.0 Action](./media/campaign-action.jpg) |
 
 ---
 
