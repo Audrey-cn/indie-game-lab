@@ -1,35 +1,30 @@
 {
   "bundle": {
-    "profile": "playable",
-    "output": "~/Documents/Codex/2026-11-16/files-mentioned-by-the-user-codex/outputs/threejs-lunar-station.html",
-    "totalBytes": 1831601,
-    "totalMB": 1.747,
-    "gzipBytes": 916749,
-    "gzipKB": 895.3,
+    "profile": "qa",
+    "output": "lunar-qa.html",
+    "totalBytes": 1901382,
+    "totalMB": 1.813,
+    "gzipBytes": 826528,
+    "gzipKB": 807.2,
     "breakdownBytes": {
-      "jsBundleMinified": 1503444,
-      "musicBase64": 275212,
+      "jsBundleMinified": 1841874,
+      "musicBase64": 0,
       "titleVideoBase64": 0,
       "titlePosterBase64": 0,
-      "htmlCssShell": 51909
-    },
-    "sourceEstimateBytes": {
-      "threeRaw": 2120525,
-      "appRaw": 741866,
-      "embeddedImagesRaw": 356408
+      "htmlCssShell": 58405
     }
   },
   "desktop": {
-    "bootMs": 3407,
+    "bootMs": 2536,
     "high": {
-      "drawCalls": 245,
-      "triangles": 576482,
-      "geometries": 423,
-      "textures": 61,
+      "drawCalls": 338,
+      "triangles": 595916,
+      "geometries": 528,
+      "textures": 64,
       "tracks": {
-        "stamps": 131,
-        "texels": 4682,
-        "allocatedTiles": 6,
+        "stamps": 124,
+        "texels": 2887,
+        "allocatedTiles": 5,
         "capacityTiles": 8,
         "cpuBytes": 406112,
         "gpuBytes": 406112
@@ -40,13 +35,13 @@
       "qualityTier": "high"
     },
     "balanced": {
-      "drawCalls": 244,
-      "triangles": 576162,
-      "geometries": 423,
-      "textures": 61,
+      "drawCalls": 304,
+      "triangles": 590422,
+      "geometries": 528,
+      "textures": 64,
       "tracks": {
-        "stamps": 134,
-        "texels": 4805,
+        "stamps": 140,
+        "texels": 3274,
         "allocatedTiles": 6,
         "capacityTiles": 8,
         "cpuBytes": 406112,
@@ -58,14 +53,14 @@
       "qualityTier": "balanced"
     },
     "low": {
-      "drawCalls": 238,
-      "triangles": 575254,
-      "geometries": 423,
-      "textures": 61,
+      "drawCalls": 299,
+      "triangles": 590398,
+      "geometries": 528,
+      "textures": 64,
       "tracks": {
-        "stamps": 138,
-        "texels": 4964,
-        "allocatedTiles": 7,
+        "stamps": 153,
+        "texels": 3576,
+        "allocatedTiles": 6,
         "capacityTiles": 8,
         "cpuBytes": 406112,
         "gpuBytes": 406112
@@ -77,12 +72,12 @@
     }
   },
   "mobile": {
-    "bootMs": 2627,
+    "bootMs": 2110,
     "stats": {
-      "drawCalls": 260,
-      "triangles": 569046,
-      "geometries": 402,
-      "textures": 46,
+      "drawCalls": 350,
+      "triangles": 571988,
+      "geometries": 477,
+      "textures": 54,
       "tracks": {
         "stamps": 0,
         "texels": 0,
@@ -97,8 +92,10 @@
       "qualityTier": "low"
     }
   },
-  "arcade": {
-    "score": 100,
-    "comboText": "×2"
+  "arcade": {},
+  "action": {
+    "mode": "campaign",
+    "phase": "playing",
+    "samples": null
   }
 }

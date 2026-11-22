@@ -1,20 +1,15 @@
 {
-  "profile": "playable",
-  "output": "~/Documents/Codex/2026-11-16/files-mentioned-by-the-user-codex/outputs/threejs-lunar-station.html",
-  "totalBytes": 1831601,
-  "totalMB": 1.747,
-  "gzipBytes": 916749,
-  "gzipKB": 895.3,
+  "profile": "qa",
+  "output": "lunar-qa.html",
+  "totalBytes": 1901382,
+  "totalMB": 1.813,
+  "gzipBytes": 826528,
+  "gzipKB": 807.2,
   "breakdownBytes": {
-    "jsBundleMinified": 1503444,
-    "musicBase64": 275212,
+    "jsBundleMinified": 1841874,
+    "musicBase64": 0,
     "titleVideoBase64": 0,
     "titlePosterBase64": 0,
-    "htmlCssShell": 51909
-  },
-  "sourceEstimateBytes": {
-    "threeRaw": 2120525,
-    "appRaw": 741866,
-    "embeddedImagesRaw": 356408
+    "htmlCssShell": 58405
   }
 }

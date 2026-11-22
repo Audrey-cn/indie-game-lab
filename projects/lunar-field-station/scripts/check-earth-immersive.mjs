@@ -222,7 +222,11 @@ async function exercise(name, width, height, isMobile) {
     if (!isMobile) {
       await advance(30);
       const live = await compareOpticsFrames(page, 216);
-      assert.ok(live.changed > 5 && live.meanRgbDifference < 16, JSON.stringify(live));
+      // v0.3.0 upgraded to dual-layer differential cloud bands with organic vortex spread
+      // (visible drift within ~2s, per CHANGELOG v0.3.0). The upper bound is recalibrated
+      // 16 -> 32 to allow that intentional stronger drift while still bounding runaway change.
+      // The reduced-motion zero-jitter invariant below is unchanged and stays strict.
+      assert.ok(live.changed > 5 && live.meanRgbDifference < 32, JSON.stringify(live));
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await advance(30);
       const reduced = await compareOpticsFrames(page, 216);

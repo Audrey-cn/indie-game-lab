@@ -30,7 +30,7 @@ async function run() {
   });
 
   const errors = [];
-  const report = { bundle: bundleStats, desktop: {}, mobile: {}, arcade: {} };
+  const report = { bundle: bundleStats, desktop: {}, mobile: {} };
 
   try {
     // 1. Desktop benchmark + Render Channel Breakdown captures
@@ -124,31 +124,23 @@ async function run() {
     }, shots);
     await writeFile(resolve(mediaOut, "render-breakdown-grid.jpg"), Buffer.from(gridDataUrl.split(",")[1], "base64"));
 
-    // 2. Verify 60s Arcade Sprint mode + capture HUD pop-up & boost thruster shot
-    await page.evaluate(() => window.__lunarDebug.setMode("final"));
-    await page.keyboard.press("Escape");
-    await waitFrames(page, 3);
-    await page.locator("#main-menu").click();
+    // 2. Campaign action capture — HDR boost thrusters + motion in the flagship v0.3.0 mode.
+    // (The v0.2.x Arcade Sprint title button was retired in the v0.3.0 three-mode redesign;
+    //  the benchmark now exercises a mode that is actually reachable from the title screen.)
+    await page.evaluate(() => { window.__lunarDebug.setMode("final"); window.__lunarDebug.setVisible(false); });
     await waitFrames(page, 4);
-    await page.locator("#start-arcade").click();
-    await waitFrames(page, 6);
-
-    // Drive toward the first arcade beacon (-1.8, -4.8) with boost engaged
     await page.keyboard.down("KeyW");
-    await page.keyboard.down("KeyA");
-    await page.waitForTimeout(320);
-    await page.keyboard.up("KeyA");
     await page.keyboard.down("ShiftLeft");
     await page.waitForTimeout(1350);
-    // Capture mid-boost right after crossing beacon so pop-up, combo bar, and HDR thrusters are visible!
-    await page.screenshot({ path: resolve(mediaOut, "arcade-sprint.jpg"), type: "jpeg", quality: 90 });
+    // Capture mid-boost so the HDR ion thrusters and rover motion are visible.
+    await page.screenshot({ path: resolve(mediaOut, "campaign-action.jpg"), type: "jpeg", quality: 90 });
     await page.keyboard.up("ShiftLeft");
     await page.keyboard.up("KeyW");
     await waitFrames(page, 4);
-    const arcadeScoreText = await page.locator("#score").innerText();
-    const arcadeComboText = await page.locator("#quality-count").innerText();
-    report.arcade = { score: Number(arcadeScoreText), comboText: arcadeComboText };
-    assert.ok(Number(arcadeScoreText) >= 100, `Arcade capture did not register: score=${arcadeScoreText}`);
+    const campaignPhase = await page.evaluate(() => document.body.dataset.phase);
+    const campaignSamples = await page.locator("#score").innerText();
+    report.action = { mode: "campaign", phase: campaignPhase, samples: Number(campaignSamples) };
+    assert.equal(campaignPhase, "playing", `Campaign action capture not in play: phase=${campaignPhase}`);
 
     await page.close();
 

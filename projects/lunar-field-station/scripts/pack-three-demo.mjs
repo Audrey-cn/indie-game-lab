@@ -42,4 +42,21 @@ await writeFile(destination, standalone);
 
 const totalBytes = Buffer.byteLength(standalone);
 const gzipBytes = gzipSync(standalone, { level: 9 }).byteLength;
+// Emit bundle stats with a repo-relative output path (never an absolute home path).
+const bundleStats = {
+  profile: qa ? "qa" : "playable",
+  output: qa ? "lunar-qa.html" : "index.html",
+  totalBytes,
+  totalMB: Number((totalBytes / 1048576).toFixed(3)),
+  gzipBytes,
+  gzipKB: Number((gzipBytes / 1024).toFixed(1)),
+  breakdownBytes: {
+    jsBundleMinified: Buffer.byteLength(bundle),
+    musicBase64: 0,
+    titleVideoBase64: 0,
+    titlePosterBase64: 0,
+    htmlCssShell: Buffer.byteLength(html),
+  },
+};
+await writeFile(new URL("docs/bundle-stats.json", repoRoot), JSON.stringify(bundleStats, null, 2) + "\n");
 console.log(`${destination.pathname} ${totalBytes} (${(totalBytes / 1048576).toFixed(3)} MB | gzip ${(gzipBytes / 1024).toFixed(1)} KB)`);
