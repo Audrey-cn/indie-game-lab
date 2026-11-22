@@ -4,16 +4,19 @@
 // + 11-Skin Silhouette Garage + Graphical 3-Tier Talent Tree + 6-Enemy Codex!
 
 import {
+  ACCESSORIES,
   BOOSTERS,
   DEATH_QUIPS,
   DEFAULT_SAVE,
   ENEMY_CODEX,
   LOOT_ITEMS,
+  MAPS,
   MUSEUM_SETS,
   PASSIVES,
   SAFE_BOX_PRICES,
   SKINS,
-  TALENT_TREE,
+  TALENT_COSTS,
+  TALENT_STYLES,
   WEAPONS,
 } from "./config.mjs";
 import { sfx } from "./audio.mjs";
@@ -32,14 +35,10 @@ import {
 import {
   clampToRoom,
   createCleanTracker,
+  generateRoomLayout,
   isUnderHiddenCover,
-  LOCKED_FACILITIES,
-  NATIVE_SPOT_DEFS,
   pointHitsObstacle,
   ROOM,
-  SHOCK_STRIP_DEFS,
-  WET_ZONES,
-  WIND_ZONES,
 } from "./room-layout.mjs";
 import { cleanDustAt, createDustLayer, renderGame, renderReceiptPoster, smearPoopAt } from "./renderer.mjs";
 import { POSTERS, SPRITE_URLS } from "./sprites.mjs";
@@ -66,14 +65,27 @@ resize();
 document.getElementById("page-home").style.backgroundImage = `url(${POSTERS.lobby})`;
 
 let save = loadSave(DEFAULT_SAVE);
-if (!save.talentsUnlocked) save.talentsUnlocked = [];
-if (!save.talentsEquipped) save.talentsEquipped = { 1: null, 2: null, 3: null };
+if (!save.accOwned) save.accOwned = ["none", "ahoge"];
+if (!save.equippedAcc) save.equippedAcc = "ahoge";
+if (!save.activeTalentStyle) save.activeTalentStyle = "thunder";
+if (!save.talentLevels) save.talentLevels = {};
+if (!save.talentActive) {
+  save.talentActive = {
+    thunder: { 1: null, 2: null, 3: null },
+    greed: { 1: null, 2: null, 3: null },
+    clean: { 1: null, 2: null, 3: null },
+  };
+}
+if (!save.selectedMap) save.selectedMap = "living";
 
 const urlCtx = parseUrlContext();
 let selectedMode = urlCtx.seed ? "daily" : "free";
 let currentNav = "home";
+let currentGarageTab = "skins";
 let currentCodexTab = "enemies";
 let selectedSkinId = save.equippedSkin || "classic";
+let selectedAccId = save.equippedAcc || "ahoge";
+let selectedTalentId = "th_dmg";
 let state = null;
 let lastTs = 0;
 
@@ -119,8 +131,31 @@ function showJackpotBanner(name, value, sub = "✨ 发现大金 ✨") {
   }, 2200);
 }
 
-function getActiveTalents() {
-  return new Set(Object.values(save.talentsEquipped || {}).filter(Boolean));
+function getActiveTalentLv(nodeId) {
+  const styleId = save.activeTalentStyle || "thunder";
+  const activeMap = (save.talentActive && save.talentActive[styleId]) || {};
+  const isActive = Object.values(activeMap).includes(nodeId);
+  return isActive ? (save.talentLevels[nodeId] || 0) : 0;
+}
+
+function isMapUnlocked(map) {
+  if (!map.unlockReq) return true;
+  if (map.unlockReq.type === "stars") return (save.bestStars || 0) >= map.unlockReq.count;
+  if (map.unlockReq.type === "cat_secret") {
+    const wearingCat = save.equippedSkin === "cat" || save.equippedSkin === "hidden_catgod" || save.equippedAcc === "catears";
+    return wearingCat || (save.museum.catcan || 0) >= 2;
+  }
+  return false;
+}
+
+function isAccUnlocked(acc) {
+  if (acc.free || save.accOwned.includes(acc.id)) return true;
+  if (acc.req?.type === "star" && (save.bestStars || 0) >= acc.req.stars) {
+    save.accOwned.push(acc.id);
+    writeSave(save);
+    return true;
+  }
+  return false;
 }
 
 function getMuseumBonuses() {
@@ -135,17 +170,43 @@ function getEquippedSkin() {
   return SKINS.find((s) => s.id === save.equippedSkin) || SKINS[0];
 }
 
-// ===== MOBILE GAME LOBBY RENDERERS =====
 function refreshLobby() {
   document.getElementById("top-coins").textContent = `💰 ¥${Math.round(save.coins).toLocaleString()}`;
   document.getElementById("top-cores").textContent = `💎 ${save.goldCores || 0}`;
   document.getElementById("top-streak").textContent = `🔥 ${save.extractStreak}连撤`;
 
   const skin = getEquippedSkin();
-  document.getElementById("home-eq-name").textContent = `🤖 ${skin.name}（${skin.sizeClass}）`;
+  const acc = ACCESSORIES.find((a) => a.id === save.equippedAcc) || ACCESSORIES[0];
+  document.getElementById("home-eq-name").textContent = `🤖 ${skin.name} · ${acc.icon}${acc.name}`;
   document.getElementById("home-eq-skill").textContent = `专属技：${skin.skillName} · ${skin.desc}`;
   document.getElementById("mode-free").classList.toggle("active", selectedMode === "free");
   document.getElementById("mode-daily").classList.toggle("active", selectedMode === "daily");
+
+  // Render 3 Procedural Maps Selector!
+  const mapSel = document.getElementById("map-selector");
+  mapSel.innerHTML = "";
+  let activeMap = MAPS.find((m) => m.id === save.selectedMap) || MAPS[0];
+  if (!isMapUnlocked(activeMap)) {
+    activeMap = MAPS[0];
+    save.selectedMap = "living";
+  }
+  for (const m of MAPS) {
+    const unlocked = isMapUnlocked(m);
+    const btn = document.createElement("button");
+    btn.className = `stab ${save.selectedMap === m.id ? "active" : ""}`;
+    btn.textContent = unlocked ? m.name : `🔒 ${m.name}`;
+    btn.onclick = () => {
+      if (!unlocked) {
+        showToast(`🔒 ${m.unlockReq.label}`, "pink");
+        return;
+      }
+      save.selectedMap = m.id;
+      writeSave(save);
+      refreshLobby();
+    };
+    mapSel.appendChild(btn);
+  }
+  document.getElementById("map-desc").textContent = `${activeMap.tag} · ${activeMap.desc}`;
 
   const ghostBanner = document.getElementById("title-ghost-banner");
   if (urlCtx.ghostDrop) {
@@ -167,10 +228,70 @@ function refreshLobby() {
 }
 
 function renderGarage() {
-  document.getElementById("garage-count").textContent = `${save.skinsOwned.length} / ${SKINS.length}`;
+  document.querySelectorAll("[data-gtab]").forEach((b) => b.classList.toggle("active", b.dataset.gtab === currentGarageTab));
   const grid = document.getElementById("skin-grid");
+  const detail = document.getElementById("skin-detail");
   grid.innerHTML = "";
 
+  if (currentGarageTab === "acc") {
+    const unlockedCount = ACCESSORIES.filter(isAccUnlocked).length;
+    document.getElementById("garage-count").textContent = `${unlockedCount} / ${ACCESSORIES.length}`;
+    for (const acc of ACCESSORIES) {
+      const owned = isAccUnlocked(acc);
+      const equipped = save.equippedAcc === acc.id;
+      const card = document.createElement("div");
+      card.className = `skin-card ${equipped ? "equipped" : ""} ${!owned ? "locked" : ""}`;
+      card.innerHTML = `
+        <div style="font-size:34px;margin:8px 0 4px;${owned ? "" : "filter:brightness(0) opacity(0.5)"}">${acc.icon}</div>
+        <div class="skin-name">${acc.name}</div>
+        <div class="skin-price">${equipped ? "✅ 佩戴中" : owned ? "已解锁" : "🔒 未解锁"}</div>
+      `;
+      card.onclick = () => {
+        selectedAccId = acc.id;
+        renderGarage();
+      };
+      grid.appendChild(card);
+    }
+    const acc = ACCESSORIES.find((a) => a.id === selectedAccId) || ACCESSORIES[0];
+    const owned = isAccUnlocked(acc);
+    const equipped = save.equippedAcc === acc.id;
+    let canBuy = false;
+    let btnText = equipped ? "✅ 当前正在佩戴" : "⚡ 立即佩戴";
+    if (!owned) {
+      if (acc.req?.type === "loot") {
+        const have = save.museum[acc.req.lootId] || 0;
+        canBuy = have >= acc.req.count;
+        btnText = canBuy ? "🎁 珍品达标！免费兑换" : `🔒 ${acc.unlockText} (${have}/${acc.req.count})`;
+      } else if (acc.price) {
+        canBuy = save.coins >= acc.price && (save.goldCores || 0) >= (acc.core || 0);
+        btnText = acc.core > 0 ? `兑换：¥${acc.price.toLocaleString()}+💎${acc.core}` : `购买：¥${acc.price.toLocaleString()}`;
+      } else {
+        btnText = `🔒 ${acc.unlockText}`;
+      }
+    }
+    detail.innerHTML = `
+      <div style="font-size:15px;font-weight:900;color:var(--gold)">${acc.icon} ${acc.name}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">${acc.unlockText}</div>
+      <button class="gbtn ${owned ? (equipped ? "gbtn-dark" : "gbtn-play") : (canBuy ? "gbtn-gold" : "gbtn-dark")}" id="btn-acc-act" style="margin-top:8px;padding:10px;font-size:13px" ${!owned && !canBuy ? "disabled" : ""}>${btnText}</button>
+    `;
+    document.getElementById("btn-acc-act").onclick = () => {
+      if (owned) save.equippedAcc = acc.id;
+      else if (canBuy) {
+        if (acc.price) {
+          save.coins -= acc.price;
+          save.goldCores = (save.goldCores || 0) - (acc.core || 0);
+        }
+        save.accOwned.push(acc.id);
+        save.equippedAcc = acc.id;
+        sfx.playBigGold();
+      }
+      writeSave(save);
+      refreshLobby();
+    };
+    return;
+  }
+
+  document.getElementById("garage-count").textContent = `${save.skinsOwned.length} / ${SKINS.length}`;
   for (const sk of SKINS) {
     const owned = save.skinsOwned.includes(sk.id);
     const equipped = save.equippedSkin === sk.id;
@@ -196,11 +317,9 @@ function renderGarage() {
     grid.appendChild(card);
   }
 
-  // Detail & Action bar for selected skin
   const sk = SKINS.find((s) => s.id === selectedSkinId) || SKINS[0];
   const owned = save.skinsOwned.includes(sk.id);
   const equipped = save.equippedSkin === sk.id;
-  const detail = document.getElementById("skin-detail");
 
   let actionHtml = "";
   let canUnlock = false;
@@ -228,9 +347,8 @@ function renderGarage() {
   const actBtn = document.getElementById("btn-skin-act");
   if (actBtn) {
     actBtn.onclick = () => {
-      if (owned) {
-        save.equippedSkin = sk.id;
-      } else if (canUnlock) {
+      if (owned) save.equippedSkin = sk.id;
+      else if (canUnlock) {
         if (!sk.hiddenLootReq) {
           save.coins -= sk.price;
           save.goldCores = (save.goldCores || 0) - (sk.corePrice || 0);
@@ -246,47 +364,96 @@ function renderGarage() {
 }
 
 function renderTalentTree() {
+  const styleTabs = document.getElementById("talent-style-tabs");
+  styleTabs.innerHTML = "";
+  for (const st of TALENT_STYLES) {
+    const b = document.createElement("button");
+    b.className = `stab ${save.activeTalentStyle === st.id ? "active" : ""}`;
+    b.textContent = st.name;
+    b.onclick = () => {
+      save.activeTalentStyle = st.id;
+      selectedTalentId = st.tiers[0].nodes[0].id;
+      writeSave(save);
+      renderTalentTree();
+    };
+    styleTabs.appendChild(b);
+  }
+
+  const style = TALENT_STYLES.find((s) => s.id === save.activeTalentStyle) || TALENT_STYLES[0];
+  document.getElementById("talent-style-tag").textContent = `当前流派：${style.name}`;
+  const activeMap = save.talentActive[style.id] || { 1: null, 2: null, 3: null };
+  save.talentActive[style.id] = activeMap;
+
   const wrap = document.getElementById("talent-tree");
   wrap.innerHTML = "";
-  for (const t of TALENT_TREE) {
+  let selectedNodeObj = null;
+  let selectedTierNum = 1;
+
+  for (const t of style.tiers) {
     const tierEl = document.createElement("div");
     tierEl.className = "tree-tier";
     tierEl.innerHTML = `<div class="tier-title">${t.title}</div><div class="tier-nodes"></div>`;
     const grid = tierEl.querySelector(".tier-nodes");
 
     for (const node of t.nodes) {
-      const unlocked = save.talentsUnlocked.includes(node.id);
-      const active = save.talentsEquipped[t.tier] === node.id;
-      const canBuy = save.coins >= node.price && (save.goldCores || 0) >= node.core;
+      const lv = save.talentLevels[node.id] || 0;
+      const active = activeMap[t.tier] === node.id && lv > 0;
+      if (node.id === selectedTalentId) {
+        selectedNodeObj = node;
+        selectedTierNum = t.tier;
+      }
       const btn = document.createElement("button");
-      btn.className = `tnode ${unlocked ? "unlocked" : ""} ${active ? "active" : ""}`;
+      btn.className = `tnode ${lv > 0 ? "unlocked" : ""} ${active ? "active" : ""}`;
+      btn.style.outline = node.id === selectedTalentId ? "2px solid #ffd54a" : "none";
       btn.innerHTML = `
         <div class="tnode-orb">${node.icon}</div>
         <div class="tnode-name">${node.name}</div>
-        <div class="tnode-stat">${node.stat}</div>
-        <div class="tnode-cost">${active ? "✅ 激活中" : unlocked ? "点击切换" : (node.core > 0 ? `¥${node.price / 1000}k+💎${node.core}` : `¥${node.price / 1000}k`)}</div>
+        <div class="tnode-stat">${node.stat(Math.max(1, lv))}</div>
+        <div class="tnode-cost">${lv > 0 ? `LV.${lv}/5 ${active ? "✅" : ""}` : "未解锁"}</div>
       `;
       btn.onclick = () => {
-        if (unlocked) {
-          save.talentsEquipped[t.tier] = active ? null : node.id;
+        selectedTalentId = node.id;
+        if (lv > 0) {
+          activeMap[t.tier] = node.id;
+          writeSave(save);
           sfx.playXp();
-        } else if (canBuy) {
-          save.coins -= node.price;
-          save.goldCores = (save.goldCores || 0) - node.core;
-          save.talentsUnlocked.push(node.id);
-          save.talentsEquipped[t.tier] = node.id;
-          sfx.playLevelUp();
-        } else {
-          showToast("金币或稀缺金核 💎 不足！去摸大金或扫满 100% 吧！", "pink");
-          return;
         }
-        writeSave(save);
-        refreshLobby();
+        renderTalentTree();
       };
       grid.appendChild(btn);
     }
     wrap.appendChild(tierEl);
   }
+
+  // Upgrade & Activate Detail Panel for Selected Talent Node (LV 0 -> 5!)
+  const node = selectedNodeObj || style.tiers[0].nodes[0];
+  const lv = save.talentLevels[node.id] || 0;
+  const nextCost = TALENT_COSTS[lv];
+  const canUp = Boolean(nextCost) && save.coins >= nextCost.coins && (save.goldCores || 0) >= nextCost.core;
+  const costTxt = !nextCost
+    ? "已满级 LV.5"
+    : nextCost.core > 0
+      ? `升级 LV.${lv + 1}：¥${(nextCost.coins / 1000).toFixed(0)}k + 💎${nextCost.core}`
+      : `升级 LV.${lv + 1}：¥${(nextCost.coins / 1000).toFixed(0)}k`;
+
+  const detail = document.getElementById("talent-detail");
+  detail.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong style="font-size:14px;color:var(--gold)">${node.icon} ${node.name}（LV.${lv}/5）</strong>
+      <span style="font-size:11px;color:var(--cyan);font-weight:900">${node.stat(Math.max(1, lv))}</span>
+    </div>
+    <button class="gbtn ${canUp ? "gbtn-gold" : "gbtn-dark"}" id="btn-talent-up" style="margin-top:8px;padding:10px;font-size:13px" ${canUp ? "" : "disabled"}>${costTxt}</button>
+  `;
+  document.getElementById("btn-talent-up").onclick = () => {
+    if (!canUp) return;
+    save.coins -= nextCost.coins;
+    save.goldCores = (save.goldCores || 0) - nextCost.core;
+    save.talentLevels[node.id] = lv + 1;
+    activeMap[selectedTierNum] = node.id;
+    writeSave(save);
+    sfx.playLevelUp();
+    refreshLobby();
+  };
 }
 
 function renderCodex() {
@@ -401,26 +568,27 @@ function pickWeightedLoot(rng, minValue = 0) {
   return list[0];
 }
 
-function findSafePoint(rng, pad = 120) {
+function findSafePoint(layout, rng, pad = 120) {
   for (let tries = 0; tries < 40; tries++) {
-    const x = pad + rng() * (ROOM.width - pad * 2);
-    const y = pad + rng() * (ROOM.height - pad * 2);
-    if (!pointHitsObstacle(x, y)) return { x, y };
+    const x = pad + rng() * (layout.width - pad * 2);
+    const y = pad + rng() * (layout.height - pad * 2);
+    if (!pointHitsObstacle(layout, x, y)) return { x, y };
   }
-  return { x: 560, y: 400 };
+  return { x: layout.startPos.x, y: layout.startPos.y };
 }
 
 function startRun() {
+  const mapDef = MAPS.find((m) => m.id === save.selectedMap) || MAPS[0];
   sfx.unlock();
   sfx.setUrgent(false);
   sfx.setFever(false);
-  sfx.startBgm("living");
+  sfx.startBgm(mapDef.bgm || "living");
 
   const isDaily = selectedMode === "daily";
   const seedStr = isDaily ? (urlCtx.seed || getTodaySeedString()) : String(Date.now());
-  const rng = createRng(hashSeed(seedStr));
+  const rng = createRng(hashSeed(`${mapDef.id}_${seedStr}`));
+  const layout = generateRoomLayout(mapDef.id, rng);
   const skin = getEquippedSkin();
-  const talents = getActiveTalents();
   const museumBonus = getMuseumBonuses();
   const highRisk = Boolean(save.boosters.highrisk);
   const startLvUp = Boolean(save.boosters.lv3);
@@ -428,23 +596,29 @@ function startRun() {
   save.boosters = {};
   writeSave(save);
 
-  const maxHp = Math.round((115 + (talents.has("t1_armor") ? 35 : 0)) * skin.bonus.hp);
+  // Pull active 5-level style talent bonuses!
+  const tLv = getActiveTalentLv;
+  const maxHp = Math.round((115 + tLv("th_armor") * 22) * skin.bonus.hp);
 
   state = {
     phase: "playing",
     mode: isDaily ? "daily" : "free",
+    mapDef,
+    layout,
     seedStr,
     rng,
-    talents,
+    tLv,
     time: 0,
     slowMo: 0,
     wave: 1,
     hordeTimer: 26,
     highRisk,
-    lootMult: skin.bonus.loot * museumBonus.lootMult * (highRisk ? 1.8 : 1) * (talents.has("t3_greed") ? 1.25 : 1),
-    fireRateMult: museumBonus.fireRate * (talents.has("t2_haste") ? 1.18 : 1),
-    critBonus: talents.has("t2_crit") ? 0.18 : 0,
-    chargeMult: (talents.has("t3_charge") ? 1.45 : 1) * (skin.id === "hidden_duck" ? 1.3 : 1),
+    dmgMult: 1 + tLv("th_dmg") * 0.1,
+    rangeMult: 1 + tLv("th_range") * 0.08,
+    lootMult: mapDef.lootMult * skin.bonus.loot * museumBonus.lootMult * (highRisk ? 1.8 : 1) * (1 + tLv("gr_val") * 0.1),
+    fireRateMult: museumBonus.fireRate * (1 + tLv("th_haste") * 0.07),
+    critBonus: tLv("th_crit") * 0.07,
+    chargeMult: (1 + tLv("th_od") * 0.18 + tLv("cl_charge") * 0.25) * (skin.id === "hidden_duck" ? 1.3 : 1),
     kills: 0,
     combo: 0,
     comboTimer: 0,
@@ -458,38 +632,39 @@ function startRun() {
     coresEarned: 0,
     secretBedFound: false,
     dustLayer: createDustLayer(),
-    cleanTracker: createCleanTracker(),
+    cleanTracker: createCleanTracker(layout),
     milestones: { m35: false, m70: false, m100: false },
     player: {
-      x: 520,
-      y: 380,
+      x: layout.startPos.x,
+      y: layout.startPos.y,
       vx: 0,
       vy: 0,
       r: Math.round(23 * (skin.scale || 1)),
       facing: 0,
       hp: maxHp,
       maxHp,
-      speed: 260 * skin.bonus.speed * (talents.has("t1_drift") ? 1.14 : 1),
-      magnet: (skin.id === "cat" ? 170 : 126) * (talents.has("t1_suck") ? 1.28 : 1),
-      cleanRadius: (skin.id === "sakura" ? 48 : 40) * (talents.has("t1_suck") ? 1.28 : 1),
+      speed: 260 * skin.bonus.speed * (1 + tLv("gr_spd") * 0.05),
+      magnet: (skin.id === "cat" ? 170 : 126) * (1 + tLv("gr_mag") * 0.16),
+      cleanRadius: (skin.id === "sakura" ? 48 : 40) * (1 + tLv("cl_wide") * 0.12),
       lv: 1,
       xp: 0,
-      xpNext: 48, // Smooth ~15-second warm-up before first card draw!
+      xpNext: 48,
       hurtFlash: 0,
       invuln: 0,
       poopSlow: 0,
       slimeDebuff: 0,
       skin: skin.id,
+      acc: save.equippedAcc || "none",
       charge: 35,
       overdrive: 0,
       cloneCd: 0,
       giant: 0,
-      giantCharges: 1,
+      giantCharges: 1 + (tLv("cl_giant2") >= 4 ? 2 : tLv("cl_giant2") >= 1 ? 1 : 0),
       giantAdUsed: false,
-      weapons: { swatter: 1, laser: talents.has("t3_start") ? 1 : 0, spatula: 0, hairdryer: 0, tesla: 0 },
+      weapons: { swatter: 1, laser: Math.min(5, tLv("th_start")), spatula: 0, hairdryer: 0, tesla: 0 },
       cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6 },
     },
-    cam: { x: 520, y: 380 },
+    cam: { x: layout.startPos.x, y: layout.startPos.y },
     bagLoot: [],
     looseCoins: 0,
     hasKey: false,
@@ -501,8 +676,8 @@ function startRun() {
     ragdolls: [],
     props: [],
     poops: [],
-    nativeSpots: NATIVE_SPOT_DEFS.map((d) => ({ ...d, progress: 0, tickAcc: 0, searched: false })),
-    shockStrips: SHOCK_STRIP_DEFS.map((d) => ({ ...d, cd: 0 })),
+    nativeSpots: layout.nativeSpots,
+    shockStrips: layout.shockStrips,
     crates: [],
     gems: [],
     lootDrops: [],
@@ -510,9 +685,9 @@ function startRun() {
     vfx: [],
     particles: [],
     texts: [],
-    dock: { active: false, x: 1860, y: 1060, radius: 72, progress: 0, tickAcc: 0 },
+    dock: { active: false, x: layout.dockPos.x, y: layout.dockPos.y, radius: 72, progress: 0, tickAcc: 0 },
     spawnAcc: 0.4,
-    pawAcc: 15,
+    pawAcc: mapDef.id === "cat_palace" ? 10 : 15,
     keys: new Set(),
     joy: { active: false, id: null, ox: 0, oy: 0, cx: 0, cy: 0, dx: 0, dy: 0 },
   };
@@ -520,27 +695,35 @@ function startRun() {
   cleanDustAt(state.dustLayer, state.player.x, state.player.y, 54);
   state.cleanTracker.markClean(state.player.x, state.player.y, 56);
 
-  // Smooth Warm-Up Start: 7 dust-bunnies at medium range so player warms up cleanly before LV2!
+  // Update Mission Briefing text per Map!
+  document.querySelector("#briefing-banner .bf-title").textContent = `${mapDef.name} · 开始清扫！`;
+  document.querySelector("#briefing-banner .bf-sub").textContent = `主人刚睡熟，加油把${mapDef.name}清扫到 100% 吧！`;
+
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * Math.PI * 2 + rng() * 0.25;
     const dist = 210 + (i % 2) * 55;
     const ex = state.player.x + Math.cos(a) * dist;
     const ey = state.player.y + Math.sin(a) * dist;
-    if (!pointHitsObstacle(ex, ey)) {
+    if (!pointHitsObstacle(layout, ex, ey)) {
       spawnEnemy(i % 5 === 0 ? "sock" : "dust", { x: ex, y: ey });
     }
   }
 
   for (let i = 0; i < 16; i++) {
-    const pt = findSafePoint(rng, 120);
+    const pt = findSafePoint(layout, rng, 120);
     state.props.push({ x: pt.x, y: pt.y, kind: i % 2 === 0 ? "box" : "snack", rot: (rng() - 0.5) * 0.5, flash: 0 });
   }
 
-  for (const pt of [{ x: 470, y: 580 }, findSafePoint(rng, 180), findSafePoint(rng, 180), findSafePoint(rng, 180)]) {
+  for (let i = 0; i < 4; i++) {
+    const pt = findSafePoint(layout, rng, 180);
     state.poops.push({ x: pt.x, y: pt.y, life: 14, flash: 0 });
   }
 
-  if (extraRadar) state.crates.push({ x: 640, y: 380, minVal: 18800, progress: 0, tickAcc: 0 });
+  const extraCrates = (extraRadar ? 1 : 0) + Math.ceil(tLv("gr_crate") / 2);
+  for (let c = 0; c < extraCrates; c++) {
+    const pt = findSafePoint(layout, rng, 200);
+    state.crates.push({ x: pt.x, y: pt.y, minVal: 18800, progress: 0, tickAcc: 0 });
+  }
 
   if (urlCtx.ghostDrop) {
     state.lootDrops.push({
@@ -637,34 +820,37 @@ function triggerClone() {
   if (!state || state.phase !== "playing") return;
   const p = state.player;
   if (p.cloneCd > 0) return;
-  p.cloneCd = 24;
+  p.cloneCd = Math.max(10, 24 * (1 - state.tLv("cl_cd") * 0.1));
   sfx.playLevelUp();
-  const count = state.talents.has("t3_charge") ? 2 : 1;
+  const clLv = state.tLv("cl_clone");
+  const count = 1 + (clLv >= 3 ? 2 : clLv >= 1 ? 1 : 0);
+  const dur = 12 + clLv * 2;
   for (let i = 0; i < count; i++) {
-    const a = p.facing + (i === 0 ? 0.8 : -0.8);
+    const a = p.facing + (i - (count - 1) / 2) * 0.85;
     state.clones.push({
       x: p.x + Math.cos(a) * 44,
       y: p.y + Math.sin(a) * 44,
       vx: Math.cos(a) * 260,
       vy: Math.sin(a) * 260,
-      life: 12,
+      life: dur,
       hitCd: 0,
     });
   }
   spawnRing(p.x, p.y, 16, 120, "#38f3ff", 6, 0.28);
-  showToast(`🤖 召唤 ${count} 台迷你扫地分身！自动扫灰 + 撞击怪潮 12 秒！`, "green");
+  showToast(`🤖 召唤 ${count} 台迷你扫地分身！自动扫灰 + 撞击怪潮 ${dur} 秒！`, "green");
 }
 
 function triggerGiant() {
   if (!state || state.phase !== "playing") return;
   const p = state.player;
   if (p.giant > 0) return;
+  const dur = 8.0 + state.tLv("cl_giant") * 1.5;
   const activate = () => {
-    p.giant = 8.0;
+    p.giant = dur;
     state.shake = 0.65;
     sfx.playOverdriveBlast();
     spawnRing(p.x, p.y, 20, 180, "#ff4c76", 9, 0.35);
-    showToast("🍄 巨无霸变身 8 秒！清扫翻倍+直接碾碎小怪（注意：钻不进桌底！）", "pink");
+    showToast(`🍄 巨无霸变身 ${dur.toFixed(0)} 秒！清扫翻倍+直接碾碎小怪（钻不进桌底！）`, "pink");
   };
   if (p.giantCharges > 0) {
     p.giantCharges -= 1;
@@ -727,7 +913,7 @@ function triggerOverdrive() {
   } else if (p.skin === "cyber") {
     p.x += Math.cos(p.facing) * 140;
     p.y += Math.sin(p.facing) * 140;
-    clampToRoom(p, p.r);
+    clampToRoom(state.layout, p, p.r);
     spawnText(p.x, p.y - 36, "⚡ 赛博闪现清屏！", "#38f3ff", 23);
   } else {
     spawnRing(p.x, p.y, 10, blastR * 0.72, "#ffd54a", 10, 0.48);
@@ -764,7 +950,7 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
       const dist = Math.max(vw, vh) * 0.52 + 30;
       x = Math.max(40, Math.min(ROOM.width - 40, p.x + Math.cos(ang) * dist));
       y = Math.max(80, Math.min(ROOM.height - 40, p.y + Math.sin(ang) * dist));
-      if (!pointHitsObstacle(x, y)) {
+      if (!pointHitsObstacle(state.layout, x, y)) {
         ok = true;
         break;
       }
@@ -1213,11 +1399,15 @@ function finishRun(extracted) {
   save.goldCores = (save.goldCores || 0) + state.coresEarned;
   save.totalExtracted += earned;
   save.runsPlayed += 1;
+  if (stars > (save.bestStars || 0)) save.bestStars = stars;
   if (extracted && earned > save.bestRunValue) save.bestRunValue = earned;
   writeSave(save);
 
-  // Full-Screen Poster Background!
-  screenResult.style.backgroundImage = `url(${extracted ? POSTERS.victory : POSTERS.defeat})`;
+  // Multi-Poster Settlement Pool (3★ Perfect Clean / Clutch Low-HP Escape / Standard Victory / Defeat!)
+  const posterUrl = extracted
+    ? (stars === 3 ? POSTERS.win3star : state.player.hp < state.player.maxHp * 0.35 ? POSTERS.lobby : POSTERS.victory)
+    : POSTERS.defeat;
+  screenResult.style.backgroundImage = `url(${posterUrl})`;
   const quipEl = document.getElementById("res-quip");
   quipEl.className = `death-quip ${extracted ? "win" : ""}`;
   quipEl.textContent = extracted
@@ -1385,19 +1575,20 @@ function update(rawDt) {
 
   // Wet Slippery Floor Check (Low-friction ice drift!)
   let onWet = false;
-  for (const wz of WET_ZONES) {
+  for (const wz of state.layout.wetZones) {
     if (p.x >= wz.x && p.x <= wz.x + wz.w && p.y >= wz.y && p.y <= wz.y + wz.h) {
       onWet = true;
       break;
     }
   }
   // Floor Fan / Hairdryer Wind Corridor Force!
+  const bootRes = Math.max(0.1, 1 - state.tLv("cl_boot") * 0.18);
   let windX = 0;
   let windY = 0;
-  for (const wn of WIND_ZONES) {
+  for (const wn of state.layout.windZones) {
     if (p.x >= wn.x && p.x <= wn.x + wn.w && p.y >= wn.y && p.y <= wn.y + wn.h) {
-      windX += wn.vx;
-      windY += wn.vy;
+      windX += wn.vx * bootRes;
+      windY += wn.vy * bootRes;
     }
   }
 
@@ -1428,7 +1619,7 @@ function update(rawDt) {
     }
     cl.x += cl.vx * dt;
     cl.y += cl.vy * dt;
-    clampToRoom(cl, 18);
+    clampToRoom(state.layout, cl, 18);
     cleanDustAt(state.dustLayer, cl.x, cl.y, 32);
     if (state.cleanTracker.markClean(cl.x, cl.y, 34) > 0) checkCleanlinessMilestones();
     if (cl.hitCd <= 0) {
@@ -1484,20 +1675,20 @@ function update(rawDt) {
   p.x += p.vx * dt;
   p.y += p.vy * dt;
   const activeR = p.giant > 0 ? Math.round(p.r * 1.65) : p.r;
-  clampToRoom(p, activeR);
+  clampToRoom(state.layout, p, activeR);
   // Giant Roomba cannot duck under low tables/desks!
-  if (p.giant > 0 && isUnderHiddenCover(p.x, p.y)) {
+  if (p.giant > 0 && isUnderHiddenCover(state.layout, p.x, p.y)) {
     p.x = prevX;
     p.y = prevY;
   }
 
-  // Secret Under-Bed Easter Egg Discovery!
-  const underCover = isUnderHiddenCover(p.x, p.y);
+  // Secret Under-Bed / Under-Table Easter Egg Discovery!
+  const underCover = isUnderHiddenCover(state.layout, p.x, p.y);
   if (underCover && underCover.secretEasterEgg && !state.secretBedFound) {
     state.secretBedFound = true;
     state.coresEarned += 1;
     sfx.playBigGold();
-    showJackpotBanner("🐾 发现隐藏彩蛋：主卧床底猫窝！", "+1 稀缺金核 💎 · 快掏床底宝藏！", "✨ 隐藏暗格发现 ✨");
+    showJackpotBanner(`🐾 发现隐藏彩蛋：${state.mapDef.secretName}！`, "+1 稀缺金核 💎 · 快掏隐藏宝藏！", "✨ 隐藏暗格发现 ✨");
   }
 
   if (Math.hypot(p.vx, p.vy) > 18) {
@@ -1550,8 +1741,9 @@ function update(rawDt) {
       continue;
     }
     if (Math.hypot(p.x - poop.x, p.y - poop.y) < p.r + 14 && p.overdrive <= 0 && p.giant <= 0) {
-      if (!state.talents.has("t2_poop")) {
-        p.poopSlow = 2.4;
+      const poopLv = state.tLv("cl_poop");
+      if (poopLv < 5) {
+        p.poopSlow = 2.4 * (1 - poopLv * 0.2);
         state.lastHitSource = "poop";
         sfx.playPoopSplat();
         vibrate(40);
@@ -1692,7 +1884,7 @@ function update(rawDt) {
       spawnRing(paw.x, paw.y, 16, paw.radius * 1.4, "#ff4c76", 7, 0.34);
 
       if (Math.hypot(p.x - paw.x, p.y - paw.y) < paw.radius + p.r * 0.55) {
-        if (isUnderHiddenCover(p.x, p.y)) {
+        if (isUnderHiddenCover(state.layout, p.x, p.y)) {
           // Safe under table/desk/bed!
           spawnText(p.x, p.y - 30, "🛡️ 钻桌底完美躲过猫掌！", "#39ff88", 18);
           sfx.playBigGold();
@@ -1763,7 +1955,7 @@ function update(rawDt) {
       } else if (e.aiState === "charge") {
         e.x += Math.cos(e.chargeAng) * 440 * dt;
         e.y += Math.sin(e.chargeAng) * 440 * dt;
-        const hitWall = clampToRoom(e, e.r);
+        const hitWall = clampToRoom(state.layout, e, e.r);
         if (hitWall) {
           e.aiState = "chase";
           e.aiTimer = 3.2;
@@ -1777,13 +1969,12 @@ function update(rawDt) {
           e.aiTimer = 2.6;
         }
       }
-      clampToRoom(e, e.r);
+      clampToRoom(state.layout, e, e.r);
     } else if (e.type === "pooper") {
-      // Orbits/scurries near player and drops funny poop traps!
       const orbitAng = Math.atan2(dy, dx) + (d < 160 ? Math.PI * 0.72 : 0.4);
       e.x += (Math.cos(orbitAng) * e.speed + e.vx) * dt;
       e.y += (Math.sin(orbitAng) * e.speed + e.vy) * dt;
-      clampToRoom(e, e.r);
+      clampToRoom(state.layout, e, e.r);
       e.dropCd -= dt;
       if (e.dropCd <= 0 && state.poops.length < 10) {
         e.dropCd = 4.8;
@@ -1793,7 +1984,7 @@ function update(rawDt) {
     } else {
       e.x += ((dx / d) * e.speed + e.vx) * dt;
       e.y += ((dy / d) * e.speed + e.vy) * dt;
-      clampToRoom(e, e.r);
+      clampToRoom(state.layout, e, e.r);
       if (e.type === "sock" && d < 320) {
         e.shootCd -= dt;
         if (e.shootCd <= 0) {
@@ -1837,7 +2028,7 @@ function update(rawDt) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.life -= dt;
-    if (b.life <= 0 || pointHitsObstacle(b.x, b.y)) {
+    if (b.life <= 0 || pointHitsObstacle(state.layout, b.x, b.y)) {
       spawnParticles(b.x, b.y, b.color, 4, 80, false);
       state.enemyBullets.splice(i, 1);
       continue;
@@ -1897,7 +2088,8 @@ function update(rawDt) {
     if (Math.hypot(p.x - drop.x, p.y - drop.y) < p.r + 32) {
       if (drop.isKey) {
         state.hasKey = true;
-        const fac = LOCKED_FACILITIES[Math.floor(state.rng() * LOCKED_FACILITIES.length)];
+        const facs = state.layout.lockedFacilities;
+        const fac = facs[Math.floor(state.rng() * facs.length)];
         state.keyTarget = { ...fac, opened: false };
         sfx.playBigGold();
         showToast(`🗝️ 获得神秘钥匙！跟着金色箭头去撬开【${fac.label}】！`, "gold");
@@ -2087,7 +2279,13 @@ document.querySelectorAll(".nav-btn").forEach((b) => {
     refreshLobby();
   };
 });
-document.querySelectorAll(".stab").forEach((b) => {
+document.querySelectorAll("[data-gtab]").forEach((b) => {
+  b.onclick = () => {
+    currentGarageTab = b.dataset.gtab;
+    renderGarage();
+  };
+});
+document.querySelectorAll(".stab[data-ctab]").forEach((b) => {
   b.onclick = () => {
     currentCodexTab = b.dataset.ctab;
     renderCodex();

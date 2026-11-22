@@ -4,7 +4,7 @@
 // sticky milk-tea debuff puddles, chasing Cat Paw, Pooper & Slime enemies, 11 Skin Variants.
 
 import { LOOT_ITEMS, SKINS } from "./config.mjs";
-import { HIDDEN_ZONES, OBSTACLES, ROOM, WET_ZONES, WIND_ZONES } from "./room-layout.mjs";
+import { ROOM } from "./room-layout.mjs";
 import { SPRITES } from "./sprites.mjs";
 
 const LOOT_MAP = Object.fromEntries(LOOT_ITEMS.map((l) => [l.id, l]));
@@ -116,8 +116,8 @@ export function renderGame(ctx, state, vw, vh) {
   const sy = state.shake > 0 ? (Math.random() - 0.5) * state.shake * 16 : 0;
   ctx.translate(vw / 2 - cam.x + sx, vh / 2 - cam.y + sy);
 
-  // 1. Multi-Room Apartment Floorplan
-  drawApartmentFloor(ctx, cam, vw, vh);
+  // 1. Dynamic Procedural Multi-Map Floorplan
+  drawApartmentFloor(ctx, state.layout, cam, vw, vh);
 
   // 2. Interactive Dust Layer
   if (state.dustLayer) {
@@ -125,7 +125,7 @@ export function renderGame(ctx, state, vw, vh) {
   }
 
   // 2b. Wet Slippery Zones & Wind Corridors
-  drawWetAndWindZones(ctx, time);
+  drawWetAndWindZones(ctx, state.layout, time);
 
   // 3. Sticky Milk-Tea Debuff Puddles
   for (const pd of state.puddles) {
@@ -133,7 +133,7 @@ export function renderGame(ctx, state, vw, vh) {
   }
 
   // 4. Pure Visual Solid Cover Furniture (NO text!)
-  drawSolidFurniture(ctx, time);
+  drawSolidFurniture(ctx, state.layout, time);
 
   // 4b. Boss Key Target Facility Glow (when carrying a Boss Key!)
   if (state.hasKey && state.keyTarget && !state.keyTarget.opened) {
@@ -343,88 +343,85 @@ export function renderGame(ctx, state, vw, vh) {
   }
 }
 
-function drawApartmentFloor(ctx, cam, vw, vh) {
-  // Base midnight wood floor
-  ctx.fillStyle = "#24284a";
-  ctx.fillRect(0, 0, ROOM.width, ROOM.height);
-
-  // Dining/Kitchen cool ceramic tile floor on right wing (x >= 1380)
-  ctx.fillStyle = "#1f2a42";
-  ctx.fillRect(1380, 520, ROOM.width - 1380, ROOM.height - 520);
-  ctx.strokeStyle = "rgba(100, 150, 210, 0.1)";
-  ctx.lineWidth = 2;
-  for (let x = 1400; x < ROOM.width; x += 80) {
-    ctx.beginPath();
-    ctx.moveTo(x, 520);
-    ctx.lineTo(x, ROOM.height);
+function drawApartmentFloor(ctx, layout, cam, vw, vh) {
+  const mapId = layout.mapId || "living";
+  if (mapId === "kitchen") {
+    // Sleek checkered midnight gourmet kitchen tiles!
+    ctx.fillStyle = "#192638";
+    ctx.fillRect(0, 0, layout.width, layout.height);
+    const ts = 84;
+    const sx = Math.max(0, Math.floor((cam.x - vw / 2) / ts) * ts);
+    const ex = Math.min(layout.width, cam.x + vw / 2 + ts);
+    const sy = Math.max(0, Math.floor((cam.y - vh / 2) / ts) * ts);
+    const ey = Math.min(layout.height, cam.y + vh / 2 + ts);
+    for (let y = sy; y < ey; y += ts) {
+      for (let x = sx; x < ex; x += ts) {
+        const even = ((x / ts + y / ts) | 0) % 2 === 0;
+        ctx.fillStyle = even ? "#22344d" : "#1a283d";
+        ctx.fillRect(x, y, ts - 2, ts - 2);
+      }
+    }
+  } else if (mapId === "cat_palace") {
+    // Royal Warm-Gold & Deep-Velvet Secret Cat Attic!
+    ctx.fillStyle = "#2b1938";
+    ctx.fillRect(0, 0, layout.width, layout.height);
+    const plankH = 60;
+    const startY = Math.max(0, Math.floor((cam.y - vh / 2) / plankH) * plankH);
+    const endY = Math.min(layout.height, cam.y + vh / 2 + plankH);
+    for (let y = startY; y < endY; y += plankH) {
+      ctx.fillStyle = (Math.floor(y / plankH) % 2 === 0) ? "#351e45" : "#2d193b";
+      ctx.fillRect(0, y, layout.width, plankH - 2);
+    }
+    ctx.save();
+    ctx.fillStyle = "rgba(217, 119, 6, 0.25)";
+    roundRect(ctx, 460, 420, 1480, 1340, 44);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 213, 74, 0.55)";
+    ctx.lineWidth = 8;
     ctx.stroke();
-  }
-  for (let y = 520; y < ROOM.height; y += 80) {
-    ctx.beginPath();
-    ctx.moveTo(1380, y);
-    ctx.lineTo(ROOM.width, y);
+    ctx.restore();
+  } else {
+    // Classic Midnight Apartment Wood + Kitchen Tile
+    ctx.fillStyle = "#24284a";
+    ctx.fillRect(0, 0, layout.width, layout.height);
+    ctx.fillStyle = "#1f2a42";
+    ctx.fillRect(1380, 520, layout.width - 1380, layout.height - 520);
+    const plankH = 56;
+    const startY = Math.max(0, Math.floor((cam.y - vh / 2) / plankH) * plankH);
+    const endY = Math.min(layout.height, cam.y + vh / 2 + plankH);
+    for (let y = startY; y < endY; y += plankH) {
+      const idx = Math.floor(y / plankH);
+      const inBedroom = y >= 1140;
+      ctx.fillStyle = inBedroom
+        ? (idx % 2 === 0 ? "#2e2646" : "#27203d")
+        : (idx % 2 === 0 ? "#2a2f57" : "#24284c");
+      ctx.fillRect(0, y, 1380, plankH - 2);
+      ctx.fillStyle = "#161830";
+      ctx.fillRect(0, y + plankH - 2, 1380, 2);
+    }
+    ctx.save();
+    ctx.fillStyle = "rgba(148, 42, 68, 0.52)";
+    roundRect(ctx, 420, 360, 620, 440, 24);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 198, 78, 0.45)";
+    ctx.lineWidth = 6;
+    roundRect(ctx, 438, 378, 584, 404, 16);
     ctx.stroke();
+    ctx.restore();
   }
 
-  // Warm wood planks in Living Room & Master Bedroom (x < 1380)
-  const plankH = 56;
-  const startY = Math.max(0, Math.floor((cam.y - vh / 2) / plankH) * plankH);
-  const endY = Math.min(ROOM.height, cam.y + vh / 2 + plankH);
-  for (let y = startY; y < endY; y += plankH) {
-    const idx = Math.floor(y / plankH);
-    const inBedroom = y >= 1140;
-    ctx.fillStyle = inBedroom
-      ? (idx % 2 === 0 ? "#2e2646" : "#27203d")
-      : (idx % 2 === 0 ? "#2a2f57" : "#24284c");
-    ctx.fillRect(0, y, 1380, plankH - 2);
-    ctx.fillStyle = "#161830";
-    ctx.fillRect(0, y + plankH - 2, 1380, 2);
-    const offset = (idx % 3) * 140 + 60;
-    for (let x = offset; x < 1380; x += 260) ctx.fillRect(x, y, 2, plankH);
-  }
-
-  // Living Room Persian Rug
-  ctx.save();
-  ctx.fillStyle = "rgba(148, 42, 68, 0.55)";
-  roundRect(ctx, 250, 350, 540, 440, 24);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255, 198, 78, 0.45)";
-  ctx.lineWidth = 6;
-  roundRect(ctx, 268, 368, 504, 404, 16);
-  ctx.stroke();
-
-  // Master Bedroom Cozy Round Rug
-  ctx.fillStyle = "rgba(92, 64, 152, 0.45)";
-  ctx.beginPath();
-  ctx.ellipse(590, 1560, 330, 250, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(180, 145, 255, 0.32)";
-  ctx.lineWidth = 5;
-  ctx.stroke();
-  ctx.restore();
-
-  // Top-right apartment L-cutout
-  const c = ROOM.cutout;
+  // Random Cutout Wall Partition
+  const c = layout.cutout;
   ctx.fillStyle = "#0b0d1b";
   ctx.fillRect(c.x, c.y, c.w, c.h);
-
-  // Outer perimeter walls
   ctx.strokeStyle = "#485491";
-  ctx.lineWidth = 12;
-  ctx.beginPath();
-  ctx.moveTo(6, 6);
-  ctx.lineTo(c.x, 6);
-  ctx.lineTo(c.x, c.h);
-  ctx.lineTo(ROOM.width - 6, c.h);
-  ctx.lineTo(ROOM.width - 6, ROOM.height - 6);
-  ctx.lineTo(6, ROOM.height - 6);
-  ctx.closePath();
-  ctx.stroke();
+  ctx.lineWidth = 10;
+  ctx.strokeRect(5, 5, layout.width - 10, layout.height - 10);
+  ctx.strokeRect(c.x, c.y, c.w, c.h);
 }
 
-function drawWetAndWindZones(ctx, time) {
-  // Shimmering Wet Slippery Floor Puddles
-  for (const wz of WET_ZONES) {
+function drawWetAndWindZones(ctx, layout, time) {
+  for (const wz of layout.wetZones) {
     ctx.save();
     ctx.fillStyle = "rgba(56, 189, 248, 0.24)";
     ctx.strokeStyle = "rgba(125, 211, 252, 0.45)";
@@ -432,21 +429,17 @@ function drawWetAndWindZones(ctx, time) {
     roundRect(ctx, wz.x, wz.y, wz.w, wz.h, 36);
     ctx.fill();
     ctx.stroke();
-    // Specular water shimmer streaks
     const sh = Math.sin(time * 3 + wz.x) * 14;
     ctx.strokeStyle = "rgba(224, 242, 254, 0.35)";
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(wz.x + 42 + sh, wz.y + 38);
     ctx.lineTo(wz.x + 110 + sh, wz.y + 38);
-    ctx.moveTo(wz.x + wz.w - 120 - sh, wz.y + wz.h - 36);
-    ctx.lineTo(wz.x + wz.w - 50 - sh, wz.y + wz.h - 36);
     ctx.stroke();
     ctx.restore();
   }
 
-  // Animated Hairdryer / Floor Fan Wind Corridors
-  for (const wn of WIND_ZONES) {
+  for (const wn of layout.windZones) {
     ctx.save();
     ctx.fillStyle = "rgba(186, 230, 253, 0.1)";
     roundRect(ctx, wn.x, wn.y, wn.w, wn.h, 18);
@@ -456,7 +449,7 @@ function drawWetAndWindZones(ctx, time) {
     const horiz = Math.abs(wn.vx) > Math.abs(wn.vy);
     const dir = horiz ? Math.sign(wn.vx) : Math.sign(wn.vy);
     for (let i = 0; i < 6; i++) {
-      const p = ((time * 1.4 + i * 0.17) % 1);
+      const p = (time * 1.4 + i * 0.17) % 1;
       ctx.beginPath();
       if (horiz) {
         const lx = dir < 0 ? wn.x + wn.w * (1 - p) : wn.x + wn.w * p;
@@ -531,8 +524,8 @@ function drawMilkTeaPuddle(ctx, pd) {
 }
 
 // PURE VISUAL SOLID FURNITURE — ZERO TEXT LABELS!
-function drawSolidFurniture(ctx, time) {
-  for (const ob of OBSTACLES) {
+function drawSolidFurniture(ctx, layout, time) {
+  for (const ob of layout.obstacles) {
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.44)";
     roundRect(ctx, ob.x + 8, ob.y + 12, ob.w, ob.h, 12);
@@ -653,7 +646,7 @@ function drawSolidFurniture(ctx, time) {
 // PURE VISUAL OVERHEAD DUCKABLE FURNITURE — ZERO TEXT! Fades smoothly when Roomba enters!
 function drawHiddenZoneTops(ctx, state) {
   const p = state.player;
-  for (const hz of HIDDEN_ZONES) {
+  for (const hz of state.layout.hiddenZones) {
     const inside =
       p.x + p.r > hz.x && p.x - p.r < hz.x + hz.w && p.y + p.r > hz.y && p.y - p.r < hz.y + hz.h;
     const targetAlpha = inside ? 0.22 : 0.96;
@@ -1223,6 +1216,32 @@ function drawPlayer(ctx, p, state, time) {
     ctx.font = "900 18px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("🦆", 0, -24 * sc);
+  }
+  // Free-Mix Anthropomorphic Accessory Overlay!
+  if (p.acc && p.acc !== "none") {
+    ctx.save();
+    ctx.font = `900 ${Math.round(20 * sc)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    if (p.acc === "sunglasses") {
+      ctx.fillStyle = "#141126";
+      ctx.fillRect(-16 * sc, -4 * sc, 13 * sc, 7 * sc);
+      ctx.fillRect(3 * sc, -4 * sc, 13 * sc, 7 * sc);
+      ctx.fillRect(-3 * sc, -2 * sc, 6 * sc, 3 * sc);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(-13 * sc, -2 * sc, 3 * sc, 2 * sc);
+      ctx.fillRect(6 * sc, -2 * sc, 3 * sc, 2 * sc);
+    } else if (p.acc === "halo") {
+      ctx.strokeStyle = "#ffe566";
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.ellipse(0, -32 * sc, 16 * sc, 5 * sc, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      const mapIco = { ahoge: "🌱", bow: "🎀", catears: "🐱", horns: "😈", crown: "👑" };
+      if (mapIco[p.acc]) ctx.fillText(mapIco[p.acc], 0, -28 * sc);
+    }
+    ctx.restore();
   }
   ctx.restore();
   ctx.restore();

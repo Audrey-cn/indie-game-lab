@@ -12,11 +12,13 @@ import catpawUrl from "./sprites/catpaw.webp";
 import poopUrl from "./sprites/poop.webp";
 import posterLobbyUrl from "./sprites/poster-lobby.webp";
 import posterVictoryUrl from "./sprites/poster-victory.webp";
+import posterWin3StarUrl from "./sprites/poster-win-3star.webp";
 import posterDefeatUrl from "./sprites/poster-defeat.webp";
 
 export const POSTERS = {
   lobby: posterLobbyUrl,
   victory: posterVictoryUrl,
+  win3star: posterWin3StarUrl,
   defeat: posterDefeatUrl,
 };
 

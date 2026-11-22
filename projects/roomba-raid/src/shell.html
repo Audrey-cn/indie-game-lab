@@ -584,11 +584,15 @@
                 <div class="eq-name" id="home-eq-name">🤖 经典暴富号</div>
                 <div class="eq-skill" id="home-eq-skill">专属技：过载双雷环</div>
               </div>
-              <button class="mini-buy" id="btn-quick-garage">换机身</button>
+              <button class="mini-buy" id="btn-quick-garage">换装</button>
             </div>
 
+            <!-- 3 Procedural Maps Selector (Vampire-Survivors Style!) -->
+            <div class="sub-tabs" id="map-selector" style="margin-bottom:0"></div>
+            <div id="map-desc" style="font-size:11px;font-weight:800;color:#ffe58f;text-align:center;text-shadow:0 1.5px 0 #141126"></div>
+
             <div class="mode-pills">
-              <button class="mpill active" id="mode-free">🎲 豪宅自由摸金</button>
+              <button class="mpill active" id="mode-free">🎲 每次随机户型</button>
               <button class="mpill" id="mode-daily">📅 今日同图榜</button>
             </div>
 
@@ -596,17 +600,23 @@
           </div>
         </div>
 
-        <!-- Tab 2: Garage Silhouette Collection Wall -->
+        <!-- Tab 2: Garage Silhouette Collection Wall + Free-Mix Accessories -->
         <div class="lobby-page" id="page-garage" hidden>
-          <div class="sec-head">🔧 剪影收集车库 <span id="garage-count">1 / 11</span></div>
+          <div class="sec-head">🔧 剪影车库 &amp; 拟人装扮 <span id="garage-count">1 / 11</span></div>
+          <div class="sub-tabs" style="grid-template-columns:1fr 1fr">
+            <button class="stab active" data-gtab="skins">🤖 机身剪影墙</button>
+            <button class="stab" data-gtab="acc">🎀 拟人小装饰</button>
+          </div>
           <div class="skin-grid" id="skin-grid"></div>
           <div class="skin-detail" id="skin-detail"></div>
         </div>
 
-        <!-- Tab 3: Graphical Talent Branch Tree -->
+        <!-- Tab 3: 3-Style 5-Level Graphical Talent Branch Tree -->
         <div class="lobby-page" id="page-talents" hidden>
-          <div class="sec-head">⚡ 配件天赋分支树 <span>同级任选 1 项激活</span></div>
+          <div class="sec-head">⚡ 风格天赋树（满级 LV.5） <span id="talent-style-tag">同排互斥</span></div>
+          <div class="sub-tabs" id="talent-style-tabs"></div>
           <div class="tree-wrap" id="talent-tree"></div>
+          <div class="skin-detail" id="talent-detail" style="margin-top:8px"></div>
         </div>
 
         <!-- Tab 4: Compendium & Black Market -->
