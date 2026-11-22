@@ -33,10 +33,13 @@ import {
   clampToRoom,
   createCleanTracker,
   isUnderHiddenCover,
+  LOCKED_FACILITIES,
   NATIVE_SPOT_DEFS,
   pointHitsObstacle,
   ROOM,
   SHOCK_STRIP_DEFS,
+  WET_ZONES,
+  WIND_ZONES,
 } from "./room-layout.mjs";
 import { cleanDustAt, createDustLayer, renderGame, renderReceiptPoster, smearPoopAt } from "./renderer.mjs";
 import { POSTERS, SPRITE_URLS } from "./sprites.mjs";
@@ -79,11 +82,19 @@ const hudEl = document.getElementById("hud");
 const toastEl = document.getElementById("toast");
 const briefingEl = document.getElementById("briefing-banner");
 const jackpotEl = document.getElementById("jackpot-banner");
+const activeBar = document.getElementById("active-bar");
 const btnOverdrive = document.getElementById("btn-overdrive");
 const odTxt = document.getElementById("od-txt");
+const btnClone = document.getElementById("btn-clone");
+const cloneTxt = document.getElementById("clone-txt");
+const btnGiant = document.getElementById("btn-giant");
+const giantTxt = document.getElementById("giant-txt");
 const lobbyShell = document.getElementById("lobby-shell");
+const screenPause = document.getElementById("screen-pause");
 const screenLevelUp = document.getElementById("screen-levelup");
 const screenResult = document.getElementById("screen-result");
+const rewardPopup = document.getElementById("reward-popup");
+const shareModal = document.getElementById("share-modal");
 
 let toastTimer = null;
 function showToast(msg, style = "") {
@@ -463,20 +474,27 @@ function startRun() {
       cleanRadius: (skin.id === "sakura" ? 48 : 40) * (talents.has("t1_suck") ? 1.28 : 1),
       lv: 1,
       xp: 0,
-      xpNext: 8,
+      xpNext: 48, // Smooth ~15-second warm-up before first card draw!
       hurtFlash: 0,
       invuln: 0,
       poopSlow: 0,
       slimeDebuff: 0,
       skin: skin.id,
-      charge: 45,
+      charge: 35,
       overdrive: 0,
+      cloneCd: 0,
+      giant: 0,
+      giantCharges: 1,
+      giantAdUsed: false,
       weapons: { swatter: 1, laser: talents.has("t3_start") ? 1 : 0, spatula: 0, hairdryer: 0, tesla: 0 },
       cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6 },
     },
     cam: { x: 520, y: 380 },
     bagLoot: [],
     looseCoins: 0,
+    hasKey: false,
+    keyTarget: null,
+    clones: [],
     enemies: [],
     enemyBullets: [],
     puddles: [],
@@ -502,10 +520,10 @@ function startRun() {
   cleanDustAt(state.dustLayer, state.player.x, state.player.y, 54);
   state.cleanTracker.markClean(state.player.x, state.player.y, 56);
 
-  // Instant Action Hook: 12 enemies nearby
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2 + rng() * 0.25;
-    const dist = 160 + (i % 3) * 48;
+  // Smooth Warm-Up Start: 7 dust-bunnies at medium range so player warms up cleanly before LV2!
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2 + rng() * 0.25;
+    const dist = 210 + (i % 2) * 55;
     const ex = state.player.x + Math.cos(a) * dist;
     const ey = state.player.y + Math.sin(a) * dist;
     if (!pointHitsObstacle(ex, ey)) {
@@ -519,7 +537,7 @@ function startRun() {
   }
 
   for (const pt of [{ x: 470, y: 580 }, findSafePoint(rng, 180), findSafePoint(rng, 180), findSafePoint(rng, 180)]) {
-    state.poops.push({ x: pt.x, y: pt.y, hp: 30, flash: 0 });
+    state.poops.push({ x: pt.x, y: pt.y, life: 14, flash: 0 });
   }
 
   if (extraRadar) state.crates.push({ x: 640, y: 380, minVal: 18800, progress: 0, tickAcc: 0 });
@@ -541,8 +559,11 @@ function startRun() {
   lobbyShell.hidden = true;
   screenResult.hidden = true;
   screenLevelUp.hidden = true;
+  screenPause.hidden = true;
+  rewardPopup.hidden = true;
+  shareModal.hidden = true;
   hudEl.hidden = false;
-  btnOverdrive.hidden = false;
+  activeBar.hidden = false;
 
   briefingEl.hidden = false;
   setTimeout(() => {
@@ -610,6 +631,76 @@ function grantLootReward(x, y, minVal, sourceLabel = "✨ 发现大金 ✨") {
   spawnParticles(x, y, "#ffd54a", 26, 230, true);
   spawnText(x, y - 24, `+¥${val.toLocaleString()}!`, "#ffd54a", 23);
   showJackpotBanner(item.name, val, sourceLabel);
+}
+
+function triggerClone() {
+  if (!state || state.phase !== "playing") return;
+  const p = state.player;
+  if (p.cloneCd > 0) return;
+  p.cloneCd = 24;
+  sfx.playLevelUp();
+  const count = state.talents.has("t3_charge") ? 2 : 1;
+  for (let i = 0; i < count; i++) {
+    const a = p.facing + (i === 0 ? 0.8 : -0.8);
+    state.clones.push({
+      x: p.x + Math.cos(a) * 44,
+      y: p.y + Math.sin(a) * 44,
+      vx: Math.cos(a) * 260,
+      vy: Math.sin(a) * 260,
+      life: 12,
+      hitCd: 0,
+    });
+  }
+  spawnRing(p.x, p.y, 16, 120, "#38f3ff", 6, 0.28);
+  showToast(`🤖 召唤 ${count} 台迷你扫地分身！自动扫灰 + 撞击怪潮 12 秒！`, "green");
+}
+
+function triggerGiant() {
+  if (!state || state.phase !== "playing") return;
+  const p = state.player;
+  if (p.giant > 0) return;
+  const activate = () => {
+    p.giant = 8.0;
+    state.shake = 0.65;
+    sfx.playOverdriveBlast();
+    spawnRing(p.x, p.y, 20, 180, "#ff4c76", 9, 0.35);
+    showToast("🍄 巨无霸变身 8 秒！清扫翻倍+直接碾碎小怪（注意：钻不进桌底！）", "pink");
+  };
+  if (p.giantCharges > 0) {
+    p.giantCharges -= 1;
+    activate();
+  } else if (!p.giantAdUsed) {
+    state.phase = "paused";
+    showRewardedAd("补充 1 次巨无霸变身", () => {
+      p.giantAdUsed = true;
+      state.phase = "playing";
+      activate();
+    });
+  }
+}
+
+function openPause() {
+  if (!state || state.phase !== "playing") return;
+  state.phase = "paused";
+  sfx.stopBgm();
+  const wpBox = document.getElementById("pause-weapons");
+  wpBox.innerHTML = "";
+  for (const [id, lv] of Object.entries(state.player.weapons)) {
+    if (lv > 0 && WEAPONS[id]) {
+      const pill = document.createElement("span");
+      pill.style.cssText = "padding:4px 10px;border-radius:999px;background:#121730;border:2px solid #141126;font-size:12px;font-weight:900;color:#ffd54a";
+      pill.textContent = `${WEAPONS[id].icon} ${WEAPONS[id].name} LV.${lv}`;
+      wpBox.appendChild(pill);
+    }
+  }
+  screenPause.hidden = false;
+}
+
+function closePause() {
+  if (!state || state.phase !== "paused") return;
+  screenPause.hidden = true;
+  state.phase = "playing";
+  sfx.startBgm("living");
 }
 
 function triggerOverdrive() {
@@ -798,25 +889,24 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
       state.shake = 0.9;
       state.crates.push({ x: e.x, y: e.y, minVal: 28000, progress: 0, tickAcc: 0 });
       if (state.rng() < 0.7) state.gems.push({ x: e.x + 28, y: e.y, kind: "core", val: 1, forcePull: false });
-      showToast("👑 击败拖把王！爆出 Boss 超级金箱与稀缺金核 💎！", "gold");
+      // Boss drops Mysterious Key to unlock Fridge / TV Secret Vault!
+      if (!state.hasKey) {
+        state.lootDrops.push({
+          x: e.x - 28,
+          y: e.y + 10,
+          isKey: true,
+          lootId: "ring",
+          short: "神秘钥匙",
+          name: "神秘家具钥匙",
+          value: 0,
+          rarity: "gold",
+        });
+      }
+      showToast("👑 击败拖把王！掉落 🗝️ 神秘钥匙与超级金箱！", "gold");
     }
     return true;
   }
   return false;
-}
-
-function damagePoop(idx, dmg) {
-  const poop = state.poops[idx];
-  poop.hp -= dmg;
-  poop.flash = 0.08;
-  if (poop.hp <= 0) {
-    spawnParticles(poop.x, poop.y, "#ffd54a", 16, 170, true);
-    spawnRing(poop.x, poop.y, 8, 65, "#39ff88", 4, 0.24);
-    sfx.playBigGold();
-    spawnText(poop.x, poop.y - 20, "✨ 净化粑粑 +¥3,500!", "#39ff88", 18);
-    state.looseCoins += Math.round(3500 * state.lootMult);
-    state.poops.splice(idx, 1);
-  }
 }
 
 function shatterProp(prop) {
@@ -844,8 +934,9 @@ function updateWeapons(dt) {
     if (p.cooldowns.swatter <= 0) {
       const lv = p.weapons.swatter;
       p.cooldowns.swatter = Math.max(0.3, (0.84 - lv * 0.1) * cdMult);
-      const range = 106 + lv * 18;
-      const dmg = 26 + lv * 14;
+      const giantMult = p.giant > 0 ? 1.65 : 1;
+      const range = (106 + lv * 18) * (p.giant > 0 ? 1.45 : 1);
+      const dmg = (26 + lv * 14) * giantMult;
       let hitAny = false;
       for (let i = state.enemies.length - 1; i >= 0; i--) {
         const e = state.enemies[i];
@@ -857,9 +948,6 @@ function updateWeapons(dt) {
           const crit = Math.random() < 0.28 + state.critBonus;
           if (damageEnemy(e, crit ? dmg * 1.85 : dmg, (dx / (d || 1)) * 200, (dy / (d || 1)) * 200, crit)) state.enemies.splice(i, 1);
         }
-      }
-      for (let i = state.poops.length - 1; i >= 0; i--) {
-        if (Math.hypot(state.poops[i].x - p.x, state.poops[i].y - p.y) <= range + 16) damagePoop(i, dmg);
       }
       for (let i = state.props.length - 1; i >= 0; i--) {
         if (Math.hypot(state.props[i].x - p.x, state.props[i].y - p.y) <= range + 16) {
@@ -878,12 +966,12 @@ function updateWeapons(dt) {
 
   if (p.weapons.laser > 0) {
     p.cooldowns.laser -= dt;
-    if (p.cooldowns.laser <= 0 && (state.enemies.length > 0 || state.poops.length > 0)) {
+    if (p.cooldowns.laser <= 0 && state.enemies.length > 0) {
       const lv = p.weapons.laser;
       p.cooldowns.laser = Math.max(0.28, (0.82 - lv * 0.1) * cdMult);
       const sorted = [...state.enemies].sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
       const shots = Math.min(sorted.length, lv);
-      const dmg = 34 + lv * 18;
+      const dmg = (34 + lv * 18) * (p.giant > 0 ? 1.5 : 1);
       for (let s = 0; s < shots; s++) {
         const target = sorted[s];
         if (!target || Math.hypot(target.x - p.x, target.y - p.y) > 400) continue;
@@ -891,13 +979,6 @@ function updateWeapons(dt) {
         const crit = Math.random() < 0.45 + state.critBonus;
         const idx = state.enemies.indexOf(target);
         if (idx >= 0 && damageEnemy(target, crit ? dmg * 1.9 : dmg, 0, 0, crit)) state.enemies.splice(idx, 1);
-      }
-      if (shots === 0 && state.poops.length > 0) {
-        const pp = state.poops[0];
-        if (Math.hypot(pp.x - p.x, pp.y - p.y) < 340) {
-          state.vfx.push({ type: "laser", x1: p.x, y1: p.y, x2: pp.x, y2: pp.y, life: 0.18, maxLife: 0.18 });
-          damagePoop(0, dmg);
-        }
       }
       sfx.playLaser();
     }
@@ -990,10 +1071,30 @@ function openLevelUp() {
   const pool = [];
   for (const w of Object.values(WEAPONS)) {
     const cur = p.weapons[w.id] || 0;
-    if (cur < w.maxLv) pool.push({ kind: "weapon", id: w.id, icon: w.icon, name: w.name, tag: cur === 0 ? "新外挂" : `LV ${cur} → ${cur + 1}`, desc: w.desc });
+    if (cur < w.maxLv) {
+      pool.push({
+        kind: "weapon",
+        id: w.id,
+        icon: w.icon,
+        name: w.name,
+        lv: cur + 1,
+        rarity: cur >= 3 ? "r-gold" : cur === 0 ? "r-purple" : "r-cyan",
+        badge: cur === 0 ? "新外挂" : `LV.${cur + 1}`,
+        kw: w.tag,
+      });
+    }
   }
   for (const pa of Object.values(PASSIVES)) {
-    pool.push({ kind: "passive", id: pa.id, icon: pa.icon, name: pa.name, tag: pa.tag, desc: pa.desc });
+    pool.push({
+      kind: "passive",
+      id: pa.id,
+      icon: pa.icon,
+      name: pa.name,
+      lv: 1,
+      rarity: "r-cyan",
+      badge: "强化",
+      kw: pa.tag,
+    });
   }
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(state.rng() * (i + 1));
@@ -1014,13 +1115,14 @@ function openLevelUp() {
   listEl.innerHTML = "";
   for (const c of choices) {
     const btn = document.createElement("button");
-    btn.className = "choice-card";
+    btn.className = `vcard ${c.rarity}`;
+    const stars = c.kind === "weapon" ? "★".repeat(c.lv) + "☆".repeat(Math.max(0, 5 - c.lv)) : "✦✦✦";
     btn.innerHTML = `
-      <div class="choice-icon">${c.icon}</div>
-      <div>
-        <div class="choice-title">${c.name}<span class="choice-tag">${c.tag}</span></div>
-        <div class="choice-desc">${c.desc}</div>
-      </div>
+      <div class="vcard-head">${c.badge}</div>
+      <div class="vcard-orb">${c.icon}</div>
+      <div class="vcard-name">${c.name}</div>
+      <div class="vcard-stars">${stars}</div>
+      <div class="vcard-kw">${c.kw}</div>
     `;
     btn.onclick = () => {
       applyChoice(c);
@@ -1038,7 +1140,7 @@ function openLevelUp() {
       state.phase = "playing";
       sfx.playBigGold();
       spawnRing(p.x, p.y, 16, 180, "#ffd54a", 10, 0.36);
-      showToast("🔥 贪心满载！3 件战术外挂全部焊上机身！", "gold");
+      showToast("🔥 3 张战术卡牌全部焊上机身！", "gold");
     });
   };
   screenLevelUp.hidden = false;
@@ -1069,12 +1171,20 @@ function checkCleanlinessMilestones() {
   }
 }
 
+function openRewardPopup(icon, title, desc) {
+  document.getElementById("rw-icon").textContent = icon;
+  document.getElementById("rw-title").textContent = title;
+  document.getElementById("rw-desc").textContent = desc;
+  rewardPopup.hidden = false;
+}
+
 function finishRun(extracted) {
   state.phase = "ended";
   sfx.setUrgent(false);
   sfx.setFever(false);
   sfx.stopBgm();
-  btnOverdrive.hidden = true;
+  activeBar.hidden = true;
+  hudEl.hidden = true;
 
   const pct = state.cleanTracker.percent;
   const stars = pct >= 100 ? 3 : pct >= 70 ? 2 : pct >= 35 ? 1 : 0;
@@ -1097,7 +1207,7 @@ function finishRun(extracted) {
   }
 
   for (const item of keptItems) {
-    if (!item.isGhost) save.museum[item.lootId] = (save.museum[item.lootId] || 0) + 1;
+    if (!item.isGhost && !item.isKey) save.museum[item.lootId] = (save.museum[item.lootId] || 0) + 1;
   }
   save.coins += earned;
   save.goldCores = (save.goldCores || 0) + state.coresEarned;
@@ -1106,59 +1216,67 @@ function finishRun(extracted) {
   if (extracted && earned > save.bestRunValue) save.bestRunValue = earned;
   writeSave(save);
 
-  // Set Victory / Defeat Comedy Poster & Cause-of-Death Quip!
-  document.getElementById("res-poster").src = extracted ? POSTERS.victory : POSTERS.defeat;
+  // Full-Screen Poster Background!
+  screenResult.style.backgroundImage = `url(${extracted ? POSTERS.victory : POSTERS.defeat})`;
   const quipEl = document.getElementById("res-quip");
   quipEl.className = `death-quip ${extracted ? "win" : ""}`;
   quipEl.textContent = extracted
     ? (stars === 3 ? "🏆 三星完美扫光！猫主子当场气晕！" : "😎 戴上墨镜安全跑路，主人明天找耳机找疯！")
     : (DEATH_QUIPS[state.lastHitSource] || DEATH_QUIPS.default);
 
-  document.getElementById("res-title").textContent = extracted ? "✅ 满载冲回充电桩！" : "💥 贪心翻车 · 电量炸穿！";
+  document.getElementById("res-title").textContent = extracted ? "✅ 安全撤离！" : "💥 贪心翻车！";
   document.getElementById("res-k1").textContent = extracted ? "实际落袋" : "痛失估值";
   document.getElementById("res-v1").textContent = `¥${(extracted ? earned : Math.max(0, totalVal - safeVal)).toLocaleString()}`;
   document.getElementById("res-v2").textContent = `${pct}% / ${state.kills}杀`;
   document.getElementById("res-v3").textContent = `¥${safeVal.toLocaleString()}`;
 
-  // Render 3-Star Rating & Interactive Click-to-Pop Star Reward Chests!
-  const starsEl = document.getElementById("res-stars");
-  starsEl.innerHTML = [1, 2, 3].map((i) => `<span class="${i <= stars ? "" : "off"}">★</span>`).join("");
-
+  // 3-Star Achievement Chests -> Award Special Items / Gold Cores / Random Skin Unlocks in a Clean Popup!
+  document.getElementById("res-stars").innerHTML = [1, 2, 3].map((i) => `<span class="${i <= stars ? "" : "off"}">★</span>`).join("");
   const chestsEl = document.getElementById("res-chests");
   chestsEl.innerHTML = "";
-  if (stars === 0) {
-    chestsEl.innerHTML = `<span style="font-size:11px;color:var(--muted)">探索清扫达 35% / 70% / 100% 即可在结算狂开 1~3 个星级宝箱！</span>`;
-  } else {
+  if (stars > 0) {
     for (let i = 1; i <= stars; i++) {
       const btn = document.createElement("button");
       btn.className = "reward-chest";
-      btn.textContent = i === 3 ? "👑 开3星金核箱" : `🎁 开${i}星宝箱`;
+      btn.textContent = i === 3 ? "👑 3星珍稀箱" : i === 2 ? "💎 2星金核箱" : "🎁 1星道具箱";
       btn.onclick = () => {
         if (btn.classList.contains("opened")) return;
         btn.classList.add("opened");
+        btn.textContent = "✅ 已领取";
         sfx.playCratePop();
-        if (i === 3) {
+        if (i === 1) {
+          save.boosters.radar = true;
+          writeSave(save);
+          openRewardPopup("📡", "获得【大金探测器】×1", "下局开场自动在客厅额外刷出 1 个超级金箱！");
+        } else if (i === 2) {
           save.goldCores = (save.goldCores || 0) + 1;
-          save.coins += 18888;
-          btn.textContent = "✅ +💎1 +¥18,888";
+          writeSave(save);
+          openRewardPopup("💎", "获得【稀缺金核】×1", "可用于车库解锁高阶机身与 T3 传奇天赋！");
         } else {
-          const bonus = i * 8800;
-          save.coins += bonus;
-          btn.textContent = `✅ +¥${bonus.toLocaleString()}`;
+          const lockedSkins = SKINS.filter((s) => !save.skinsOwned.includes(s.id) && !s.hiddenLootReq);
+          if (lockedSkins.length > 0) {
+            const pick = lockedSkins[Math.floor(Math.random() * lockedSkins.length)];
+            save.skinsOwned.push(pick.id);
+            writeSave(save);
+            openRewardPopup("🤖", `解锁限定机身【${pick.name}】！`, `专属技：${pick.skillName} · 已存入剪影车库！`);
+          } else {
+            save.goldCores = (save.goldCores || 0) + 2;
+            writeSave(save);
+            openRewardPopup("💎", "获得【稀缺金核】×2", "全常规机身已集齐，折算双倍稀缺金核！");
+          }
         }
-        writeSave(save);
       };
       chestsEl.appendChild(btn);
     }
   }
 
-  const receiptImg = document.getElementById("receipt-img");
-  receiptImg.style.display = "none";
-
+  // Concise Bottom Action Bar: Only [▶ 收益 ×2 / ▶ 复活] + [返回大厅]
   const adBtn = document.getElementById("btn-res-ad");
+  const actRow = document.getElementById("res-actions-row");
   if (!extracted && !state.revivedOnce) {
     adBtn.hidden = false;
-    adBtn.textContent = "📺 紧急充电复活 + 3秒无敌（保住大金！）";
+    adBtn.textContent = "▶ 紧急复活";
+    actRow.classList.remove("single");
     adBtn.onclick = () => {
       showRewardedAd("紧急充电复活", () => {
         state.revivedOnce = true;
@@ -1169,32 +1287,37 @@ function finishRun(extracted) {
         state.player.charge = 100;
         state.phase = "playing";
         screenResult.hidden = true;
-        btnOverdrive.hidden = false;
+        hudEl.hidden = false;
+        activeBar.hidden = false;
         sfx.startBgm("living");
         showToast("⚡ 满血复活！快钻桌底或冲充电桩！", "green");
       });
     };
   } else if (extracted && !state.doubledOnce && earned > 0) {
     adBtn.hidden = false;
-    adBtn.textContent = `📺 看激励视频 · 收益 ×2 再赚 ¥${earned.toLocaleString()}`;
+    adBtn.textContent = "▶ 收益 ×2";
+    actRow.classList.remove("single");
     adBtn.onclick = () => {
-      showRewardedAd("撤离收益 ×2", () => {
+      showRewardedAd("收益 ×2", () => {
         state.doubledOnce = true;
         save.coins += earned;
         save.totalExtracted += earned;
         if (earned * 2 > save.bestRunValue) save.bestRunValue = earned * 2;
         writeSave(save);
         adBtn.hidden = true;
+        actRow.classList.add("single");
         document.getElementById("res-v1").textContent = `¥${(earned * 2).toLocaleString()}`;
         sfx.playBigGold();
       });
     };
   } else {
     adBtn.hidden = true;
+    actRow.classList.add("single");
   }
 
+  // Unified Top-Right ↗ Share Button: Auto-copies Challenge URL + Opens QR Share Poster Modal!
   const topLoot = [...state.bagLoot].sort((a, b) => b.value - a.value)[0];
-  document.getElementById("btn-res-share").onclick = async () => {
+  document.getElementById("btn-res-share-poster").onclick = async () => {
     const shareUrl = buildChallengeUrl({
       seed: state.mode === "daily" ? state.seedStr : getTodaySeedString(),
       owner: save.playerName,
@@ -1205,10 +1328,6 @@ function finishRun(extracted) {
       ? `我在《半夜扫地机》探索 ${pct}%（${stars}星）带走 ¥${earned.toLocaleString()}！敢来挑战吗？ ${shareUrl}`
       : `我在《半夜扫地机》翻车了（${DEATH_QUIPS[state.lastHitSource] || ""}）痛失 ¥${totalVal.toLocaleString()}！快来捡遗产： ${shareUrl}`;
     await copyToClipboard(text);
-    showToast("🔗 已复制带遗产坐标的挑战文案！快发微信群或 X！", "pink");
-  };
-
-  document.getElementById("btn-res-receipt").onclick = () => {
     const dataUrl = renderReceiptPoster({
       extracted,
       value: extracted ? (state.doubledOnce ? earned * 2 : earned) : totalVal,
@@ -1221,8 +1340,8 @@ function finishRun(extracted) {
       streak: save.extractStreak,
       rescuedGhost: state.rescuedGhost,
     });
-    receiptImg.src = dataUrl;
-    receiptImg.style.display = "block";
+    document.getElementById("receipt-img").src = dataUrl;
+    shareModal.hidden = false;
   };
 
   screenResult.hidden = false;
@@ -1257,9 +1376,71 @@ function update(rawDt) {
   p.invuln = Math.max(0, p.invuln - dt);
   p.poopSlow = Math.max(0, p.poopSlow - dt);
   p.slimeDebuff = Math.max(0, p.slimeDebuff - dt);
+  p.cloneCd = Math.max(0, p.cloneCd - dt);
+  p.giant = Math.max(0, p.giant - dt);
   if (p.overdrive > 0) {
     p.overdrive = Math.max(0, p.overdrive - dt);
     if (Math.random() < 0.5) spawnParticles(p.x, p.y, "#38f3ff", 1, 90, true);
+  }
+
+  // Wet Slippery Floor Check (Low-friction ice drift!)
+  let onWet = false;
+  for (const wz of WET_ZONES) {
+    if (p.x >= wz.x && p.x <= wz.x + wz.w && p.y >= wz.y && p.y <= wz.y + wz.h) {
+      onWet = true;
+      break;
+    }
+  }
+  // Floor Fan / Hairdryer Wind Corridor Force!
+  let windX = 0;
+  let windY = 0;
+  for (const wn of WIND_ZONES) {
+    if (p.x >= wn.x && p.x <= wn.x + wn.w && p.y >= wn.y && p.y <= wn.y + wn.h) {
+      windX += wn.vx;
+      windY += wn.vy;
+    }
+  }
+
+  // Update Summoned Helper Clones (auto-vacuum dust + ram enemies!)
+  for (let i = state.clones.length - 1; i >= 0; i--) {
+    const cl = state.clones[i];
+    cl.life -= dt;
+    cl.hitCd = Math.max(0, cl.hitCd - dt);
+    if (cl.life <= 0) {
+      spawnParticles(cl.x, cl.y, "#38f3ff", 10, 120, true);
+      state.clones.splice(i, 1);
+      continue;
+    }
+    // Seek nearest enemy or roam cleaning dust
+    let target = state.enemies[0];
+    let bestD = 9999;
+    for (const e of state.enemies) {
+      const d = Math.hypot(e.x - cl.x, e.y - cl.y);
+      if (d < bestD) {
+        bestD = d;
+        target = e;
+      }
+    }
+    if (target) {
+      const ang = Math.atan2(target.y - cl.y, target.x - cl.x);
+      cl.vx += (Math.cos(ang) * 280 - cl.vx) * Math.min(1, dt * 6);
+      cl.vy += (Math.sin(ang) * 280 - cl.vy) * Math.min(1, dt * 6);
+    }
+    cl.x += cl.vx * dt;
+    cl.y += cl.vy * dt;
+    clampToRoom(cl, 18);
+    cleanDustAt(state.dustLayer, cl.x, cl.y, 32);
+    if (state.cleanTracker.markClean(cl.x, cl.y, 34) > 0) checkCleanlinessMilestones();
+    if (cl.hitCd <= 0) {
+      for (let j = state.enemies.length - 1; j >= 0; j--) {
+        const e = state.enemies[j];
+        if (Math.hypot(e.x - cl.x, e.y - cl.y) < e.r + 20) {
+          cl.hitCd = 0.25;
+          if (damageEnemy(e, 32, cl.vx * 0.5, cl.vy * 0.5, false)) state.enemies.splice(j, 1);
+          break;
+        }
+      }
+    }
   }
 
   // Check sticky Milk-Tea Puddles (movement + fire-rate debuff!)
@@ -1290,17 +1471,25 @@ function update(rawDt) {
   const mag = Math.hypot(ix, iy);
   const slowMult = p.overdrive > 0 ? 1.55 : p.poopSlow > 0 ? 0.55 : p.slimeDebuff > 0 ? 0.58 : state.fever > 0 ? 1.18 : 1;
   const moveSpd = p.speed * slowMult;
-  const tx = mag > 0.05 ? (ix / Math.max(1, mag)) * moveSpd : 0;
-  const ty = mag > 0.05 ? (iy / Math.max(1, mag)) * moveSpd : 0;
-  const accel = Math.min(1, dt * 11);
+  const tx = (mag > 0.05 ? (ix / Math.max(1, mag)) * moveSpd : 0) + windX;
+  const ty = (mag > 0.05 ? (iy / Math.max(1, mag)) * moveSpd : 0) + windY;
+  const accel = Math.min(1, dt * (onWet ? 2.4 : 11)); // Ice-like slippery drift on wet floor!
   if (Math.hypot(tx - p.vx, ty - p.vy) > 180 && mag > 0.2 && Math.random() < 0.45) {
-    spawnParticles(p.x, p.y + 10, "#e2e8f0", 2, 55, false);
+    spawnParticles(p.x, p.y + 10, onWet ? "#7dd3fc" : "#e2e8f0", 2, 55, false);
   }
   p.vx += (tx - p.vx) * accel;
   p.vy += (ty - p.vy) * accel;
+  const prevX = p.x;
+  const prevY = p.y;
   p.x += p.vx * dt;
   p.y += p.vy * dt;
-  clampToRoom(p, p.r);
+  const activeR = p.giant > 0 ? Math.round(p.r * 1.65) : p.r;
+  clampToRoom(p, activeR);
+  // Giant Roomba cannot duck under low tables/desks!
+  if (p.giant > 0 && isUnderHiddenCover(p.x, p.y)) {
+    p.x = prevX;
+    p.y = prevY;
+  }
 
   // Secret Under-Bed Easter Egg Discovery!
   const underCover = isUnderHiddenCover(p.x, p.y);
@@ -1317,7 +1506,7 @@ function update(rawDt) {
       smearPoopAt(state.dustLayer, p.x, p.y, 20);
       state.cleanTracker.dirtyAt(p.x, p.y, 26);
     } else {
-      const cleanR = p.overdrive > 0 ? p.cleanRadius * 1.4 : p.cleanRadius;
+      const cleanR = (p.giant > 0 ? p.cleanRadius * 1.85 : p.overdrive > 0 ? p.cleanRadius * 1.4 : p.cleanRadius);
       cleanDustAt(state.dustLayer, p.x, p.y, cleanR);
       const newly = state.cleanTracker.markClean(p.x, p.y, cleanR + 8);
       if (newly > 0) {
@@ -1352,14 +1541,16 @@ function update(rawDt) {
     }
   }
 
-  // Pet Poop Step-On Check (T2_poop talent grants immunity!)
+  // Pet Poop = Pure Indestructible Timed Trap (auto-dries after 14s!)
   for (let i = state.poops.length - 1; i >= 0; i--) {
     const poop = state.poops[i];
-    poop.flash = Math.max(0, poop.flash - dt);
-    if (Math.hypot(p.x - poop.x, p.y - poop.y) < p.r + 14 && p.overdrive <= 0) {
-      if (state.talents.has("t2_poop")) {
-        damagePoop(i, 999);
-      } else {
+    poop.life = (poop.life ?? 14) - dt;
+    if (poop.life <= 0) {
+      state.poops.splice(i, 1);
+      continue;
+    }
+    if (Math.hypot(p.x - poop.x, p.y - poop.y) < p.r + 14 && p.overdrive <= 0 && p.giant <= 0) {
+      if (!state.talents.has("t2_poop")) {
         p.poopSlow = 2.4;
         state.lastHitSource = "poop";
         sfx.playPoopSplat();
@@ -1368,8 +1559,18 @@ function update(rawDt) {
         smearPoopAt(state.dustLayer, poop.x, poop.y, 38);
         state.cleanTracker.dirtyAt(poop.x, poop.y, 44);
         spawnText(poop.x, poop.y - 24, "💩 踩雷！涂脏地板！", "#c08457", 19);
-        state.poops.splice(i, 1);
       }
+      state.poops.splice(i, 1);
+    }
+  }
+
+  // Boss Key -> Locked Fridge / TV Secret Vault Unlock!
+  if (state.hasKey && state.keyTarget && !state.keyTarget.opened) {
+    if (Math.hypot(p.x - state.keyTarget.x, p.y - state.keyTarget.y) < state.keyTarget.radius) {
+      state.keyTarget.opened = true;
+      state.hasKey = false;
+      state.coresEarned += 1;
+      grantLootReward(state.keyTarget.x, state.keyTarget.y, 42000, `🗝️ 成功撬开${state.keyTarget.label}！+💎1`);
     }
   }
 
@@ -1586,7 +1787,7 @@ function update(rawDt) {
       e.dropCd -= dt;
       if (e.dropCd <= 0 && state.poops.length < 10) {
         e.dropCd = 4.8;
-        state.poops.push({ x: e.x, y: e.y, hp: 28, flash: 0 });
+        state.poops.push({ x: e.x, y: e.y, life: 14, flash: 0 });
         spawnText(e.x, e.y - 20, "💩 偷偷拉了一坨!", "#c08457", 13);
       }
     } else {
@@ -1612,9 +1813,9 @@ function update(rawDt) {
     e.vx *= Math.pow(0.05, dt);
     e.vy *= Math.pow(0.05, dt);
 
-    if (d < e.r + p.r - 3) {
-      if (p.overdrive > 0) {
-        if (damageEnemy(e, 60, (-dx / d) * 320, (-dy / d) * 320, true)) {
+    if (d < e.r + (p.giant > 0 ? p.r * 1.65 : p.r) - 3) {
+      if (p.overdrive > 0 || p.giant > 0) {
+        if (damageEnemy(e, p.giant > 0 ? 85 : 60, (-dx / d) * 340, (-dy / d) * 340, true)) {
           state.enemies.splice(i, 1);
           continue;
         }
@@ -1683,7 +1884,7 @@ function update(rawDt) {
         if (p.xp >= p.xpNext) {
           p.xp -= p.xpNext;
           p.lv += 1;
-          p.xpNext = Math.round(p.xpNext * 1.38 + 6);
+          p.xpNext = Math.round(p.xpNext * 1.45 + 16);
           openLevelUp();
         }
       }
@@ -1694,13 +1895,21 @@ function update(rawDt) {
   for (let i = state.lootDrops.length - 1; i >= 0; i--) {
     const drop = state.lootDrops[i];
     if (Math.hypot(p.x - drop.x, p.y - drop.y) < p.r + 32) {
-      state.bagLoot.push(drop);
-      sfx.playBigGold();
-      vibrate(28);
-      state.shake = 0.45;
-      spawnParticles(drop.x, drop.y, "#ffd54a", 24, 210, true);
-      showJackpotBanner(drop.name, drop.value, "📦 成功捡漏群友遗产！");
-      if (drop.isGhost) state.rescuedGhost = drop.owner;
+      if (drop.isKey) {
+        state.hasKey = true;
+        const fac = LOCKED_FACILITIES[Math.floor(state.rng() * LOCKED_FACILITIES.length)];
+        state.keyTarget = { ...fac, opened: false };
+        sfx.playBigGold();
+        showToast(`🗝️ 获得神秘钥匙！跟着金色箭头去撬开【${fac.label}】！`, "gold");
+      } else {
+        state.bagLoot.push(drop);
+        sfx.playBigGold();
+        vibrate(28);
+        state.shake = 0.45;
+        spawnParticles(drop.x, drop.y, "#ffd54a", 24, 210, true);
+        showJackpotBanner(drop.name, drop.value, "📦 成功捡漏群友遗产！");
+        if (drop.isGhost) state.rescuedGhost = drop.owner;
+      }
       state.lootDrops.splice(i, 1);
     }
   }
@@ -1753,15 +1962,35 @@ function update(rawDt) {
   const ready = p.charge >= 100;
   btnOverdrive.classList.toggle("ready", ready);
   odTxt.textContent = p.overdrive > 0 ? "暴走中!" : ready ? "过载清屏!" : `${Math.floor(p.charge)}%`;
+
+  const cloneReady = p.cloneCd <= 0;
+  btnClone.classList.toggle("ready", cloneReady);
+  cloneTxt.textContent = cloneReady ? "分身" : `${Math.ceil(p.cloneCd)}s`;
+
+  const giantReady = p.giant <= 0 && p.giantCharges > 0;
+  const giantAd = p.giant <= 0 && p.giantCharges <= 0 && !p.giantAdUsed;
+  btnGiant.classList.toggle("ready", giantReady);
+  btnGiant.classList.toggle("ad-refill", giantAd);
+  giantTxt.textContent = p.giant > 0 ? `${Math.ceil(p.giant)}s` : giantReady ? `变大×${p.giantCharges}` : giantAd ? "▶补1次" : "已用完";
 }
 
 // Inputs & Navigation
 window.addEventListener("keydown", (e) => {
-  if (state && state.phase === "playing") {
+  if (!state) return;
+  if (e.code === "Escape") {
+    if (state.phase === "playing") openPause();
+    else if (state.phase === "paused") closePause();
+    return;
+  }
+  if (state.phase === "playing") {
     state.keys.add(e.code);
     if (e.code === "Space") {
       e.preventDefault();
       triggerOverdrive();
+    } else if (e.code === "KeyQ") {
+      triggerClone();
+    } else if (e.code === "KeyE") {
+      triggerGiant();
     }
   }
 });
@@ -1772,6 +2001,26 @@ btnOverdrive.addEventListener("click", (e) => {
   e.stopPropagation();
   triggerOverdrive();
 });
+btnClone.addEventListener("click", (e) => {
+  e.stopPropagation();
+  triggerClone();
+});
+btnGiant.addEventListener("click", (e) => {
+  e.stopPropagation();
+  triggerGiant();
+});
+document.getElementById("btn-pause").onclick = openPause;
+document.getElementById("btn-resume").onclick = closePause;
+document.getElementById("btn-quit-run").onclick = () => {
+  screenPause.hidden = true;
+  if (state) finishRun(false);
+};
+document.getElementById("btn-rw-ok").onclick = () => {
+  rewardPopup.hidden = true;
+};
+document.getElementById("btn-share-close").onclick = () => {
+  shareModal.hidden = true;
+};
 
 function startPointer(id, x, y) {
   if (!state || state.phase !== "playing") return;
@@ -1821,7 +2070,6 @@ document.getElementById("mode-daily").onclick = () => {
   refreshLobby();
 };
 document.getElementById("btn-play").onclick = startRun;
-document.getElementById("btn-res-again").onclick = startRun;
 document.getElementById("btn-quick-garage").onclick = () => {
   currentNav = "garage";
   refreshLobby();
@@ -1829,7 +2077,7 @@ document.getElementById("btn-quick-garage").onclick = () => {
 document.getElementById("btn-res-lobby").onclick = () => {
   screenResult.hidden = true;
   hudEl.hidden = true;
-  btnOverdrive.hidden = true;
+  activeBar.hidden = true;
   lobbyShell.hidden = false;
   refreshLobby();
 };

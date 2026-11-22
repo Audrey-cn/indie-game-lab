@@ -58,6 +58,24 @@ export const SHOCK_STRIP_DEFS = [
   { id: "strip3", x: 960, y: 1480 },
 ];
 
+// Wet Slippery Floor Zones (Ice-like low-friction drift near kitchen & bathroom!)
+export const WET_ZONES = [
+  { id: "wet_kitchen", x: 1520, y: 600, w: 320, h: 140 },
+  { id: "wet_hall", x: 1120, y: 1220, w: 260, h: 170 },
+];
+
+// Floor Fan / Hairdryer Wind Corridors (pushes idle Roomba, resists headwind, boosts tailwind!)
+export const WIND_ZONES = [
+  { id: "wind_living", x: 760, y: 260, w: 320, h: 210, vx: -135, vy: 0 },
+  { id: "wind_bedroom", x: 1200, y: 1560, w: 340, h: 200, vx: 0, vy: -135 },
+];
+
+// Boss-Key Unlockable Special Facilities (Fridge & TV Secret Vault!)
+export const LOCKED_FACILITIES = [
+  { id: "fridge_vault", label: "神秘冰箱暗格", x: 2180, y: 720, radius: 74 },
+  { id: "tv_vault", label: "电视柜隐藏金库", x: 490, y: 1015, radius: 74 },
+];
+
 export function isInsideCutout(x, y, pad = 0) {
   const c = ROOM.cutout;
   return x > c.x - pad && y < c.y + c.h + pad;

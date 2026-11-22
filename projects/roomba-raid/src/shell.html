@@ -168,14 +168,42 @@
     #jackpot-banner .jt-main { font-size: 19px; font-weight: 900; color: #fff; margin-top: 2px; }
     #jackpot-banner .jt-val { font-size: 18px; font-weight: 900; color: var(--gold); }
 
+    /* 3 Tactile Active Buttons at Bottom-Right (Overdrive / Clone / Giant) */
+    #active-bar {
+      position: absolute; right: 14px; bottom: max(18px, env(safe-area-inset-bottom));
+      z-index: 16; display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+    }
+    #active-bar[hidden] { display: none; }
+    .act-row { display: flex; align-items: flex-end; gap: 9px; }
+    .skill-btn {
+      width: 60px; height: 60px; border-radius: 50%;
+      border: 3px solid var(--ink); background: #1c2448; color: #cbd5e1;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-weight: 900; cursor: pointer; box-shadow: 0 4px 0 var(--ink);
+      transition: transform 0.1s;
+    }
+    .skill-btn:active { transform: translateY(2px); }
+    .skill-btn.ready {
+      background: linear-gradient(180deg, #52e5ff, #0284c7); color: #fff;
+      box-shadow: 0 4px 0 #07476e, 0 0 18px rgba(56, 243, 255, 0.5);
+    }
+    .skill-btn.giant.ready {
+      background: linear-gradient(180deg, #ff7eb6, #e11d58); color: #fff;
+      box-shadow: 0 4px 0 #880d33, 0 0 18px rgba(255, 76, 118, 0.55);
+    }
+    .skill-btn.ad-refill {
+      background: linear-gradient(180deg, #ffe26a, #e68a00); color: #241200;
+      box-shadow: 0 4px 0 #7a4200;
+    }
+    .skill-btn .si { font-size: 20px; line-height: 1; }
+    .skill-btn .st { font-size: 9.5px; margin-top: 2px; }
+
     #btn-overdrive {
-      position: absolute; right: 16px; bottom: max(22px, env(safe-area-inset-bottom));
-      z-index: 16; width: 76px; height: 76px; border-radius: 50%;
+      width: 74px; height: 74px; border-radius: 50%;
       border: 3.5px solid var(--ink); background: #1c2448; color: #94a3b8;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       font-weight: 900; cursor: pointer; box-shadow: 0 5px 0 var(--ink);
     }
-    #btn-overdrive[hidden] { display: none; }
     #btn-overdrive.ready {
       color: #241200;
       background: radial-gradient(circle at 35% 30%, #fff4b8, #ffd54a 60%, #ff8c1a);
@@ -409,21 +437,66 @@
     .stat-box .v { font-size: 14px; font-weight: 900; color: var(--gold); margin-top: 2px; }
     .btn-stack { display: flex; flex-direction: column; gap: 8px; }
 
-    .choice-list { display: flex; flex-direction: column; gap: 9px; margin: 12px 0; text-align: left; }
-    .choice-card {
-      display: flex; align-items: center; gap: 12px; padding: 11px;
-      border-radius: 14px; background: #232b52; border: 2.5px solid var(--ink);
-      box-shadow: 0 4px 0 var(--ink); cursor: pointer; color: #fff; text-align: left;
+    /* ===== 3-COLUMN VERTICAL GAME CARDS (Replaces Ugly List!) ===== */
+    .vcard-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 14px;
     }
-    .choice-icon {
-      width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center; font-size: 22px;
-      background: #121730; border: 2px solid var(--ink);
+    .vcard {
+      display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+      border-radius: 16px; border: 3px solid var(--ink); overflow: hidden;
+      background: linear-gradient(180deg, #273161, #171d3c);
+      box-shadow: 0 5px 0 var(--ink); cursor: pointer; color: #fff; padding: 0 0 10px;
+      animation: cardPop 0.28s cubic-bezier(0.2, 1.35, 0.4, 1) both;
+      transition: transform 0.1s;
     }
-    .choice-title { font-size: 14px; font-weight: 900; }
-    .choice-tag { font-size: 10px; padding: 2px 6px; border-radius: 6px; background: #143b52; color: var(--cyan); margin-left: 6px; }
-    .choice-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
-    #receipt-img { width: 100%; border-radius: 12px; border: 2.5px solid var(--ink); margin-top: 10px; display: none; }
+    .vcard:nth-child(2) { animation-delay: 0.06s; }
+    .vcard:nth-child(3) { animation-delay: 0.12s; }
+    .vcard:active { transform: translateY(3px); }
+    @keyframes cardPop { from { transform: translateY(18px) scale(0.86); opacity: 0; } to { transform: none; opacity: 1; } }
+    .vcard-head {
+      width: 100%; padding: 5px 4px; font-size: 10px; font-weight: 900; text-align: center;
+      border-bottom: 2.5px solid var(--ink); color: #141126;
+    }
+    .vcard.r-cyan .vcard-head { background: linear-gradient(90deg, #67f5ff, #38bdf8); }
+    .vcard.r-purple .vcard-head { background: linear-gradient(90deg, #e879f9, #a855f7); color: #fff; }
+    .vcard.r-gold .vcard-head { background: linear-gradient(90deg, #ffe26a, #f59e0b); }
+    .vcard-orb {
+      width: 58px; height: 58px; border-radius: 50%; margin: 10px 0 6px;
+      display: flex; align-items: center; justify-content: center; font-size: 30px;
+      background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.25), rgba(10,14,32,0.7));
+      border: 2.5px solid rgba(255,255,255,0.22);
+    }
+    .vcard-name { font-size: 12px; font-weight: 900; padding: 0 4px; line-height: 1.2; text-align: center; }
+    .vcard-stars { font-size: 10px; color: var(--gold); letter-spacing: 1px; margin: 4px 0 2px; }
+    .vcard-kw { font-size: 10px; font-weight: 800; color: var(--cyan); padding: 0 4px; text-align: center; }
+
+    /* ===== FULL-SCREEN POSTER SETTLEMENT REDESIGN ===== */
+    #screen-result {
+      position: absolute; inset: 0; z-index: 38;
+      display: flex; flex-direction: column; justify-content: space-between;
+      background-size: cover; background-position: center 26%;
+      padding: max(14px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom));
+    }
+    #screen-result[hidden] { display: none; }
+    #screen-result::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(180deg, rgba(8,10,24,0.82) 0%, rgba(8,10,24,0.14) 36%, rgba(8,10,24,0.26) 56%, rgba(8,10,24,0.95) 84%);
+    }
+    #screen-result > * { position: relative; z-index: 2; }
+    .res-top {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+    }
+    .share-fab {
+      width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;
+      border: 2.5px solid var(--ink); background: linear-gradient(180deg, #52e5ff, #0284c7);
+      color: #fff; font-size: 20px; font-weight: 900; cursor: pointer;
+      box-shadow: 0 4px 0 #07476e; display: flex; align-items: center; justify-content: center;
+    }
+    .share-fab:active { transform: translateY(2px); }
+    .res-bottom { display: flex; flex-direction: column; gap: 10px; text-align: center; }
+    .res-actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .res-actions-row.single { grid-template-columns: 1fr; }
+    #receipt-img { width: 100%; border-radius: 14px; border: 3px solid var(--ink); display: block; }
   </style>
 </head>
 <body>
@@ -448,14 +521,17 @@
         <span class="clean-pill" id="hud-clean">🧹 0% (35%★)</span>
         <span id="hud-wave">第1波 · LV1</span>
         <span id="hud-combo" style="color:var(--gold)"></span>
-        <button class="hud-btn" id="btn-mute">🔊</button>
+        <div style="display:flex;gap:4px">
+          <button class="hud-btn" id="btn-mute">🔊</button>
+          <button class="hud-btn" id="btn-pause">⏸</button>
+        </div>
       </div>
     </div>
 
     <div id="briefing-banner" hidden>
       <div class="bf-time">02:00 AM · 豪宅摸金行动</div>
       <div class="bf-title">全屋大扫除 · 启动！</div>
-      <div class="bf-sub">探索客厅/餐厨/卧室床底 · 猫掌来袭快钻桌底躲避！</div>
+      <div class="bf-sub">主人刚睡熟，加油把全屋清扫到 100% 吧！</div>
     </div>
 
     <div id="toast" hidden></div>
@@ -464,10 +540,24 @@
       <div class="jt-main" id="jt-name">24K 纯金猫罐头</div>
       <div class="jt-val" id="jt-val">+¥28,000</div>
     </div>
-    <button id="btn-overdrive" hidden>
-      <span class="od-ico">⚡</span>
-      <span class="od-txt" id="od-txt">0%</span>
-    </button>
+
+    <!-- 3 Tactile Active Buttons -->
+    <div id="active-bar" hidden>
+      <div class="act-row">
+        <button class="skill-btn" id="btn-clone" title="Q: 召唤辅助分身">
+          <span class="si">🤖</span>
+          <span class="st" id="clone-txt">分身</span>
+        </button>
+        <button class="skill-btn giant" id="btn-giant" title="E: 巨无霸变身">
+          <span class="si">🍄</span>
+          <span class="st" id="giant-txt">变大×1</span>
+        </button>
+        <button id="btn-overdrive" title="Space: 过载清屏">
+          <span class="od-ico">⚡</span>
+          <span class="od-txt" id="od-txt">0%</span>
+        </button>
+      </div>
+    </div>
 
     <!-- ===== MOBILE GAME LOBBY SHELL (4-Tab Home Hub) ===== -->
     <div id="lobby-shell">
@@ -538,42 +628,80 @@
       </div>
     </div>
 
-    <!-- 3-Card Level Up Modal -->
-    <div class="overlay" id="screen-levelup" hidden>
+    <!-- Pause Overlay -->
+    <div class="overlay" id="screen-pause" hidden>
       <div class="game-modal">
         <div class="modal-body">
-          <div style="font-size:11px;font-weight:900;color:var(--cyan);letter-spacing:0.12em">LEVEL UP · 战术外挂三选一</div>
-          <h2 style="font-size:21px;font-weight:900;margin:4px 0 8px">挑一件离谱装备焊头上！</h2>
-          <div class="choice-list" id="choice-list"></div>
-          <button class="gbtn gbtn-gold" id="btn-take-all">📺 我全都要（模拟激励视频）</button>
+          <div style="font-size:11px;font-weight:900;color:var(--cyan);letter-spacing:0.14em">PAUSED</div>
+          <h2 style="font-size:24px;font-weight:900;margin:4px 0 10px">⏸ 行动暂停</h2>
+          <div id="pause-weapons" style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-bottom:14px"></div>
+          <div class="btn-stack">
+            <button class="gbtn gbtn-play" id="btn-resume">▶ 继续清扫</button>
+            <button class="gbtn gbtn-dark" id="btn-quit-run">🏠 结束本局并返回大厅</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Poster Settlement Modal (with 3 Stars + Clickable Reward Chests!) -->
-    <div class="overlay" id="screen-result" hidden>
+    <!-- 3-Column Vertical Card Draw Modal -->
+    <div class="overlay" id="screen-levelup" hidden>
       <div class="game-modal">
-        <img id="res-poster" class="modal-poster" alt="结算海报">
         <div class="modal-body">
+          <div style="font-size:11px;font-weight:900;color:var(--cyan);letter-spacing:0.12em">LEVEL UP · 选择战术卡牌</div>
+          <h2 style="font-size:21px;font-weight:900;margin:3px 0 2px">挑一张外挂焊上机身！</h2>
+          <div class="vcard-grid" id="choice-list"></div>
+          <button class="gbtn gbtn-gold" id="btn-take-all">▶ 我全都要</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full-Screen Poster Settlement Screen -->
+    <div id="screen-result" hidden>
+      <div class="res-top">
+        <div>
           <div id="res-quip" class="death-quip">被猫主子一巴掌拍成二维扫地饼！</div>
-          <h2 id="res-title" style="font-size:22px;font-weight:900">✅ 满载冲回充电桩！</h2>
-          <div class="star-row" id="res-stars"><span>★</span><span>★</span><span>★</span></div>
-          <div class="chest-row" id="res-chests"></div>
+          <h2 id="res-title" style="font-size:26px;font-weight:900;text-shadow:0 3px 0 var(--ink)">✅ 安全撤离！</h2>
+        </div>
+        <button class="share-fab" id="btn-res-share-poster" title="分享带二维码战绩海报">↗</button>
+      </div>
 
-          <div class="stat-strip">
-            <div class="stat-box"><div class="k" id="res-k1">带出估值</div><div class="v" id="res-v1">¥0</div></div>
-            <div class="stat-box"><div class="k">探索 / 击杀</div><div class="v" id="res-v2">0% / 0杀</div></div>
-            <div class="stat-box"><div class="k">安全箱保底</div><div class="v" id="res-v3">¥0</div></div>
-          </div>
+      <div class="res-bottom">
+        <div class="star-row" id="res-stars"><span>★</span><span>★</span><span>★</span></div>
+        <div class="chest-row" id="res-chests"></div>
 
-          <div class="btn-stack">
-            <button class="gbtn gbtn-gold" id="btn-res-ad" hidden>📺 看广告复活 / 翻倍</button>
-            <button class="gbtn gbtn-play" id="btn-res-again">⚡ 再吸一局</button>
-            <button class="gbtn gbtn-pink" id="btn-res-share">🔗 复制翻车/摸金挑战链接</button>
-            <button class="gbtn gbtn-blue" id="btn-res-receipt">🧾 生成摸金小票海报</button>
-            <button class="gbtn gbtn-dark" id="btn-res-lobby">🏠 返回大厅车库 / 点天赋</button>
-          </div>
-          <img id="receipt-img" alt="摸金小票海报">
+        <div class="stat-strip">
+          <div class="stat-box"><div class="k" id="res-k1">带出估值</div><div class="v" id="res-v1">¥0</div></div>
+          <div class="stat-box"><div class="k">探索 / 击杀</div><div class="v" id="res-v2">0% / 0杀</div></div>
+          <div class="stat-box"><div class="k">安全箱保底</div><div class="v" id="res-v3">¥0</div></div>
+        </div>
+
+        <div class="res-actions-row" id="res-actions-row">
+          <button class="gbtn gbtn-gold" id="btn-res-ad" hidden>▶ 收益 ×2</button>
+          <button class="gbtn gbtn-dark" id="btn-res-lobby">返回大厅</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Star Chest Reward Popup (Special Item / Gold Core / Cosmetic) -->
+    <div class="overlay" id="reward-popup" hidden style="z-index:48">
+      <div class="game-modal">
+        <div class="modal-body">
+          <div style="font-size:11px;font-weight:900;color:var(--gold);letter-spacing:0.12em">STAR REWARD · 星级宝箱开启</div>
+          <div id="rw-icon" style="font-size:52px;margin:10px 0 6px">💎</div>
+          <h2 id="rw-title" style="font-size:21px;font-weight:900">获得稀缺金核 ×1</h2>
+          <p id="rw-desc" style="font-size:13px;color:var(--muted);margin:6px 0 16px">可用于解锁高阶机身与 T3 传奇天赋！</p>
+          <button class="gbtn gbtn-play" id="btn-rw-ok">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unified Share Poster + QR Modal (Triggered by Top-Right ↗ Button) -->
+    <div class="overlay" id="share-modal" hidden style="z-index:50">
+      <div class="game-modal">
+        <div class="modal-body">
+          <div style="font-size:11px;font-weight:900;color:var(--cyan);margin-bottom:8px">🔗 挑战链接已自动复制 · 长按保存带二维码海报</div>
+          <img id="receipt-img" alt="带二维码战绩海报">
+          <button class="gbtn gbtn-dark" id="btn-share-close" style="margin-top:10px">关闭</button>
         </div>
       </div>
     </div>

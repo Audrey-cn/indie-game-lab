@@ -4,7 +4,7 @@
 // sticky milk-tea debuff puddles, chasing Cat Paw, Pooper & Slime enemies, 11 Skin Variants.
 
 import { LOOT_ITEMS, SKINS } from "./config.mjs";
-import { HIDDEN_ZONES, OBSTACLES, ROOM } from "./room-layout.mjs";
+import { HIDDEN_ZONES, OBSTACLES, ROOM, WET_ZONES, WIND_ZONES } from "./room-layout.mjs";
 import { SPRITES } from "./sprites.mjs";
 
 const LOOT_MAP = Object.fromEntries(LOOT_ITEMS.map((l) => [l.id, l]));
@@ -124,6 +124,9 @@ export function renderGame(ctx, state, vw, vh) {
     ctx.drawImage(state.dustLayer.canvas, 0, 0, ROOM.width, ROOM.height);
   }
 
+  // 2b. Wet Slippery Zones & Wind Corridors
+  drawWetAndWindZones(ctx, time);
+
   // 3. Sticky Milk-Tea Debuff Puddles
   for (const pd of state.puddles) {
     drawMilkTeaPuddle(ctx, pd);
@@ -131,6 +134,11 @@ export function renderGame(ctx, state, vw, vh) {
 
   // 4. Pure Visual Solid Cover Furniture (NO text!)
   drawSolidFurniture(ctx, time);
+
+  // 4b. Boss Key Target Facility Glow (when carrying a Boss Key!)
+  if (state.hasKey && state.keyTarget && !state.keyTarget.opened) {
+    drawLockedFacilityBeacon(ctx, state.keyTarget, time);
+  }
 
   // 5. Interactive Power-Strip Shock Traps
   for (const strip of state.shockStrips) {
@@ -234,6 +242,11 @@ export function renderGame(ctx, state, vw, vh) {
 
   // 16. Weapon VFX
   drawWeaponVfx(ctx, state, time);
+
+  // 16b. Summoned Mini Helper Clones!
+  for (const cl of state.clones) {
+    drawHelperClone(ctx, cl, time);
+  }
 
   // 17. Roomba Protagonist
   drawPlayer(ctx, player, state, time);
@@ -407,6 +420,92 @@ function drawApartmentFloor(ctx, cam, vw, vh) {
   ctx.lineTo(6, ROOM.height - 6);
   ctx.closePath();
   ctx.stroke();
+}
+
+function drawWetAndWindZones(ctx, time) {
+  // Shimmering Wet Slippery Floor Puddles
+  for (const wz of WET_ZONES) {
+    ctx.save();
+    ctx.fillStyle = "rgba(56, 189, 248, 0.24)";
+    ctx.strokeStyle = "rgba(125, 211, 252, 0.45)";
+    ctx.lineWidth = 2.5;
+    roundRect(ctx, wz.x, wz.y, wz.w, wz.h, 36);
+    ctx.fill();
+    ctx.stroke();
+    // Specular water shimmer streaks
+    const sh = Math.sin(time * 3 + wz.x) * 14;
+    ctx.strokeStyle = "rgba(224, 242, 254, 0.35)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(wz.x + 42 + sh, wz.y + 38);
+    ctx.lineTo(wz.x + 110 + sh, wz.y + 38);
+    ctx.moveTo(wz.x + wz.w - 120 - sh, wz.y + wz.h - 36);
+    ctx.lineTo(wz.x + wz.w - 50 - sh, wz.y + wz.h - 36);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Animated Hairdryer / Floor Fan Wind Corridors
+  for (const wn of WIND_ZONES) {
+    ctx.save();
+    ctx.fillStyle = "rgba(186, 230, 253, 0.1)";
+    roundRect(ctx, wn.x, wn.y, wn.w, wn.h, 18);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(125, 249, 255, 0.42)";
+    ctx.lineWidth = 3;
+    const horiz = Math.abs(wn.vx) > Math.abs(wn.vy);
+    const dir = horiz ? Math.sign(wn.vx) : Math.sign(wn.vy);
+    for (let i = 0; i < 6; i++) {
+      const p = ((time * 1.4 + i * 0.17) % 1);
+      ctx.beginPath();
+      if (horiz) {
+        const lx = dir < 0 ? wn.x + wn.w * (1 - p) : wn.x + wn.w * p;
+        const ly = wn.y + 24 + (i % 5) * ((wn.h - 48) / 4);
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx + dir * 42, ly);
+      } else {
+        const lx = wn.x + 28 + (i % 5) * ((wn.w - 56) / 4);
+        const ly = dir < 0 ? wn.y + wn.h * (1 - p) : wn.y + wn.h * p;
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx, ly + dir * 42);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawLockedFacilityBeacon(ctx, fac, time) {
+  const pulse = 0.5 + 0.5 * Math.sin(time * 9);
+  ctx.save();
+  ctx.translate(fac.x, fac.y);
+  ctx.strokeStyle = `rgba(255, 213, 74, ${0.55 + pulse * 0.45})`;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(0, 0, fac.radius * 0.72 + pulse * 8, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.font = '900 13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+  ctx.fillStyle = "#ffe58f";
+  ctx.textAlign = "center";
+  ctx.fillText(`🗝️ 解锁 ${fac.label}`, 0, -fac.radius * 0.78);
+  ctx.restore();
+}
+
+function drawHelperClone(ctx, cl, time) {
+  const sp = SPRITES.hero;
+  ctx.save();
+  ctx.translate(cl.x, cl.y);
+  ctx.strokeStyle = "rgba(56, 243, 255, 0.7)";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, 22 + Math.sin(time * 16) * 2, 0, Math.PI * 2);
+  ctx.stroke();
+  if (sp && sp.ready) {
+    ctx.filter = "hue-rotate(140deg) saturate(1.8) brightness(1.1)";
+    ctx.drawImage(sp.img, -22, -22, 44, 44);
+    ctx.filter = "none";
+  }
+  ctx.restore();
 }
 
 function drawMilkTeaPuddle(ctx, pd) {
@@ -1030,7 +1129,7 @@ function drawWeaponVfx(ctx, state, time) {
 
 function drawPlayer(ctx, p, state, time) {
   const skin = SKIN_MAP[p.skin] || SKIN_MAP.classic;
-  const sc = skin.scale || 1.0;
+  const sc = (skin.scale || 1.0) * (p.giant > 0 ? 1.72 : 1.0);
 
   ctx.save();
   ctx.translate(p.x, p.y);
@@ -1131,10 +1230,13 @@ function drawPlayer(ctx, p, state, time) {
 
 function drawOffscreenIndicators(ctx, state, vw, vh) {
   const targets = [];
+  if (state.hasKey && state.keyTarget && !state.keyTarget.opened) {
+    targets.push({ x: state.keyTarget.x, y: state.keyTarget.y, color: "#ffd54a", label: "🗝️开锁" });
+  }
   if (state.dock.active) targets.push({ x: state.dock.x, y: state.dock.y, color: "#39ff88", label: "⚡撤离" });
   for (const c of state.crates) targets.push({ x: c.x, y: c.y, color: "#ffd54a", label: "👑金箱" });
   for (const d of state.lootDrops) {
-    targets.push({ x: d.x, y: d.y, color: d.isGhost ? "#ff5ce1" : "#ffd54a", label: d.isGhost ? "📦遗产" : "💎大金" });
+    targets.push({ x: d.x, y: d.y, color: d.isKey ? "#ffd54a" : d.isGhost ? "#ff5ce1" : "#ffd54a", label: d.isKey ? "🗝️钥匙" : d.isGhost ? "📦遗产" : "💎大金" });
   }
   for (const e of state.enemies) {
     if (e.type === "mop") targets.push({ x: e.x, y: e.y, color: "#ff4c76", label: "🧹Boss" });
@@ -1237,10 +1339,34 @@ export function renderReceiptPoster({ extracted, value, cleanPct, stars, wave, k
     ctx.fillText(`📦 顺手舔走群友 @${rescuedGhost} 的遗产！`, 72, 622);
   }
 
-  ctx.textAlign = "center";
-  ctx.fillStyle = "#64748b";
-  ctx.font = '700 14px sans-serif';
-  ctx.fillText("点开我的挑战链接，来客厅捡我爆掉的大金！", 270, 662);
+  // Draw a crisp deterministic QR-code block in bottom-right of the share poster!
+  const qx = 368, qy = 548, qs = 104;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(qx - 6, qy - 6, qs + 12, qs + 12);
+  ctx.strokeStyle = "#141126";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(qx - 6, qy - 6, qs + 12, qs + 12);
+  const cells = 13;
+  const cw = qs / cells;
+  let hash = (Math.round(value) ^ (kills * 31) ^ (cleanPct * 97)) >>> 0;
+  ctx.fillStyle = "#141126";
+  for (let r = 0; r < cells; r++) {
+    for (let col = 0; col < cells; col++) {
+      const corner = (r < 3 && col < 3) || (r < 3 && col >= cells - 3) || (r >= cells - 3 && col < 3);
+      hash = (Math.imul(hash ^ (r * 17 + col * 31), 2654435761) >>> 0);
+      if (corner || (hash & 1)) {
+        ctx.fillRect(qx + col * cw, qy + r * cw, cw - 0.4, cw - 0.4);
+      }
+    }
+  }
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#475569";
+  ctx.font = '800 14px sans-serif';
+  ctx.fillText("扫码 / 点链接挑战同图客厅", 72, 600);
+  ctx.fillStyle = "#0f172a";
+  ctx.font = '700 12px sans-serif';
+  ctx.fillText("已自动复制带遗产坐标的挑战链接", 72, 624);
 
   return c.toDataURL("image/png");
 }
