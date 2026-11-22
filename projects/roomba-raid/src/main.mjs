@@ -11,6 +11,7 @@ import {
   ENEMY_CODEX,
   LOOT_ITEMS,
   MAPS,
+  MAP_WAVE_SCRIPTS,
   MUSEUM_SETS,
   PASSIVES,
   SAFE_BOX_PRICES,
@@ -141,11 +142,29 @@ function getActiveTalentLv(nodeId) {
 function isMapUnlocked(map) {
   if (!map.unlockReq) return true;
   if (map.unlockReq.type === "stars") return (save.bestStars || 0) >= map.unlockReq.count;
+  if (map.unlockReq.type === "kills") return (save.totalKills || 0) >= map.unlockReq.count;
+  if (map.unlockReq.type === "cores") return (save.goldCores || 0) >= map.unlockReq.count || (save.bestStars || 0) >= 3;
   if (map.unlockReq.type === "cat_secret") {
     const wearingCat = save.equippedSkin === "cat" || save.equippedSkin === "hidden_catgod" || save.equippedAcc === "catears";
     return wearingCat || (save.museum.catcan || 0) >= 2;
   }
   return false;
+}
+
+function getCurrentWaveSpec() {
+  const script = MAP_WAVE_SCRIPTS[state?.mapDef?.id] || MAP_WAVE_SCRIPTS.living;
+  const w = Math.max(1, state?.wave || 1);
+  if (w <= script.length) return script[w - 1];
+  const last = script[script.length - 1];
+  const extra = w - script.length;
+  return {
+    name: `无尽高压加班潮 Lv.${extra}`,
+    pool: last.pool,
+    rate: Math.max(0.24, last.rate - extra * 0.03),
+    hp: last.hp * (1 + extra * 0.34),
+    spd: last.spd * (1 + extra * 0.05),
+    boss: extra % 2 === 0,
+  };
 }
 
 function isAccUnlocked(acc) {
@@ -197,7 +216,8 @@ function refreshLobby() {
     btn.textContent = unlocked ? m.name : `🔒 ${m.name}`;
     btn.onclick = () => {
       if (!unlocked) {
-        showToast(`🔒 ${m.unlockReq.label}`, "pink");
+        const prog = m.unlockReq.type === "kills" ? `（当前 ${save.totalKills || 0}/${m.unlockReq.count}）` : "";
+        showToast(`🔒 ${m.unlockReq.label}${prog}`, "pink");
         return;
       }
       save.selectedMap = m.id;
@@ -695,9 +715,10 @@ function startRun() {
   cleanDustAt(state.dustLayer, state.player.x, state.player.y, 54);
   state.cleanTracker.markClean(state.player.x, state.player.y, 56);
 
-  // Update Mission Briefing text per Map!
-  document.querySelector("#briefing-banner .bf-title").textContent = `${mapDef.name} · 开始清扫！`;
-  document.querySelector("#briefing-banner .bf-sub").textContent = `主人刚睡熟，加油把${mapDef.name}清扫到 100% 吧！`;
+  // Update Mission Briefing text per Map & Wave 1 Theme!
+  const wave1 = getCurrentWaveSpec();
+  document.querySelector("#briefing-banner .bf-title").textContent = `${mapDef.name} · 第1波`;
+  document.querySelector("#briefing-banner .bf-sub").textContent = `🌊 ${wave1.name}来袭！加油把全屋清扫到 100%！`;
 
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * Math.PI * 2 + rng() * 0.25;
@@ -705,7 +726,7 @@ function startRun() {
     const ex = state.player.x + Math.cos(a) * dist;
     const ey = state.player.y + Math.sin(a) * dist;
     if (!pointHitsObstacle(layout, ex, ey)) {
-      spawnEnemy(i % 5 === 0 ? "sock" : "dust", { x: ex, y: ey });
+      spawnEnemy(wave1.pool[i % wave1.pool.length], { x: ex, y: ey });
     }
   }
 
@@ -958,24 +979,23 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
     if (!ok) return;
   }
 
+  const waveSpec = getCurrentWaveSpec();
   let type = forcedType;
   if (!type) {
-    const r = Math.random();
-    if (state.wave >= 2 && r < 0.14) type = "pooper";
-    else if (state.wave >= 2 && r < 0.28) type = "slime";
-    else if (state.wave >= 2 && r < 0.46) type = "sock";
-    else if (state.wave >= 2 && r < 0.58) type = "lego";
-    else type = "dust";
+    type = waveSpec.pool[Math.floor(Math.random() * waveSpec.pool.length)];
   }
 
-  const hpScale = (1 + (state.wave - 1) * 0.46) * (state.highRisk ? 1.35 : 1);
+  const mapHpMult = state.mapDef?.hpMult || 1;
+  const hpScale = waveSpec.hp * mapHpMult * (state.highRisk ? 1.3 : 1);
+  const spdScale = waveSpec.spd;
+  const dmgScale = 1 + (state.wave - 1) * 0.14;
   const specs = {
-    dust: { r: 17, hp: 22 * hpScale, speed: 88 + state.wave * 8, dmg: 8, xp: 3 },
-    sock: { r: 19, hp: 46 * hpScale, speed: 100 + state.wave * 8, dmg: 11, xp: 6 },
-    lego: { r: 20, hp: 82 * hpScale, speed: 62 + state.wave * 5, dmg: 16, xp: 9 },
-    pooper: { r: 18, hp: 38 * hpScale, speed: 122 + state.wave * 6, dmg: 6, xp: 8 },
-    slime: { r: 19, hp: 50 * hpScale, speed: 82 + state.wave * 6, dmg: 9, xp: 8 },
-    mop: { r: 36, hp: 480 * hpScale, speed: 95 + state.wave * 8, dmg: 20, xp: 34 },
+    dust: { r: 17, hp: 22 * hpScale, speed: 88 * spdScale, dmg: Math.round(8 * dmgScale), xp: 3 },
+    sock: { r: 19, hp: 46 * hpScale, speed: 100 * spdScale, dmg: Math.round(11 * dmgScale), xp: 6 },
+    lego: { r: 20, hp: 82 * hpScale, speed: 62 * spdScale, dmg: Math.round(16 * dmgScale), xp: 9 },
+    pooper: { r: 18, hp: 38 * hpScale, speed: 122 * spdScale, dmg: Math.round(6 * dmgScale), xp: 8 },
+    slime: { r: 19, hp: 50 * hpScale, speed: 82 * spdScale, dmg: Math.round(9 * dmgScale), xp: 8 },
+    mop: { r: 36, hp: 460 * hpScale, speed: 95 * spdScale, dmg: Math.round(20 * dmgScale), xp: 34 },
   };
   const sp = specs[type];
   state.enemies.push({
@@ -1005,13 +1025,16 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
 
 function triggerHordeSwarm() {
   state.wave += 1;
+  const waveSpec = getCurrentWaveSpec();
   sfx.playHordeHorn();
   state.shake = 0.5;
-  showToast(`🚨 第 ${state.wave} 波怪潮！撒屎怪与奶茶怪倾巢而出！`, "pink");
-  const count = Math.min(18, 9 + state.wave * 3);
+  showToast(`🌊 第 ${state.wave} 波：${waveSpec.name}！`, "pink");
+  const count = Math.min(18, 8 + state.wave * 2);
   for (let i = 0; i < count; i++) {
-    const t = i % 6 === 0 ? "pooper" : i % 5 === 0 ? "slime" : i % 4 === 0 ? "sock" : "dust";
-    spawnEnemy(t);
+    spawnEnemy(waveSpec.pool[i % waveSpec.pool.length]);
+  }
+  if (waveSpec.boss) {
+    spawnEnemy("mop");
   }
 }
 
@@ -1398,6 +1421,7 @@ function finishRun(extracted) {
   save.coins += earned;
   save.goldCores = (save.goldCores || 0) + state.coresEarned;
   save.totalExtracted += earned;
+  save.totalKills = (save.totalKills || 0) + state.kills;
   save.runsPlayed += 1;
   if (stars > (save.bestStars || 0)) save.bestStars = stars;
   if (extracted && earned > save.bestRunValue) save.bestRunValue = earned;
@@ -1837,8 +1861,8 @@ function update(rawDt) {
     }
   }
 
-  // Ambient spawns
-  const spawnRate = Math.max(0.24, 0.72 - state.wave * 0.08);
+  // Ambient spawns paced strictly by the current map's themed wave script!
+  const spawnRate = getCurrentWaveSpec().rate;
   state.spawnAcc -= dt;
   if (state.spawnAcc <= 0 && state.enemies.length < 95) {
     state.spawnAcc = spawnRate;

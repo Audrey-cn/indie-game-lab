@@ -80,6 +80,52 @@ export function generateRoomLayout(mapId, rng) {
     ];
     startPos = { x: 1160, y: 680 };
     dockPos = { x: 1960, y: 1260 };
+  } else if (mapId === "study") {
+    // Starry Study Room: herringbone wood, dense bookshelves, desks & wind corridors!
+    obstacles = [
+      { id: "sh1", kind: "bookshelf", x: jx(540, 80), y: jy(320, 60), w: 140, h: 300 },
+      { id: "sh2", kind: "bookshelf", x: jx(1240, 80), y: jy(320, 60), w: 140, h: 300 },
+      { id: "sh3", kind: "bookshelf", x: jx(860, 80), y: jy(1180, 60), w: 140, h: 300 },
+      { id: "sofa_s", kind: "sofa", x: jx(1540, 80), y: jy(960, 60), w: 460, h: 130 },
+      { id: "cab_s", kind: "wardrobe", x: 160, y: 1660, w: 420, h: 120 },
+    ];
+    hiddenZones = [
+      { id: "st_d1", kind: "desk", x: jx(860, 70), y: jy(580, 50), w: 260, h: 190, secretEasterEgg: true },
+      { id: "st_d2", kind: "desk", x: jx(340, 60), y: jy(1040, 60), w: 260, h: 190 },
+      { id: "st_d3", kind: "dining_table", x: jx(1420, 70), y: jy(1480, 60), w: 360, h: 240 },
+    ];
+    wetZones = [{ id: "ws1", x: 1280, y: 840, w: 260, h: 160 }];
+    windZones = [
+      { id: "wns1", x: 680, y: 820, w: 380, h: 190, vx: 160, vy: 0 },
+      { id: "wns2", x: 1120, y: 1520, w: 320, h: 210, vx: 0, vy: -160 },
+    ];
+    lockedFacilities = [{ id: "study_vault", label: "红木书柜密室", x: 1410, y: 460, radius: 80 }];
+    startPos = { x: 960, y: 880 };
+    dockPos = { x: 1960, y: 1740 };
+  } else if (mapId === "rooftop") {
+    // Luxury Rooftop Terrace: stone pavers, patio lounges, double crosswinds!
+    obstacles = [
+      { id: "r_s1", kind: "sofa", x: jx(520, 90), y: jy(420, 60), w: 480, h: 130 },
+      { id: "r_i1", kind: "island", x: jx(1380, 90), y: jy(680, 60), w: 360, h: 130 },
+      { id: "r_s2", kind: "sofa", x: jx(980, 90), y: jy(1480, 60), w: 480, h: 130 },
+      { id: "r_f1", kind: "fridge", x: 2080, y: 1020, w: 140, h: 200 },
+    ];
+    hiddenZones = [
+      { id: "rt_1", kind: "dining_table", x: jx(580, 70), y: jy(1040, 60), w: 380, h: 240, secretEasterEgg: true },
+      { id: "rt_2", kind: "coffee_table", x: jx(1460, 70), y: jy(1160, 60), w: 300, h: 180 },
+      { id: "rt_3", kind: "coffee_table", x: jx(980, 70), y: jy(640, 60), w: 300, h: 180 },
+    ];
+    wetZones = [
+      { id: "wr1", x: 760, y: 780, w: 320, h: 160 },
+      { id: "wr2", x: 1580, y: 1460, w: 320, h: 160 },
+    ];
+    windZones = [
+      { id: "wnr1", x: 460, y: 680, w: 420, h: 210, vx: -175, vy: 0 },
+      { id: "wnr2", x: 1360, y: 920, w: 420, h: 210, vx: 175, vy: 0 },
+    ];
+    lockedFacilities = [{ id: "roof_vault", label: "天台露天冰吧", x: 2040, y: 1120, radius: 82 }];
+    startPos = { x: 1140, y: 980 };
+    dockPos = { x: 420, y: 1740 };
   } else {
     // Classic Midnight Apartment (Living + Dining + Master Bedroom — randomized each run!)
     obstacles = [

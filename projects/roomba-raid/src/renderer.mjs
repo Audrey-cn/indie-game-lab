@@ -343,77 +343,165 @@ export function renderGame(ctx, state, vw, vh) {
   }
 }
 
-function drawApartmentFloor(ctx, layout, cam, vw, vh) {
-  const mapId = layout.mapId || "living";
-  if (mapId === "kitchen") {
-    // Sleek checkered midnight gourmet kitchen tiles!
-    ctx.fillStyle = "#192638";
-    ctx.fillRect(0, 0, layout.width, layout.height);
-    const ts = 84;
-    const sx = Math.max(0, Math.floor((cam.x - vw / 2) / ts) * ts);
-    const ex = Math.min(layout.width, cam.x + vw / 2 + ts);
-    const sy = Math.max(0, Math.floor((cam.y - vh / 2) / ts) * ts);
-    const ey = Math.min(layout.height, cam.y + vh / 2 + ts);
-    for (let y = sy; y < ey; y += ts) {
-      for (let x = sx; x < ex; x += ts) {
-        const even = ((x / ts + y / ts) | 0) % 2 === 0;
-        ctx.fillStyle = even ? "#22344d" : "#1a283d";
-        ctx.fillRect(x, y, ts - 2, ts - 2);
+// ===== PRE-BAKED 2.5D PROCEDURAL FLOOR TEXTURE PATTERNS (Wood Grain / Marble Tile / Parquet / Velvet / Stone) =====
+const FLOOR_PATTERNS = {};
+function getFloorPattern(ctx, style) {
+  if (FLOOR_PATTERNS[style]) return FLOOR_PATTERNS[style];
+  const c = document.createElement("canvas");
+  if (style === "tile") {
+    c.width = 160;
+    c.height = 160;
+    const g = c.getContext("2d");
+    g.fillStyle = "#162030";
+    g.fillRect(0, 0, 160, 160);
+    for (let y = 0; y < 2; y++) {
+      for (let x = 0; x < 2; x++) {
+        const even = (x + y) % 2 === 0;
+        const grad = g.createLinearGradient(x * 80, y * 80, x * 80 + 80, y * 80 + 80);
+        grad.addColorStop(0, even ? "#2c3d57" : "#223047");
+        grad.addColorStop(1, even ? "#233148" : "#1b2639");
+        g.fillStyle = grad;
+        g.fillRect(x * 80 + 2, y * 80 + 2, 76, 76);
+        // Subtle marble vein & top-left specular bevel
+        g.strokeStyle = "rgba(180, 220, 255, 0.08)";
+        g.lineWidth = 1.5;
+        g.beginPath();
+        g.moveTo(x * 80 + 10, y * 80 + 20);
+        g.bezierCurveTo(x * 80 + 35, y * 80 + 32, x * 80 + 48, y * 80 + 55, x * 80 + 70, y * 80 + 62);
+        g.stroke();
+        g.fillStyle = "rgba(255,255,255,0.06)";
+        g.fillRect(x * 80 + 2, y * 80 + 2, 76, 3);
       }
     }
-  } else if (mapId === "cat_palace") {
-    // Royal Warm-Gold & Deep-Velvet Secret Cat Attic!
-    ctx.fillStyle = "#2b1938";
-    ctx.fillRect(0, 0, layout.width, layout.height);
-    const plankH = 60;
-    const startY = Math.max(0, Math.floor((cam.y - vh / 2) / plankH) * plankH);
-    const endY = Math.min(layout.height, cam.y + vh / 2 + plankH);
-    for (let y = startY; y < endY; y += plankH) {
-      ctx.fillStyle = (Math.floor(y / plankH) % 2 === 0) ? "#351e45" : "#2d193b";
-      ctx.fillRect(0, y, layout.width, plankH - 2);
-    }
-    ctx.save();
-    ctx.fillStyle = "rgba(217, 119, 6, 0.25)";
-    roundRect(ctx, 460, 420, 1480, 1340, 44);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255, 213, 74, 0.55)";
-    ctx.lineWidth = 8;
-    ctx.stroke();
-    ctx.restore();
+  } else if (style === "stone") {
+    c.width = 180;
+    c.height = 180;
+    const g = c.getContext("2d");
+    g.fillStyle = "#171c26";
+    g.fillRect(0, 0, 180, 180);
+    const rects = [[3, 3, 84, 84], [93, 3, 84, 54], [93, 63, 84, 114], [3, 93, 84, 84]];
+    rects.forEach(([rx, ry, rw, rh], i) => {
+      const grad = g.createLinearGradient(rx, ry, rx + rw, ry + rh);
+      grad.addColorStop(0, i % 2 === 0 ? "#353e4f" : "#2d3545");
+      grad.addColorStop(1, "#232a38");
+      g.fillStyle = grad;
+      roundRect(g, rx, ry, rw, rh, 6);
+      g.fill();
+      g.strokeStyle = "rgba(255,255,255,0.07)";
+      g.lineWidth = 1.5;
+      g.stroke();
+    });
+  } else if (style === "velvet") {
+    c.width = 128;
+    c.height = 128;
+    const g = c.getContext("2d");
+    const grad = g.createLinearGradient(0, 0, 128, 128);
+    grad.addColorStop(0, "#38204d");
+    grad.addColorStop(0.5, "#2d183f");
+    grad.addColorStop(1, "#3a2252");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    // Subtle diamond damask pattern
+    g.strokeStyle = "rgba(255, 213, 74, 0.08)";
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(64, 8);
+    g.lineTo(120, 64);
+    g.lineTo(64, 120);
+    g.lineTo(8, 64);
+    g.closePath();
+    g.stroke();
   } else {
-    // Classic Midnight Apartment Wood + Kitchen Tile
-    ctx.fillStyle = "#24284a";
-    ctx.fillRect(0, 0, layout.width, layout.height);
-    ctx.fillStyle = "#1f2a42";
-    ctx.fillRect(1380, 520, layout.width - 1380, layout.height - 520);
-    const plankH = 56;
-    const startY = Math.max(0, Math.floor((cam.y - vh / 2) / plankH) * plankH);
-    const endY = Math.min(layout.height, cam.y + vh / 2 + plankH);
-    for (let y = startY; y < endY; y += plankH) {
-      const idx = Math.floor(y / plankH);
-      const inBedroom = y >= 1140;
-      ctx.fillStyle = inBedroom
-        ? (idx % 2 === 0 ? "#2e2646" : "#27203d")
-        : (idx % 2 === 0 ? "#2a2f57" : "#24284c");
-      ctx.fillRect(0, y, 1380, plankH - 2);
-      ctx.fillStyle = "#161830";
-      ctx.fillRect(0, y + plankH - 2, 1380, 2);
+    // Rich Realistic Wood Plank Grain (Living Room & Study Parquet)
+    c.width = 256;
+    c.height = 128;
+    const g = c.getContext("2d");
+    const isParquet = style === "parquet";
+    g.fillStyle = isParquet ? "#241b1e" : "#181b33";
+    g.fillRect(0, 0, 256, 128);
+    for (let row = 0; row < 2; row++) {
+      const py = row * 64;
+      const offset = row === 0 ? 0 : 128;
+      for (let col = -1; col < 2; col++) {
+        const px = col * 256 + offset;
+        const grad = g.createLinearGradient(px, py, px, py + 62);
+        grad.addColorStop(0, isParquet ? "#47332c" : "#343a63");
+        grad.addColorStop(0.5, isParquet ? "#3b2924" : "#2c3157");
+        grad.addColorStop(1, isParquet ? "#30211d" : "#252a4a");
+        g.fillStyle = grad;
+        g.fillRect(px + 2, py + 2, 252, 60);
+        // Fine organic wood grain fibers!
+        g.strokeStyle = isParquet ? "rgba(255, 210, 170, 0.05)" : "rgba(160, 195, 255, 0.05)";
+        g.lineWidth = 1.2;
+        for (let l = 0; l < 6; l++) {
+          const ly = py + 8 + l * 9;
+          g.beginPath();
+          g.moveTo(px + 4, ly);
+          g.bezierCurveTo(px + 85, ly + (l % 2 ? 3 : -3), px + 170, ly + (l % 2 ? -2 : 2), px + 250, ly);
+          g.stroke();
+        }
+        // Plank top bevel highlight & nail dots
+        g.fillStyle = "rgba(255,255,255,0.05)";
+        g.fillRect(px + 2, py + 2, 252, 2);
+        g.fillStyle = "rgba(0,0,0,0.28)";
+        g.fillRect(px + 8, py + 12, 3, 3);
+        g.fillRect(px + 8, py + 48, 3, 3);
+      }
     }
+  }
+  FLOOR_PATTERNS[style] = ctx.createPattern(c, "repeat");
+  return FLOOR_PATTERNS[style];
+}
+
+function drawApartmentFloor(ctx, layout) {
+  const mapId = layout.mapId || "living";
+  const style = mapId === "kitchen" ? "tile" : mapId === "cat_palace" ? "velvet" : mapId === "study" ? "parquet" : mapId === "rooftop" ? "stone" : "wood";
+
+  ctx.fillStyle = getFloorPattern(ctx, style);
+  ctx.fillRect(0, 0, layout.width, layout.height);
+
+  // Subtle woven Persian rug with fringe tassels in Living Room & Cat Palace!
+  if (mapId === "living" || mapId === "cat_palace") {
+    const rx = 420, ry = 360, rw = 640, rh = 440;
     ctx.save();
-    ctx.fillStyle = "rgba(148, 42, 68, 0.52)";
-    roundRect(ctx, 420, 360, 620, 440, 24);
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    roundRect(ctx, rx + 4, ry + 6, rw, rh, 14);
     ctx.fill();
-    ctx.strokeStyle = "rgba(255, 198, 78, 0.45)";
-    ctx.lineWidth = 6;
-    roundRect(ctx, 438, 378, 584, 404, 16);
+    const rg = ctx.createLinearGradient(rx, ry, rx + rw, ry + rh);
+    rg.addColorStop(0, mapId === "cat_palace" ? "rgba(180, 96, 18, 0.55)" : "rgba(148, 38, 66, 0.72)");
+    rg.addColorStop(1, mapId === "cat_palace" ? "rgba(110, 46, 12, 0.55)" : "rgba(96, 24, 48, 0.72)");
+    ctx.fillStyle = rg;
+    roundRect(ctx, rx, ry, rw, rh, 12);
+    ctx.fill();
+    // Ornate double woven gold borders
+    ctx.strokeStyle = "rgba(255, 208, 102, 0.55)";
+    ctx.lineWidth = 5;
+    roundRect(ctx, rx + 16, ry + 16, rw - 32, rh - 32, 8);
     ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 208, 102, 0.25)";
+    ctx.lineWidth = 2;
+    roundRect(ctx, rx + 30, ry + 30, rw - 60, rh - 60, 6);
+    ctx.stroke();
+    // Fringe tassels along left & right edges
+    ctx.strokeStyle = "rgba(245, 222, 179, 0.55)";
+    ctx.lineWidth = 2;
+    for (let ty = ry + 14; ty < ry + rh - 10; ty += 12) {
+      ctx.beginPath();
+      ctx.moveTo(rx - 10, ty);
+      ctx.lineTo(rx, ty);
+      ctx.moveTo(rx + rw, ty);
+      ctx.lineTo(rx + rw + 10, ty);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
-  // Random Cutout Wall Partition
+  // Random Cutout Wall Partition with 2.5D architectural thickness
   const c = layout.cutout;
-  ctx.fillStyle = "#0b0d1b";
+  ctx.fillStyle = "#0a0c19";
   ctx.fillRect(c.x, c.y, c.w, c.h);
+  ctx.fillStyle = "#262d4d";
+  ctx.fillRect(c.x, c.y + c.h - 16, c.w, 16);
   ctx.strokeStyle = "#485491";
   ctx.lineWidth = 10;
   ctx.strokeRect(5, 5, layout.width - 10, layout.height - 10);
@@ -523,120 +611,200 @@ function drawMilkTeaPuddle(ctx, pd) {
   ctx.restore();
 }
 
-// PURE VISUAL SOLID FURNITURE — ZERO TEXT LABELS!
+// 2.5D EXTRUDED SEMI-REALISTIC SOLID FURNITURE (Front Vertical Depth + AO Shadows + Lighting!)
 function drawSolidFurniture(ctx, layout, time) {
   for (const ob of layout.obstacles) {
     ctx.save();
-    ctx.fillStyle = "rgba(0,0,0,0.44)";
-    roundRect(ctx, ob.x + 8, ob.y + 12, ob.w, ob.h, 12);
+    const depth = ob.kind === "wall" ? 14 : 18;
+
+    // Multi-layer soft ambient occlusion floor shadow
+    ctx.fillStyle = "rgba(0, 0, 0, 0.34)";
+    roundRect(ctx, ob.x - 4, ob.y + 8, ob.w + 18, ob.h + depth + 6, 16);
+    ctx.fill();
+    ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+    roundRect(ctx, ob.x + 4, ob.y + 10, ob.w + 4, ob.h + depth, 14);
     ctx.fill();
 
-    ctx.strokeStyle = "#141126";
-    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#121022";
+    ctx.lineWidth = 3.2;
 
     if (ob.kind === "sofa") {
-      // Plush Purple 3-Seater Sofa with Armrests & Throw Pillows
-      ctx.fillStyle = "#583d82";
-      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 20);
+      // 2.5D Front Skirt Base
+      ctx.fillStyle = "#31204d";
+      roundRect(ctx, ob.x, ob.y + 14, ob.w, ob.h - 4, 18);
       ctx.fill();
       ctx.stroke();
-      // Backrest
-      ctx.fillStyle = "#412a66";
-      roundRect(ctx, ob.x + 8, ob.y + 6, ob.w - 16, 36, 12);
+      // Plush Shaded Sofa Top Body
+      const sg = ctx.createLinearGradient(ob.x, ob.y, ob.x, ob.y + ob.h);
+      sg.addColorStop(0, "#6d4fa1");
+      sg.addColorStop(1, "#4a3273");
+      ctx.fillStyle = sg;
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h - 10, 18);
       ctx.fill();
       ctx.stroke();
-      // 3 Seat cushions
-      ctx.fillStyle = "#6e4ea1";
+      // Padded Backrest + Piping Seam
+      ctx.fillStyle = "#3d2761";
+      roundRect(ctx, ob.x + 10, ob.y + 6, ob.w - 20, 34, 12);
+      ctx.fill();
+      ctx.stroke();
+      // 3 Tufted Cushions with Specular Top Highlight
       const cw = (ob.w - 64) / 3;
       for (let i = 0; i < 3; i++) {
-        roundRect(ctx, ob.x + 28 + i * (cw + 4), ob.y + 46, cw, ob.h - 56, 10);
+        const cx = ob.x + 28 + i * (cw + 4);
+        const cg = ctx.createLinearGradient(cx, ob.y + 42, cx, ob.y + ob.h - 14);
+        cg.addColorStop(0, "#8564bd");
+        cg.addColorStop(1, "#5c408c");
+        ctx.fillStyle = cg;
+        roundRect(ctx, cx, ob.y + 42, cw, ob.h - 58, 10);
         ctx.fill();
         ctx.stroke();
+        // Cushion button tuft
+        ctx.fillStyle = "rgba(20,12,40,0.45)";
+        ctx.beginPath();
+        ctx.arc(cx + cw / 2, ob.y + 42 + (ob.h - 58) / 2, 3.5, 0, Math.PI * 2);
+        ctx.fill();
       }
-      // Colorful throw pillows
-      ctx.fillStyle = "#ff85a2";
-      roundRect(ctx, ob.x + 36, ob.y + 34, 48, 38, 10);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#ffd54a";
-      roundRect(ctx, ob.x + ob.w - 86, ob.y + 34, 48, 38, 10);
-      ctx.fill();
-      ctx.stroke();
+      // Shaded Throw Pillows
+      for (const [px, col] of [[ob.x + 34, "#ff7c9c"], [ob.x + ob.w - 86, "#ffcf48"]]) {
+        ctx.fillStyle = col;
+        roundRect(ctx, px, ob.y + 28, 50, 38, 12);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.28)";
+        roundRect(ctx, px + 6, ob.y + 32, 38, 10, 5);
+        ctx.fill();
+      }
     } else if (ob.kind === "tv") {
-      // Walnut TV Console + Glowing Flatscreen TV + Stereo Speakers!
-      ctx.fillStyle = "#4d352a";
-      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 12);
+      // Soft Animated Cyan Light Spill onto Living Room Floor in front of TV!
+      const glow = 0.22 + 0.08 * Math.sin(time * 4.5);
+      const lg = ctx.createLinearGradient(ob.x + ob.w / 2, ob.y, ob.x + ob.w / 2, ob.y - 120);
+      lg.addColorStop(0, `rgba(56, 243, 255, ${glow})`);
+      lg.addColorStop(1, "rgba(56, 243, 255, 0)");
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.moveTo(ob.x + 90, ob.y);
+      ctx.lineTo(ob.x + ob.w - 90, ob.y);
+      ctx.lineTo(ob.x + ob.w - 20, ob.y - 120);
+      ctx.lineTo(ob.x + 20, ob.y - 120);
+      ctx.closePath();
+      ctx.fill();
+
+      // 2.5D Walnut Cabinet Front Drawers
+      ctx.fillStyle = "#33211a";
+      roundRect(ctx, ob.x, ob.y + 14, ob.w, ob.h - 2, 10);
       ctx.fill();
       ctx.stroke();
-      // Speakers on left & right
-      ctx.fillStyle = "#222638";
-      roundRect(ctx, ob.x + 22, ob.y + 18, 52, 66, 8);
+      // Walnut Top Slab
+      const tg = ctx.createLinearGradient(ob.x, ob.y, ob.x, ob.y + ob.h);
+      tg.addColorStop(0, "#6e4b3a");
+      tg.addColorStop(1, "#4a3126");
+      ctx.fillStyle = tg;
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h - 12, 10);
       ctx.fill();
       ctx.stroke();
-      roundRect(ctx, ob.x + ob.w - 74, ob.y + 18, 52, 66, 8);
+      // Hi-Fi Stereo Speakers with metallic woofer rings
+      for (const sx of [ob.x + 22, ob.x + ob.w - 74]) {
+        ctx.fillStyle = "#1e2233";
+        roundRect(ctx, sx, ob.y + 14, 52, 60, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = "#64748b";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx + 26, ob.y + 44, 14, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = "#121022";
+        ctx.lineWidth = 3.2;
+      }
+      // Glossy 2.5D Upright Flatscreen TV Panel
+      ctx.fillStyle = "#0f1424";
+      roundRect(ctx, ob.x + 96, ob.y + 16, ob.w - 192, 42, 7);
       ctx.fill();
       ctx.stroke();
-      // Wide Flatscreen TV Panel
-      ctx.fillStyle = "#16192b";
-      roundRect(ctx, ob.x + 96, ob.y + 20, ob.w - 192, 46, 8);
+      const sg = ctx.createLinearGradient(ob.x + 104, ob.y + 22, ob.x + ob.w - 104, ob.y + 52);
+      sg.addColorStop(0, "#38f3ff");
+      sg.addColorStop(0.5, "#818cf8");
+      sg.addColorStop(1, "#f472b6");
+      ctx.fillStyle = sg;
+      ctx.fillRect(ob.x + 106, ob.y + 24, ob.w - 212, 24);
+    } else if (ob.kind === "island") {
+      // 2.5D Dark Wood Base + Veined White Marble Top + Stainless Sink!
+      ctx.fillStyle = "#2c3445";
+      roundRect(ctx, ob.x, ob.y + 16, ob.w, ob.h - 4, 12);
       ctx.fill();
       ctx.stroke();
-      // Glowing TV Screen glow strip!
-      const glow = 0.55 + 0.25 * Math.sin(time * 4);
-      ctx.fillStyle = `rgba(56, 243, 255, ${glow})`;
-      ctx.fillRect(ob.x + 108, ob.y + 52, ob.w - 216, 8);
+      const mg = ctx.createLinearGradient(ob.x, ob.y, ob.x + ob.w, ob.y + ob.h);
+      mg.addColorStop(0, "#eef4fa");
+      mg.addColorStop(1, "#cbd5e1");
+      ctx.fillStyle = mg;
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h - 14, 12);
+      ctx.fill();
+      ctx.stroke();
+      // Stainless Steel Sink Basin
+      ctx.fillStyle = "#64748b";
+      roundRect(ctx, ob.x + 28, ob.y + 20, 96, 68, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#94a3b8";
+      roundRect(ctx, ob.x + 36, ob.y + 28, 80, 52, 6);
+      ctx.fill();
+      // Wooden Cutting Board & Fruit Bowl
+      ctx.fillStyle = "#b87c46";
+      roundRect(ctx, ob.x + 146, ob.y + 22, 92, 66, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ff5c7c";
+      ctx.beginPath();
+      ctx.arc(ob.x + ob.w - 58, ob.y + 54, 26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     } else if (ob.kind === "bookshelf") {
-      ctx.fillStyle = "#5c3f2e";
-      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 10);
+      ctx.fillStyle = "#36221a";
+      roundRect(ctx, ob.x, ob.y + 14, ob.w, ob.h - 4, 8);
       ctx.fill();
       ctx.stroke();
-      // Colorful book spines!
-      const colors = ["#ff5c7c", "#38f3ff", "#ffd54a", "#57f287", "#c084fc"];
-      for (let i = 0; i < 9; i++) {
+      ctx.fillStyle = "#694534";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h - 12, 8);
+      ctx.fill();
+      ctx.stroke();
+      const colors = ["#e11d48", "#0284c7", "#d97706", "#16a34a", "#7c3aed"];
+      for (let i = 0; i < 8; i++) {
         ctx.fillStyle = colors[i % colors.length];
-        roundRect(ctx, ob.x + 14, ob.y + 16 + i * 27, ob.w - 28, 20, 4);
+        roundRect(ctx, ob.x + 14, ob.y + 14 + i * 28, ob.w - 28, 20, 4);
         ctx.fill();
         ctx.stroke();
       }
-    } else if (ob.kind === "island") {
-      // Sleek Marble Kitchen Island with Fruit Bowl & Cutting Board
-      ctx.fillStyle = "#dce6f2";
-      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 14);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#b88450";
-      roundRect(ctx, ob.x + 30, ob.y + 24, 110, 80, 8);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#ff6b6b";
-      ctx.beginPath();
-      ctx.arc(ob.x + ob.w - 75, ob.y + 64, 30, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
     } else if (ob.kind === "fridge") {
-      ctx.fillStyle = "#b8cbe0";
-      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 14);
+      ctx.fillStyle = "#64748b";
+      roundRect(ctx, ob.x, ob.y + 16, ob.w, ob.h - 4, 14);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#dce9f7";
-      roundRect(ctx, ob.x + 10, ob.y + 10, ob.w - 20, ob.h - 20, 8);
+      const fg = ctx.createLinearGradient(ob.x, ob.y, ob.x + ob.w, ob.y + ob.h);
+      fg.addColorStop(0, "#e2e8f0");
+      fg.addColorStop(1, "#94a3b8");
+      ctx.fillStyle = fg;
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h - 14, 14);
       ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#38f3ff";
+      ctx.fillRect(ob.x + 22, ob.y + 24, 18, 12);
     } else if (ob.kind === "wall") {
-      ctx.fillStyle = "#2b3259";
-      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 6);
+      ctx.fillStyle = "#1c2240";
+      roundRect(ctx, ob.x, ob.y + 10, ob.w, ob.h, 5);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#485491";
-      ctx.fillRect(ob.x + 6, ob.y + 6, ob.w - 12, 8);
+      ctx.fillStyle = "#3a4578";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h - 6, 5);
+      ctx.fill();
+      ctx.stroke();
     } else {
-      // Wardrobe / Shoe Cabinet
-      ctx.fillStyle = "#4f3a36";
-      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 12);
+      ctx.fillStyle = "#362520";
+      roundRect(ctx, ob.x, ob.y + 14, ob.w, ob.h - 4, 10);
       ctx.fill();
       ctx.stroke();
-      ctx.strokeStyle = "#7a5b54";
-      ctx.lineWidth = 3;
-      roundRect(ctx, ob.x + 10, ob.y + 10, ob.w - 20, ob.h - 20, 8);
+      ctx.fillStyle = "#5c4036";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h - 12, 10);
+      ctx.fill();
       ctx.stroke();
     }
     ctx.restore();
@@ -657,93 +825,164 @@ function drawHiddenZoneTops(ctx, state) {
     ctx.strokeStyle = "#141126";
     ctx.lineWidth = 4;
 
-    // Soft elevated drop shadow showing there is space underneath!
-    ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
-    roundRect(ctx, hz.x + 14, hz.y + 18, hz.w, hz.h, 16);
+    // Elevated soft shadow showing clear hollow space underneath!
+    ctx.fillStyle = "rgba(6, 8, 18, 0.48)";
+    roundRect(ctx, hz.x + 14, hz.y + 20, hz.w, hz.h, 16);
     ctx.fill();
 
     if (hz.kind === "bed") {
-      // Giant Cozy Master Bedroom King Bed (Quilt + 2 Fluffy Pillows!)
-      ctx.fillStyle = "#3f2e2b";
-      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 18);
+      // 2.5D Master Bedroom King Bed (Wooden Frame Skirt + Headboard + Quilted Duvet + 2 Pillows)
+      ctx.fillStyle = "#2b1c18";
+      roundRect(ctx, hz.x, hz.y + 16, hz.w, hz.h - 4, 18);
       ctx.fill();
       ctx.stroke();
-      // White sheet + cozy coral-pink duvet blanket
-      ctx.fillStyle = "#eef2ff";
-      roundRect(ctx, hz.x + 12, hz.y + 12, hz.w - 24, hz.h - 24, 12);
+      ctx.fillStyle = "#4d342c";
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h - 14, 18);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#d95b7a";
-      roundRect(ctx, hz.x + 12, hz.y + 108, hz.w - 24, hz.h - 120, 12);
+      // White linen mattress sheet
+      const sg = ctx.createLinearGradient(hz.x, hz.y, hz.x, hz.y + hz.h);
+      sg.addColorStop(0, "#f8fafc");
+      sg.addColorStop(1, "#cbd5e1");
+      ctx.fillStyle = sg;
+      roundRect(ctx, hz.x + 12, hz.y + 14, hz.w - 24, hz.h - 38, 12);
       ctx.fill();
       ctx.stroke();
-      // 2 Fluffy Pillows
-      ctx.fillStyle = "#ffffff";
-      roundRect(ctx, hz.x + 36, hz.y + 28, 170, 68, 18);
+      // Cozy quilted coral-burgundy duvet blanket with stitched fold
+      const dg = ctx.createLinearGradient(hz.x, hz.y + 104, hz.x, hz.y + hz.h);
+      dg.addColorStop(0, "#e26382");
+      dg.addColorStop(1, "#a63354");
+      ctx.fillStyle = dg;
+      roundRect(ctx, hz.x + 12, hz.y + 106, hz.w - 24, hz.h - 130, 12);
       ctx.fill();
       ctx.stroke();
-      roundRect(ctx, hz.x + hz.w - 206, hz.y + 28, 170, 68, 18);
+      ctx.fillStyle = "#f48aa4";
+      roundRect(ctx, hz.x + 12, hz.y + 106, hz.w - 24, 24, 8);
+      ctx.fill();
+      ctx.stroke();
+      // 2 Fluffy shaded pillows
+      const pg = ctx.createLinearGradient(0, hz.y + 26, 0, hz.y + 92);
+      pg.addColorStop(0, "#ffffff");
+      pg.addColorStop(1, "#dbe4f0");
+      ctx.fillStyle = pg;
+      roundRect(ctx, hz.x + 34, hz.y + 26, 172, 66, 18);
+      ctx.fill();
+      ctx.stroke();
+      roundRect(ctx, hz.x + hz.w - 206, hz.y + 26, 172, 66, 18);
       ctx.fill();
       ctx.stroke();
     } else if (hz.kind === "coffee_table") {
-      // Warm Oak Coffee Table + 2 Coffee Mugs + Magazine
-      ctx.fillStyle = "#7a5238";
-      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 16);
+      // 2.5D Walnut Coffee Table (Extruded apron + beveled top + wood highlight + magazine & mugs)
+      ctx.fillStyle = "#4d311f";
+      roundRect(ctx, hz.x, hz.y + 14, hz.w, hz.h - 4, 16);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#966748";
-      roundRect(ctx, hz.x + 10, hz.y + 10, hz.w - 20, hz.h - 20, 10);
+      const wg = ctx.createLinearGradient(hz.x, hz.y, hz.x + hz.w, hz.y + hz.h);
+      wg.addColorStop(0, "#9c6b47");
+      wg.addColorStop(1, "#70482e");
+      ctx.fillStyle = wg;
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h - 12, 16);
       ctx.fill();
-      // Magazine
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(255,235,205,0.22)";
+      ctx.lineWidth = 2;
+      roundRect(ctx, hz.x + 8, hz.y + 8, hz.w - 16, hz.h - 28, 10);
+      ctx.stroke();
+      ctx.strokeStyle = "#141126";
+      ctx.lineWidth = 3.5;
+      // Glossy Magazine + Remote
       ctx.fillStyle = "#38bdf8";
-      roundRect(ctx, hz.x + 34, hz.y + 42, 74, 92, 6);
+      roundRect(ctx, hz.x + 32, hz.y + 34, 72, 88, 6);
       ctx.fill();
       ctx.stroke();
-      // 2 Cute Mugs
+      ctx.fillStyle = "#e0f2fe";
+      ctx.fillRect(hz.x + 42, hz.y + 46, 52, 16);
+      // Coaster & Coffee Mug
+      ctx.fillStyle = "#d6b084";
+      ctx.beginPath();
+      ctx.arc(hz.x + hz.w - 64, hz.y + 56, 23, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillStyle = "#fff";
       ctx.beginPath();
-      ctx.arc(hz.x + hz.w - 66, hz.y + 62, 18, 0, Math.PI * 2);
+      ctx.arc(hz.x + hz.w - 64, hz.y + 56, 17, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#6b3e26";
+      ctx.fillStyle = "#5c331c";
       ctx.beginPath();
-      ctx.arc(hz.x + hz.w - 66, hz.y + 62, 11, 0, Math.PI * 2);
+      ctx.arc(hz.x + hz.w - 64, hz.y + 56, 11, 0, Math.PI * 2);
       ctx.fill();
     } else if (hz.kind === "dining_table") {
-      // Dining Table with Runner & 4 Plates
-      ctx.fillStyle = "#6e4b3a";
-      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 18);
+      // 2.5D Dining Table (Extruded wooden edge + velvet table runner + 4 ceramic plates)
+      ctx.fillStyle = "#442c21";
+      roundRect(ctx, hz.x, hz.y + 14, hz.w, hz.h - 4, 18);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#c94c68";
-      ctx.fillRect(hz.x + 12, hz.y + hz.h / 2 - 22, hz.w - 24, 44);
-      ctx.fillStyle = "#f1f5f9";
+      const dg = ctx.createLinearGradient(hz.x, hz.y, hz.x + hz.w, hz.y + hz.h);
+      dg.addColorStop(0, "#855a44");
+      dg.addColorStop(1, "#613e2e");
+      ctx.fillStyle = dg;
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h - 12, 18);
+      ctx.fill();
+      ctx.stroke();
+      // Embroidered table runner
+      ctx.fillStyle = "#be3e5c";
+      ctx.fillRect(hz.x + 14, hz.y + (hz.h - 12) / 2 - 22, hz.w - 28, 44);
+      ctx.fillStyle = "#ffd54a";
+      ctx.fillRect(hz.x + 14, hz.y + (hz.h - 12) / 2 - 18, hz.w - 28, 3);
+      ctx.fillRect(hz.x + 14, hz.y + (hz.h - 12) / 2 + 15, hz.w - 28, 3);
       for (const [px, py] of [
-        [hz.x + 75, hz.y + 52],
-        [hz.x + hz.w - 75, hz.y + 52],
-        [hz.x + 75, hz.y + hz.h - 52],
-        [hz.x + hz.w - 75, hz.y + hz.h - 52],
+        [hz.x + 76, hz.y + 48],
+        [hz.x + hz.w - 76, hz.y + 48],
+        [hz.x + 76, hz.y + hz.h - 60],
+        [hz.x + hz.w - 76, hz.y + hz.h - 60],
       ]) {
+        ctx.fillStyle = "#f8fafc";
         ctx.beginPath();
         ctx.arc(px, py, 24, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+        ctx.strokeStyle = "#cbd5e1";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(px, py, 16, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = "#141126";
+        ctx.lineWidth = 3.5;
       }
     } else {
-      // Study Desk with Open Laptop & Warm Lamp
-      ctx.fillStyle = "#52587a";
-      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 14);
+      // 2.5D Study Desk (Extruded dark oak apron + open glowing laptop + warm brass lamp)
+      ctx.fillStyle = "#2d324a";
+      roundRect(ctx, hz.x, hz.y + 14, hz.w, hz.h - 4, 14);
       ctx.fill();
       ctx.stroke();
+      const sg = ctx.createLinearGradient(hz.x, hz.y, hz.x + hz.w, hz.y + hz.h);
+      sg.addColorStop(0, "#666e94");
+      sg.addColorStop(1, "#494f70");
+      ctx.fillStyle = sg;
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h - 12, 14);
+      ctx.fill();
+      ctx.stroke();
+      // Desk mat + Laptop
+      ctx.fillStyle = "#272d44";
+      roundRect(ctx, hz.x + hz.w / 2 - 64, hz.y + hz.h / 2 - 42, 128, 72, 8);
+      ctx.fill();
       ctx.fillStyle = "#cbd5e1";
-      roundRect(ctx, hz.x + hz.w / 2 - 42, hz.y + hz.h / 2 - 30, 84, 58, 6);
+      roundRect(ctx, hz.x + hz.w / 2 - 42, hz.y + hz.h / 2 - 34, 84, 56, 6);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = "#38f3ff";
-      ctx.fillRect(hz.x + hz.w / 2 - 34, hz.y + hz.h / 2 - 22, 68, 22);
+      ctx.fillRect(hz.x + hz.w / 2 - 34, hz.y + hz.h / 2 - 26, 68, 22);
+      // Warm brass desk lamp + soft light pool
+      const lg = ctx.createRadialGradient(hz.x + 36, hz.y + 38, 6, hz.x + 36, hz.y + 38, 56);
+      lg.addColorStop(0, "rgba(255, 224, 120, 0.35)");
+      lg.addColorStop(1, "rgba(255, 224, 120, 0)");
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.arc(hz.x + 36, hz.y + 38, 56, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillStyle = "#ffd54a";
       ctx.beginPath();
-      ctx.arc(hz.x + 36, hz.y + 38, 18, 0, Math.PI * 2);
+      ctx.arc(hz.x + 36, hz.y + 38, 17, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }

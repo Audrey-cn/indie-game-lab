@@ -283,6 +283,12 @@
     .equipped-strip .eq-name { font-size: 13px; font-weight: 900; color: var(--gold); }
     .equipped-strip .eq-skill { font-size: 11px; font-weight: 800; color: var(--cyan); }
     .mode-pills { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #map-selector {
+      display: flex !important; overflow-x: auto; gap: 6px; padding-bottom: 2px;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    }
+    #map-selector::-webkit-scrollbar { display: none; }
+    #map-selector .stab { flex: 0 0 auto; white-space: nowrap; padding: 7px 10px; font-size: 11px; }
     .mpill {
       padding: 9px; border-radius: 12px; border: 2.5px solid var(--ink);
       background: rgba(24, 30, 58, 0.9); color: var(--muted);
