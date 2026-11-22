@@ -1,4 +1,4 @@
-// Embedded Transparent WebP Sprite Sheet Loader + Pre-baked White Hit-Flash Silhouettes
+// Embedded Transparent WebP Sprite Sheet Loader (11 Studio Sprites + Pre-baked White Hit-Flash Silhouettes)
 import heroUrl from "./sprites/hero.webp";
 import dustUrl from "./sprites/enemy-dust.webp";
 import sockUrl from "./sprites/enemy-sock.webp";
@@ -8,6 +8,8 @@ import crateUrl from "./sprites/crate.webp";
 import catcanUrl from "./sprites/loot-catcan.webp";
 import cashUrl from "./sprites/loot-cash.webp";
 import ringUrl from "./sprites/loot-ring.webp";
+import catpawUrl from "./sprites/catpaw.webp";
+import poopUrl from "./sprites/poop.webp";
 
 function loadSprite(url, makeWhite = false) {
   const entry = { img: new Image(), ready: false, white: null };
@@ -39,4 +41,6 @@ export const SPRITES = {
   catcan: loadSprite(catcanUrl, false),
   cash: loadSprite(cashUrl, false),
   ring: loadSprite(ringUrl, false),
+  catpaw: loadSprite(catpawUrl, false),
+  poop: loadSprite(poopUrl, true),
 };

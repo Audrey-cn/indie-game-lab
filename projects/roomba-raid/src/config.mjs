@@ -11,7 +11,9 @@ export const SKINS = [
     name: "经典白 · 暴富符",
     enName: "Classic Lucky",
     price: 0,
-    desc: "贴着红金暴富符的经典家用款，基础均衡",
+    corePrice: 0,
+    skillName: "过载双雷环",
+    desc: "专属技【过载双雷环】：过载清屏释放双重雷暴波",
     body: "#eef4fb",
     rim: "#b4c5dc",
     eye: "#3af2ff",
@@ -22,7 +24,9 @@ export const SKINS = [
     name: "赛博霓虹透明壳",
     enName: "Cyber Neon",
     price: 45000,
-    desc: "炫酷透视电路板！移动速度 +12%",
+    corePrice: 0,
+    skillName: "霓虹闪现",
+    desc: "专属技【霓虹闪现】：移速 +12%，过载冲刺留下高压雷痕",
     body: "#173c58",
     rim: "#36f6ff",
     eye: "#7dfdff",
@@ -33,7 +37,9 @@ export const SKINS = [
     name: "招财粉嫩猫耳",
     enName: "Cat-Ear Pink",
     price: 68000,
-    desc: "猫主子同款粉耳！拾取与大金估值 +18%",
+    corePrice: 1,
+    skillName: "招财吸宝光环",
+    desc: "专属技【招财光环】：大金估值 +18%，自带超大吸宝磁力",
     body: "#ff9ed0",
     rim: "#ff5ca8",
     eye: "#fff3a6",
@@ -44,7 +50,9 @@ export const SKINS = [
     name: "24K 土豪金皇冠",
     enName: "24K Gold Crown",
     price: 120000,
-    desc: "纯金镶钻客厅霸主！血量 +25% · 估值 +20%",
+    corePrice: 2,
+    skillName: "撒币震爆弹幕",
+    desc: "专属技【撒币震爆】：血量 +25% · 过载爆发向外狂撒金币弹幕",
     body: "#ffd64f",
     rim: "#d98200",
     eye: "#fff9cf",
@@ -233,6 +241,7 @@ export const SAFE_BOX_PRICES = [0, 0, 35000, 95000]; // 1 -> 2 -> 3 slots max
 
 export const DEFAULT_SAVE = {
   coins: 0,
+  goldCores: 0, // Scarce premium currency dropped by Bosses & 100% Cleanliness!
   totalExtracted: 0,
   bestRunValue: 0,
   extractStreak: 0,
@@ -241,6 +250,7 @@ export const DEFAULT_SAVE = {
   equippedSkin: "classic",
   skinsOwned: ["classic"],
   museum: {}, // lootId -> count
-  boosters: {}, // boosterId -> boolean (queued for next run)
+  boosters: {}, // boosterId -> boolean
+  roomsUnlocked: ["living"],
   playerName: "扫地特工",
 };

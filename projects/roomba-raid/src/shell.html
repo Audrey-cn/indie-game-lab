@@ -92,15 +92,34 @@
     }
     .xp-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #38f3ff, #60a5fa); transition: width 0.12s; }
     .hud-sub {
-      margin-top: 5px; display: flex; justify-content: space-between; align-items: center;
+      margin-top: 5px; display: flex; justify-content: space-between; align-items: center; gap: 6px;
       font-size: 11px; font-weight: 800; color: #cbd5e1;
       text-shadow: 0 1px 2px #000;
     }
+    .clean-pill {
+      background: rgba(16, 28, 42, 0.86); border: 1.5px solid rgba(56, 243, 255, 0.5);
+      border-radius: 999px; padding: 2px 8px; color: #8ef7ff; font-size: 11px; font-weight: 900;
+    }
+    .clean-pill.done { border-color: var(--green); color: var(--green); }
     .hud-btn {
       pointer-events: auto; background: rgba(18, 22, 42, 0.78);
       border: 1px solid rgba(255,255,255,0.2); color: #fff;
       border-radius: 8px; padding: 3px 8px; font-size: 11px; font-weight: 700; cursor: pointer;
     }
+
+    /* Mission Start Briefing Banner */
+    #briefing-banner {
+      position: absolute; top: 34%; left: 0; right: 0; z-index: 24;
+      pointer-events: none; text-align: center; padding: 16px 20px;
+      background: linear-gradient(90deg, rgba(10,12,26,0), rgba(16,22,48,0.94) 18%, rgba(16,22,48,0.94) 82%, rgba(10,12,26,0));
+      border-top: 2px solid var(--cyan); border-bottom: 2px solid var(--gold);
+      animation: briefIn 0.35s ease;
+    }
+    #briefing-banner[hidden] { display: none; }
+    #briefing-banner .bf-time { font-size: 11px; font-weight: 900; letter-spacing: 0.16em; color: var(--cyan); }
+    #briefing-banner .bf-title { font-size: 24px; font-weight: 900; color: #fff; margin: 4px 0; text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+    #briefing-banner .bf-sub { font-size: 12px; font-weight: 800; color: var(--gold); }
+    @keyframes briefIn { from { transform: scaleY(0.4); opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
 
     /* Non-intrusive Onboarding & Event Toast */
     #toast {
@@ -287,10 +306,17 @@
       </div>
       <div class="xp-track"><div class="xp-fill" id="hud-xp"></div></div>
       <div class="hud-sub">
-        <span id="hud-wave">第 1 波 · 估值 ×1.0</span>
-        <span id="hud-lv">LV 1</span>
+        <span class="clean-pill" id="hud-clean">🧹 0% (35%开撤)</span>
+        <span id="hud-wave">第 1 波 · LV 1</span>
+        <span id="hud-combo" style="color:var(--gold)"></span>
         <button class="hud-btn" id="btn-mute">🔊</button>
       </div>
+    </div>
+
+    <div id="briefing-banner" hidden>
+      <div class="bf-time">02:00 AM · MISSION START</div>
+      <div class="bf-title" id="bf-title">客厅大作战 · 开始清扫！</div>
+      <div class="bf-sub" id="bf-sub">清扫 35% 激活充电桩 · 70% 唤醒拖把王 · 100% 拿稀缺金核 💎</div>
     </div>
 
     <div id="toast" hidden></div>
@@ -314,8 +340,8 @@
         <div id="title-ghost-banner" class="ghost-banner" hidden></div>
 
         <div class="stat-strip">
-          <div class="stat-box"><div class="k">小金库</div><div class="v" id="st-coins">¥0</div></div>
-          <div class="stat-box"><div class="k">最高单局</div><div class="v" id="st-best">¥0</div></div>
+          <div class="stat-box"><div class="k">客厅金币</div><div class="v" id="st-coins">¥0</div></div>
+          <div class="stat-box"><div class="k">稀缺金核</div><div class="v" id="st-cores" style="color:#38f3ff">💎0</div></div>
           <div class="stat-box"><div class="k">连撤连胜</div><div class="v" id="st-streak">0连</div></div>
         </div>
 

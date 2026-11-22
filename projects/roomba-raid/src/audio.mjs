@@ -1,6 +1,6 @@
-// High-Energy Procedural Audio Engine for Roomba Raid v0.2.0
-// Features: 4-Track 128 BPM Midnight Electro-Funk BGM Sequencer (dynamic extraction intensity!)
-// + Sub-bass punch hits, electric zaps, crate tension roll, Big Gold jackpot fanfare & Overdrive boom.
+// Roomba Raid v0.3.0 — Multi-Section 128-Step Dynamic BGM Engine + Punchy Combat SFX
+// Solves short-loop fatigue: 4 distinct musical sections (A: Stealth Intro -> B: Funky Groove -> C: Chorus Drop -> D: Bridge)
+// + Warm chord pads + Room-specific themes + Dynamic Urgent Extraction Mode!
 
 class SoundEngine {
   constructor() {
@@ -10,8 +10,10 @@ class SoundEngine {
     this.muted = false;
     this.bgmRunning = false;
     this.bgmUrgent = false;
+    this.bgmFever = false;
+    this.roomTheme = "living"; // living | bedroom | kitchen
     this.bgmTimer = null;
-    this.step = 0;
+    this.step = 0; // 0..127 (8 bars of 16th notes!)
     this.xpCombo = 0;
     this.lastXpTime = 0;
     this.lastHitTime = 0;
@@ -26,7 +28,6 @@ class SoundEngine {
       this.master.gain.value = this.muted ? 0 : 0.85;
       this.master.connect(this.ctx.destination);
 
-      // Pre-generate 0.5s white noise buffer for snares, hi-hats, electric crackle & explosions
       const len = Math.floor(this.ctx.sampleRate * 0.5);
       this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
       const data = this.noiseBuf.getChannelData(0);
@@ -55,7 +56,7 @@ class SoundEngine {
       osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + dur);
     }
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(vol, now + 0.006);
+    gain.gain.linearRampToValueAtTime(vol, now + 0.008);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
     if (filterFreq > 0) {
@@ -70,6 +71,12 @@ class SoundEngine {
     gain.connect(this.master);
     osc.start(now);
     osc.stop(now + dur + 0.03);
+  }
+
+  padChord(freqs, dur, vol = 0.035) {
+    for (const f of freqs) {
+      this.tone(f, f, dur, "triangle", vol, 0, 950);
+    }
   }
 
   noise(dur, vol = 0.1, bandFreq = 1800, q = 1.2, delay = 0) {
@@ -91,18 +98,19 @@ class SoundEngine {
     src.stop(now + dur + 0.02);
   }
 
-  // ===== 4-TRACK 128 BPM MIDNIGHT ELECTRO-FUNK BGM =====
-  startBgm() {
+  startBgm(theme = "living") {
     this.unlock();
+    this.roomTheme = theme;
     if (this.bgmRunning) return;
     this.bgmRunning = true;
     this.step = 0;
     const tick = () => {
       if (!this.bgmRunning) return;
-      const bpm = this.bgmUrgent ? 142 : 126;
-      const stepMs = (60 / bpm / 4) * 1000; // 16th-note grid
+      const baseBpm = this.roomTheme === "bedroom" ? 116 : 124;
+      const bpm = this.bgmUrgent ? baseBpm + 18 : this.bgmFever ? baseBpm + 10 : baseBpm;
+      const stepMs = (60 / bpm / 4) * 1000;
       this.playBgmStep(this.step);
-      this.step = (this.step + 1) % 32;
+      this.step = (this.step + 1) % 128; // Full 8-bar evolving progression!
       this.bgmTimer = setTimeout(tick, stepMs);
     };
     tick();
@@ -117,63 +125,87 @@ class SoundEngine {
     this.bgmUrgent = flag;
   }
 
+  setFever(flag) {
+    this.bgmFever = flag;
+  }
+
   playBgmStep(s) {
     if (this.muted || !this.ctx) return;
+    const bar = Math.floor(s / 16); // 0..7
+    const sub = s % 16;             // 0..15
+    const section = Math.floor(bar / 2); // 0=A(Stealth), 1=B(Groove), 2=C(Chorus), 3=D(Bridge)
 
-    // 1. Punchy 4-on-the-floor Kick + syncopated ghost kick
-    if (s % 4 === 0 || (this.bgmUrgent && s % 16 === 14)) {
-      this.tone(140, 42, 0.13, "sine", 0.24);
-    }
-
-    // 2. Crisp Snare on 4 & 12 + bouncy 16th Hi-hat
-    if (s % 8 === 4) {
-      this.noise(0.11, 0.11, 2200, 0.9);
-      this.tone(210, 110, 0.07, "triangle", 0.08);
-    }
-    if (s % 2 === 0 || this.bgmUrgent) {
-      const open = s % 4 === 2;
-      this.noise(open ? 0.065 : 0.028, open ? 0.05 : 0.026, 7200, 1.8);
-    }
-
-    // 3. Funky Minor-Pentatonic Synth Bassline (D minor groove)
-    const bassNotes = [
-      73.42, 0, 73.42, 87.31, 0, 73.42, 110.0, 98.0,
-      73.42, 0, 87.31, 0, 110.0, 98.0, 87.31, 65.41,
-      58.27, 0, 58.27, 73.42, 0, 87.31, 0, 73.42,
-      65.41, 0, 65.41, 87.31, 98.0, 0, 110.0, 130.81,
+    // 1. Warm Chord Progression (changes every bar across 8 bars: Dm9 -> Bbmaj7 -> Gm7 -> A7 -> Dm9 -> Fmaj7 -> Cmaj7 -> A7)
+    const chords = [
+      [293.66, 349.23, 440.0],    // Dm
+      [233.08, 293.66, 349.23],   // Bb
+      [196.0, 233.08, 293.66],    // Gm
+      [220.0, 277.18, 329.63],    // A
+      [293.66, 349.23, 440.0],    // Dm
+      [349.23, 440.0, 523.25],    // F
+      [261.63, 329.63, 392.0],    // C
+      [220.0, 277.18, 392.0],     // A7
     ];
-    const bn = bassNotes[s];
-    if (bn > 0) {
-      this.tone(bn, bn * 0.99, 0.16, "sawtooth", 0.1, 0, this.bgmUrgent ? 720 : 480);
+    if (sub === 0) {
+      this.padChord(chords[bar], 1.35, section === 2 ? 0.042 : 0.028);
     }
 
-    // 4. Catchy Playful Midnight Heist Lead Pluck
-    const leadNotes = [
-      587.33, 0, 698.46, 0, 880.0, 0, 783.99, 698.46,
-      587.33, 0, 0, 523.25, 587.33, 0, 440.0, 0,
-      466.16, 0, 587.33, 0, 698.46, 0, 659.25, 587.33,
-      523.25, 0, 659.25, 0, 783.99, 880.0, 1046.5, 0,
-    ];
-    const ln = leadNotes[s];
-    if (ln > 0) {
-      this.tone(ln, ln, 0.11, "triangle", this.bgmUrgent ? 0.085 : 0.065);
+    // 2. Dynamic Drum Groove (minimal in section A, full funk in B/C, syncopated fill in bar 7!)
+    const kickHit =
+      section === 0
+        ? (sub === 0 || sub === 8)
+        : (sub === 0 || sub === 6 || sub === 8 || (this.bgmUrgent && sub === 14));
+    if (kickHit) this.tone(135, 42, 0.13, "sine", section === 2 ? 0.24 : 0.18);
+
+    if (section >= 1 && (sub === 4 || sub === 12)) {
+      this.noise(0.11, 0.1, 2100, 0.9);
+      this.tone(205, 110, 0.065, "triangle", 0.075);
+    }
+    if (sub % 2 === 0 && (section >= 1 || sub % 4 === 2)) {
+      const open = sub === 10 || sub === 14;
+      this.noise(open ? 0.06 : 0.025, open ? 0.042 : 0.022, 6800, 1.8);
+    }
+    // End-of-8-bar drum fill
+    if (bar === 7 && sub >= 12) {
+      this.tone(190 - (sub - 12) * 20, 70, 0.08, "triangle", 0.14);
     }
 
-    // 5. Urgent Extraction High Arp Pulse
-    if (this.bgmUrgent && s % 2 === 0) {
-      const arp = [1174.66, 1396.91, 1760.0, 1567.98];
-      this.tone(arp[(s / 2) % 4], arp[(s / 2) % 4], 0.07, "square", 0.025, 0, 2200);
+    // 3. Evolving Funk Bassline (follows chord root)
+    const roots = [73.42, 58.27, 98.0, 110.0, 73.42, 87.31, 65.41, 110.0];
+    const root = roots[bar];
+    const bassPattern = [1, 0, 0, 1, 0, 0, 1.5, 0, 1, 0, 1.2, 0, 0, 1, 1.5, 0];
+    const mult = bassPattern[sub];
+    if (mult > 0) {
+      const f = root * (mult === 1.5 ? 1.498 : mult === 1.2 ? 1.189 : 1);
+      this.tone(f, f * 0.99, 0.16, "sawtooth", 0.095, 0, section === 2 || this.bgmUrgent ? 780 : 440);
+    }
+
+    // 4. Distinct Melodies per Section (no repetitive 2-bar fatigue!)
+    const melA = [587.33, 0, 0, 698.46, 0, 0, 659.25, 0, 587.33, 0, 0, 0, 523.25, 0, 0, 0];
+    const melB = [587.33, 0, 698.46, 0, 880.0, 0, 783.99, 698.46, 587.33, 0, 523.25, 0, 587.33, 0, 440.0, 0];
+    const melC = [880.0, 0, 1046.5, 880.0, 783.99, 0, 698.46, 0, 880.0, 0, 1174.66, 0, 1046.5, 880.0, 783.99, 0];
+    const melD = [659.25, 0, 587.33, 0, 523.25, 0, 440.0, 0, 523.25, 587.33, 659.25, 0, 783.99, 0, 880.0, 0];
+    const mel = section === 0 ? melA : section === 1 ? melB : section === 2 ? melC : melD;
+    const note = mel[sub];
+    if (note > 0) {
+      const transpose = bar % 2 === 1 && section < 2 ? 0.8909 : 1; // Gentle harmonic answer on odd bars
+      this.tone(note * transpose, note * transpose, 0.13, section === 2 ? "square" : "triangle", section === 2 ? 0.048 : 0.065, 0, 2400);
+    }
+
+    // 5. Urgent Extraction High Synth Pulse
+    if (this.bgmUrgent && sub % 4 === 2) {
+      this.tone(1174.66, 1396.91, 0.08, "sawtooth", 0.032, 0, 2200);
     }
   }
 
-  // ===== PUNCHY COMBAT & EXTRACTION SFX =====
+  // ===== COMBAT & ENVIRONMENT SFX =====
   playHit(crit = false) {
     if (!this.ctx || this.muted) return;
     const now = performance.now();
     if (now - this.lastHitTime < 28) return;
     this.lastHitTime = now;
     if (crit) {
-      this.tone(160, 48, 0.11, "sine", 0.22); // Heavy punch thud
+      this.tone(160, 48, 0.11, "sine", 0.22);
       this.tone(860, 1580, 0.1, "triangle", 0.16);
       this.noise(0.05, 0.1, 3600, 1.4);
     } else {
@@ -197,10 +229,24 @@ class SoundEngine {
   }
 
   playOverdriveBlast() {
-    // Massive sub-bass boom + rising turbine sweep!
     this.tone(190, 32, 0.42, "sine", 0.34);
     this.tone(240, 1280, 0.32, "sawtooth", 0.13, 0, 2400);
     this.noise(0.32, 0.22, 1100, 0.7);
+  }
+
+  playPoopSplat() {
+    this.tone(240, 62, 0.28, "sawtooth", 0.18, 0, 520);
+    this.noise(0.18, 0.16, 650, 0.7);
+  }
+
+  playBossStun() {
+    this.tone(140, 36, 0.32, "sine", 0.3);
+    this.tone(420, 210, 0.28, "triangle", 0.15, 0.06);
+  }
+
+  playHordeHorn() {
+    this.tone(220, 208, 0.48, "sawtooth", 0.16, 0, 720);
+    this.tone(330, 312, 0.48, "sawtooth", 0.12, 0.04, 880);
   }
 
   playCrateTick(progress) {

@@ -1,10 +1,8 @@
-// Roomba Raid v0.2.0 — Commercial-Grade Juicy Stage 1 Overhaul
-// Features: Real WebP Sprites, Interactive Dust-Cleaning Floor, Destructible Props,
-// Vacuum Vortex Pull, Overdrive Burst Dash (Space/Tap), Shaking Mystery Crates w/ Slow-Mo Jackpot,
-// Ragdoll Knockbacks + Shockwaves + Hitstop, Explosive 15s Pacing & 128 BPM Synth-Funk BGM!
+// Roomba Raid v0.3.0 — Irregular L-Room, Cover Furniture, Under-Table Hidden Zones,
+// Cleanliness Milestones (35%/70%/100%), Native Search Spots, Boss 3-Skill Bullet/Charge/Stun AI,
+// Cat Paw Sprite, Pet Poop Nightmare/Purify Bonus, Periodic Horde Swarms, Drift Feel & 128-Step BGM!
 
 import {
-  ARENA,
   BOOSTERS,
   DEFAULT_SAVE,
   LOOT_ITEMS,
@@ -27,7 +25,15 @@ import {
   vibrate,
   writeSave,
 } from "./platform.mjs";
-import { cleanDustAt, createDustLayer, renderGame, renderReceiptPoster } from "./renderer.mjs";
+import {
+  clampToRoom,
+  createCleanTracker,
+  NATIVE_SPOT_DEFS,
+  pointHitsObstacle,
+  ROOM,
+  SHOCK_STRIP_DEFS,
+} from "./room-layout.mjs";
+import { cleanDustAt, createDustLayer, renderGame, renderReceiptPoster, smearPoopAt } from "./renderer.mjs";
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
@@ -57,6 +63,7 @@ let lastTs = 0;
 // UI refs
 const hudEl = document.getElementById("hud");
 const toastEl = document.getElementById("toast");
+const briefingEl = document.getElementById("briefing-banner");
 const jackpotEl = document.getElementById("jackpot-banner");
 const btnOverdrive = document.getElementById("btn-overdrive");
 const odTxt = document.getElementById("od-txt");
@@ -77,14 +84,15 @@ function showToast(msg, style = "") {
 }
 
 let jackpotTimer = null;
-function showJackpotBanner(name, value) {
+function showJackpotBanner(name, value, sub = "✨ 沙发底爆出大金 ✨") {
+  document.querySelector("#jackpot-banner .jt-sub").textContent = sub;
   document.getElementById("jt-name").textContent = name;
-  document.getElementById("jt-val").textContent = `+¥${value.toLocaleString()}`;
+  document.getElementById("jt-val").textContent = typeof value === "string" ? value : `+¥${value.toLocaleString()}`;
   jackpotEl.hidden = false;
   clearTimeout(jackpotTimer);
   jackpotTimer = setTimeout(() => {
     jackpotEl.hidden = true;
-  }, 2100);
+  }, 2200);
 }
 
 function getMuseumBonuses() {
@@ -101,7 +109,7 @@ function getEquippedSkin() {
 
 function updateTitleUI() {
   document.getElementById("st-coins").textContent = `¥${Math.round(save.coins).toLocaleString()}`;
-  document.getElementById("st-best").textContent = `¥${Math.round(save.bestRunValue).toLocaleString()}`;
+  document.getElementById("st-cores").textContent = `💎${save.goldCores || 0}`;
   document.getElementById("st-streak").textContent = `${save.extractStreak}连`;
   document.getElementById("mode-free").classList.toggle("active", selectedMode === "free");
   document.getElementById("mode-daily").classList.toggle("active", selectedMode === "daily");
@@ -127,10 +135,20 @@ function pickWeightedLoot(rng, minValue = 0) {
   return list[0];
 }
 
+function findSafePoint(rng, pad = 110) {
+  for (let tries = 0; tries < 40; tries++) {
+    const x = pad + rng() * (ROOM.width - pad * 2);
+    const y = pad + rng() * (ROOM.height - pad * 2);
+    if (!pointHitsObstacle(x, y)) return { x, y };
+  }
+  return { x: 560, y: 480 };
+}
+
 function startRun() {
   sfx.unlock();
   sfx.setUrgent(false);
-  sfx.startBgm();
+  sfx.setFever(false);
+  sfx.startBgm("living");
 
   const isDaily = selectedMode === "daily";
   const seedStr = isDaily ? (urlCtx.seed || getTodaySeedString()) : String(Date.now());
@@ -143,7 +161,7 @@ function startRun() {
   save.boosters = {};
   writeSave(save);
 
-  const maxHp = Math.round(110 * skin.bonus.hp);
+  const maxHp = Math.round(115 * skin.bonus.hp);
 
   state = {
     phase: "playing",
@@ -153,109 +171,133 @@ function startRun() {
     time: 0,
     slowMo: 0,
     wave: 1,
-    waveTimer: 32,
+    hordeTimer: 26, // Periodic Horde Swarm every 26s!
     highRisk,
     lootMult: skin.bonus.loot * museumBonus.lootMult * (highRisk ? 1.8 : 1),
     fireRateMult: museumBonus.fireRate,
     kills: 0,
+    combo: 0,
+    comboTimer: 0,
+    fever: 0,
     shake: 0,
     hitstop: 0,
     revivedOnce: false,
     doubledOnce: false,
     rescuedGhost: null,
+    coresEarned: 0,
     dustLayer: createDustLayer(),
+    cleanTracker: createCleanTracker(),
+    milestones: { m35: false, m70: false, m100: false },
     dustCleanAcc: 0,
-    onboarding: { firstDockShown: false },
     player: {
-      x: ARENA.width / 2,
-      y: ARENA.height / 2,
+      x: 560,
+      y: 440,
+      vx: 0,
+      vy: 0,
       r: 23,
       facing: 0,
       hp: maxHp,
       maxHp,
-      speed: 245 * skin.bonus.speed,
-      magnet: 118,
+      speed: 255 * skin.bonus.speed,
+      magnet: skin.id === "cat" ? 165 : 122,
       lv: 1,
       xp: 0,
-      xpNext: 8, // Fast 5-second first level up!
+      xpNext: 8,
       hurtFlash: 0,
       invuln: 0,
+      poopSlow: 0,
       skin: skin.id,
-      charge: 40, // Start 40% charged so player gets to experience Overdrive fast!
+      charge: 45,
       overdrive: 0,
       weapons: { swatter: 1, laser: 0, spatula: 0, hairdryer: 0, tesla: 0 },
       cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6 },
     },
-    cam: { x: ARENA.width / 2, y: ARENA.height / 2 },
+    cam: { x: 560, y: 440 },
     bagLoot: [],
     looseCoins: 0,
     enemies: [],
+    enemyBullets: [],
     ragdolls: [],
     props: [],
-    crates: [],
+    poops: [],
+    nativeSpots: NATIVE_SPOT_DEFS.map((d) => ({ ...d, progress: 0, tickAcc: 0, searched: false })),
+    shockStrips: SHOCK_STRIP_DEFS.map((d) => ({ ...d, cd: 0 })),
+    crates: [], // Reserved ONLY for Boss / Elite drops!
     gems: [],
     lootDrops: [],
     catPaws: [],
     vfx: [],
     particles: [],
     texts: [],
-    dock: { active: false, x: 200, y: 240, radius: 70, progress: 0, tickAcc: 0 },
+    dock: { active: false, x: 1180, y: 1120, radius: 70, progress: 0, tickAcc: 0 },
     spawnAcc: 0.4,
-    crateAcc: 15,
-    pawAcc: 18,
-    bossSpawnedWave: 0,
+    pawAcc: 16,
     keys: new Set(),
     joy: { active: false, id: null, ox: 0, oy: 0, cx: 0, cy: 0, dx: 0, dy: 0 },
   };
 
-  // Initial gleaming clean spot under Roomba
-  cleanDustAt(state.dustLayer, state.player.x, state.player.y, 44);
+  cleanDustAt(state.dustLayer, state.player.x, state.player.y, 48);
+  state.cleanTracker.markClean(state.player.x, state.player.y, 50);
 
-  // Instant Action Hook: 14 cute Dust-Bunnies right around the player + 10 destructible props + 2 Mystery Crates!
-  for (let i = 0; i < 14; i++) {
-    const a = (i / 14) * Math.PI * 2 + rng() * 0.25;
-    const dist = 145 + (i % 3) * 48;
-    state.enemies.push({
-      type: i % 5 === 0 ? "sock" : "dust",
-      x: state.player.x + Math.cos(a) * dist,
-      y: state.player.y + Math.sin(a) * dist,
-      r: i % 5 === 0 ? 19 : 17,
-      hp: i % 5 === 0 ? 34 : 20,
-      maxHp: i % 5 === 0 ? 34 : 20,
-      speed: i % 5 === 0 ? 96 : 86,
-      dmg: 8,
-      xp: 3,
-      vx: 0,
-      vy: 0,
-      flash: 0,
-      enraged: false,
-      seed: i * 1.3,
-    });
+  // Instant Action Hook: 12 cute Dust-Bunnies right around the player
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 + rng() * 0.25;
+    const dist = 150 + (i % 3) * 45;
+    const ex = state.player.x + Math.cos(a) * dist;
+    const ey = state.player.y + Math.sin(a) * dist;
+    if (!pointHitsObstacle(ex, ey)) {
+      state.enemies.push({
+        type: i % 5 === 0 ? "sock" : "dust",
+        x: ex,
+        y: ey,
+        r: i % 5 === 0 ? 19 : 17,
+        hp: i % 5 === 0 ? 34 : 20,
+        maxHp: i % 5 === 0 ? 34 : 20,
+        speed: i % 5 === 0 ? 96 : 86,
+        dmg: 8,
+        xp: 3,
+        vx: 0,
+        vy: 0,
+        flash: 0,
+        stun: 0,
+        shootCd: 2.5 + rng() * 2,
+        enraged: false,
+        seed: i * 1.3,
+      });
+    }
   }
 
-  for (let i = 0; i < 10; i++) {
+  // Destructible Living Room Props
+  for (let i = 0; i < 12; i++) {
+    const pt = findSafePoint(rng, 110);
     state.props.push({
-      x: 140 + rng() * (ARENA.width - 280),
-      y: 160 + rng() * (ARENA.height - 320),
+      x: pt.x,
+      y: pt.y,
       kind: i % 2 === 0 ? "box" : "snack",
       rot: (rng() - 0.5) * 0.5,
-      hp: 20,
       flash: 0,
     });
   }
 
-  // Guaranteed nearby Mystery Gold Crate at t=0 so the player sees a golden crate immediately!
-  spawnMysteryCrate(195, 8800);
-  if (extraRadar) {
-    spawnMysteryCrate(280, 18800);
-    spawnMysteryCrate(340, 28000);
+  // 4 Hilarious Pet Poop Hazards (including 1 sneaky poop under the coffee table!)
+  const poopCoords = [
+    { x: 520, y: 760 }, // Sneaky under coffee table!
+    findSafePoint(rng, 160),
+    findSafePoint(rng, 160),
+    findSafePoint(rng, 160),
+  ];
+  for (const pt of poopCoords) {
+    state.poops.push({ x: pt.x, y: pt.y, hp: 32, flash: 0 });
   }
 
-  // Spawn Friend Ghost Drop if came from challenge link!
+  if (extraRadar) {
+    state.crates.push({ x: 560, y: 310, minVal: 18800, progress: 0, tickAcc: 0 });
+  }
+
   if (urlCtx.ghostDrop) {
     state.lootDrops.push({
-      x: ARENA.width / 2 + (rng() > 0.5 ? 210 : -210),
-      y: ARENA.height / 2 - 190,
+      x: 780,
+      y: 440,
       isGhost: true,
       owner: urlCtx.ghostDrop.owner,
       lootId: urlCtx.ghostDrop.lootId,
@@ -273,12 +315,16 @@ function startRun() {
   hudEl.hidden = false;
   btnOverdrive.hidden = false;
 
-  showToast("⚡ 单指拖动吸尘割草！靠近金色宝箱开大金，满能量点右下角「过载清屏」！", "gold");
+  // Dramatic 1.6s Mission Briefing Banner!
+  briefingEl.hidden = false;
+  setTimeout(() => {
+    briefingEl.hidden = true;
+  }, 1800);
 
   if (startLvUp) {
     setTimeout(() => {
       if (state && state.phase === "playing") openLevelUp();
-    }, 300);
+    }, 500);
   }
 }
 
@@ -321,20 +367,14 @@ function spawnText(x, y, text, color = "#ffffff", size = 17) {
   state.texts.push({ x, y, text, color, size, vy: -64, life: 0.72, maxLife: 0.72 });
 }
 
-function spawnMysteryCrate(dist = 240, minVal = 8800, forcedPos = null) {
-  const ang = state.rng() * Math.PI * 2;
-  const x = forcedPos ? forcedPos.x : Math.max(95, Math.min(ARENA.width - 95, state.player.x + Math.cos(ang) * dist));
-  const y = forcedPos ? forcedPos.y : Math.max(130, Math.min(ARENA.height - 95, state.player.y + Math.sin(ang) * dist));
-  state.crates.push({ x, y, minVal, progress: 0, tickAcc: 0 });
-}
-
-function popMysteryCrate(crate) {
-  const item = pickWeightedLoot(state.rng, crate.minVal);
-  const waveScale = 1 + (state.wave - 1) * 0.6;
-  const val = Math.round(item.value * waveScale * state.lootMult);
+function grantLootReward(x, y, minVal, sourceLabel = "✨ 掏出沙发底大金 ✨") {
+  const item = pickWeightedLoot(state.rng, minVal);
+  const cleanBonus = state.milestones.m70 ? 1.3 : 1;
+  const waveScale = 1 + (state.wave - 1) * 0.45;
+  const val = Math.round(item.value * waveScale * cleanBonus * state.lootMult);
   const drop = {
-    x: crate.x,
-    y: crate.y,
+    x,
+    y,
     lootId: item.id,
     name: item.name,
     short: item.short,
@@ -342,17 +382,15 @@ function popMysteryCrate(crate) {
     rarity: item.rarity,
     isGhost: false,
   };
-  // Automatically collect into bag with dramatic slow-mo jackpot punch!
   state.bagLoot.push(drop);
-  state.slowMo = 0.32;
-  state.shake = 0.75;
+  state.slowMo = 0.28;
+  state.shake = 0.7;
   sfx.playCratePop();
-  vibrate(35);
-  spawnRing(crate.x, crate.y, 16, 150, "#ffd54a", 9, 0.42);
-  spawnParticles(crate.x, crate.y, "#ffd54a", 28, 240, true);
-  spawnParticles(crate.x, crate.y, "#ff4c76", 14, 190, true);
-  spawnText(crate.x, crate.y - 26, `+¥${val.toLocaleString()}!`, "#ffd54a", 24);
-  showJackpotBanner(item.name, val);
+  vibrate(32);
+  spawnRing(x, y, 16, 145, "#ffd54a", 8, 0.38);
+  spawnParticles(x, y, "#ffd54a", 26, 230, true);
+  spawnText(x, y - 24, `+¥${val.toLocaleString()}!`, "#ffd54a", 23);
+  showJackpotBanner(item.name, val, sourceLabel);
 }
 
 function triggerOverdrive() {
@@ -361,58 +399,91 @@ function triggerOverdrive() {
   if (p.charge < 100 || p.overdrive > 0) return;
 
   p.charge = 0;
-  p.overdrive = 1.8;
-  p.invuln = 2.0;
+  p.overdrive = 1.9;
+  p.invuln = 2.1;
   state.shake = 0.9;
   state.hitstop = 0.05;
   sfx.playOverdriveBlast();
   vibrate(45);
 
-  // Massive 360° EMP Shockwave Blast!
-  spawnRing(p.x, p.y, 20, 290, "#38f3ff", 12, 0.4);
-  spawnRing(p.x, p.y, 10, 210, "#ffd54a", 8, 0.35);
+  // Skin-Specific Active Skills (20 Minutes Till Dawn style!)
+  const blastR = p.skin === "classic" ? 340 : 280;
+  spawnRing(p.x, p.y, 20, blastR, "#38f3ff", 12, 0.4);
+  if (p.skin === "classic") {
+    spawnRing(p.x, p.y, 10, blastR * 0.72, "#ffd54a", 10, 0.48);
+    spawnText(p.x, p.y - 36, "⚡ 暴富双雷环清屏！", "#ffd54a", 23);
+  } else if (p.skin === "gold") {
+    // 24K Gold Crown bursts extra bonus coins around!
+    for (let k = 0; k < 10; k++) {
+      const a = (k / 10) * Math.PI * 2;
+      state.gems.push({ x: p.x + Math.cos(a) * 80, y: p.y + Math.sin(a) * 80, kind: "coin", val: 888, forcePull: true });
+    }
+    spawnText(p.x, p.y - 36, "👑 撒币震爆清屏！", "#ffd54a", 23);
+  } else if (p.skin === "cyber") {
+    // Cyber Neon Blink Dash forward!
+    p.x += Math.cos(p.facing) * 140;
+    p.y += Math.sin(p.facing) * 140;
+    clampToRoom(p, p.r);
+    spawnText(p.x, p.y - 36, "⚡ 赛博闪现清屏！", "#38f3ff", 23);
+  } else {
+    spawnText(p.x, p.y - 36, "🐱 招财吸宝暴走！", "#ff9ed0", 23);
+  }
+
   spawnParticles(p.x, p.y, "#38f3ff", 32, 290, true);
   spawnParticles(p.x, p.y, "#ffd54a", 22, 240, true);
-  spawnText(p.x, p.y - 36, "⚡ 过载清屏暴走！", "#ffd54a", 24);
 
-  // Blast & knock back all nearby enemies + shatter props + pull ALL gems on screen!
   for (let i = state.enemies.length - 1; i >= 0; i--) {
     const e = state.enemies[i];
     const dx = e.x - p.x;
     const dy = e.y - p.y;
     const d = Math.hypot(dx, dy) || 1;
-    if (d < 290) {
+    if (d < blastR) {
       if (damageEnemy(e, 95 + state.wave * 35, (dx / d) * 380, (dy / d) * 380, true)) {
         state.enemies.splice(i, 1);
       }
     }
   }
-  for (const g of state.gems) {
-    g.forcePull = true;
-  }
+  // Clear enemy bullets on Overdrive!
+  state.enemyBullets.length = 0;
+  for (const g of state.gems) g.forcePull = true;
 }
 
-function spawnEnemy(forcedType = null) {
+function spawnEnemy(forcedType = null, forcedPos = null) {
   const p = state.player;
-  const ang = Math.random() * Math.PI * 2;
-  const dist = Math.max(vw, vh) * 0.54 + 30;
-  const x = Math.max(40, Math.min(ARENA.width - 40, p.x + Math.cos(ang) * dist));
-  const y = Math.max(80, Math.min(ARENA.height - 40, p.y + Math.sin(ang) * dist));
+  let x = 0;
+  let y = 0;
+  if (forcedPos) {
+    x = forcedPos.x;
+    y = forcedPos.y;
+  } else {
+    let ok = false;
+    for (let tries = 0; tries < 12; tries++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = Math.max(vw, vh) * 0.52 + 30;
+      x = Math.max(40, Math.min(ROOM.width - 40, p.x + Math.cos(ang) * dist));
+      y = Math.max(80, Math.min(ROOM.height - 40, p.y + Math.sin(ang) * dist));
+      if (!pointHitsObstacle(x, y)) {
+        ok = true;
+        break;
+      }
+    }
+    if (!ok) return;
+  }
 
   let type = forcedType;
   if (!type) {
     const r = Math.random();
-    if (state.wave >= 2 && r < 0.25) type = "sock";
-    else if (state.wave >= 2 && r < 0.38) type = "lego";
+    if (state.wave >= 2 && r < 0.28) type = "sock";
+    else if (state.wave >= 2 && r < 0.42) type = "lego";
     else type = "dust";
   }
 
-  const hpScale = (1 + (state.wave - 1) * 0.55) * (state.highRisk ? 1.35 : 1);
+  const hpScale = (1 + (state.wave - 1) * 0.48) * (state.highRisk ? 1.35 : 1);
   const specs = {
-    dust: { r: 17, hp: 22 * hpScale, speed: 88 + state.wave * 9, dmg: 8, xp: 3 },
-    sock: { r: 19, hp: 46 * hpScale, speed: 108 + state.wave * 10, dmg: 12, xp: 6 },
-    lego: { r: 20, hp: 82 * hpScale, speed: 64 + state.wave * 6, dmg: 16, xp: 9 },
-    mop: { r: 36, hp: 340 * hpScale, speed: 98 + state.wave * 9, dmg: 20, xp: 30 },
+    dust: { r: 17, hp: 22 * hpScale, speed: 88 + state.wave * 8, dmg: 8, xp: 3 },
+    sock: { r: 19, hp: 46 * hpScale, speed: 102 + state.wave * 9, dmg: 12, xp: 6 },
+    lego: { r: 20, hp: 82 * hpScale, speed: 62 + state.wave * 5, dmg: 16, xp: 9 },
+    mop: { r: 36, hp: 480 * hpScale, speed: 95 + state.wave * 8, dmg: 20, xp: 34 },
   };
   const sp = specs[type];
   state.enemies.push({
@@ -428,33 +499,57 @@ function spawnEnemy(forcedType = null) {
     vx: 0,
     vy: 0,
     flash: 0,
+    stun: 0,
+    aiState: "chase", // For Boss: chase | windup | charge
+    aiTimer: 3.5,
+    chargeAng: 0,
+    shootCd: 2.2 + Math.random() * 2,
+    summonedHalf: false,
     enraged: state.dock.active,
     seed: Math.random() * 10,
   });
 }
 
+function triggerHordeSwarm() {
+  state.wave += 1;
+  sfx.playHordeHorn();
+  state.shake = 0.5;
+  showToast(`🚨 第 ${state.wave} 波怪潮来袭！毛球与臭袜子军团从阳台涌入！`, "pink");
+  const count = Math.min(18, 9 + state.wave * 3);
+  for (let i = 0; i < count; i++) {
+    spawnEnemy(i % 4 === 0 ? "sock" : "dust");
+  }
+}
+
 function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
-  e.hp -= dmg;
+  const bonusDmg = e.stun > 0 ? dmg * 1.5 : dmg; // +50% damage on stunned Boss!
+  e.hp -= bonusDmg;
   e.flash = 0.09;
   e.vx += kbX;
   e.vy += kbY;
   sfx.playHit(isCrit);
-  if (isCrit) state.hitstop = Math.max(state.hitstop, 0.018);
+  if (isCrit) state.hitstop = Math.max(state.hitstop, 0.016);
 
   spawnText(
     e.x + (Math.random() - 0.5) * 18,
     e.y - e.r - 8,
-    isCrit ? `CRIT ${Math.round(dmg)}!` : `${Math.round(dmg)}`,
+    isCrit ? `CRIT ${Math.round(bonusDmg)}!` : `${Math.round(bonusDmg)}`,
     isCrit ? "#ffd54a" : "#ffffff",
     isCrit ? 21 : 15
   );
 
   if (e.hp <= 0) {
     state.kills++;
-    state.player.charge = Math.min(100, state.player.charge + (e.type === "mop" ? 35 : 4.5));
+    state.combo++;
+    state.comboTimer = 2.6;
+    if (state.combo >= 18 && state.fever <= 0) {
+      state.fever = 5.5;
+      sfx.setFever(true);
+      showToast("🔥 狂热连击 FEVER！5秒攻速吸力暴涨！", "gold");
+    }
+    state.player.charge = Math.min(100, state.player.charge + (e.type === "mop" ? 40 : 4.2));
     sfx.playKill();
 
-    // Juicy knocked-back spinning ragdoll + shockwave ring + star burst!
     const ang = Math.atan2(kbY || (e.y - state.player.y), kbX || (e.x - state.player.x));
     state.ragdolls.push({
       type: e.type,
@@ -469,10 +564,10 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
       maxLife: 0.28,
     });
     spawnRing(e.x, e.y, 8, e.r * 2.2, isCrit ? "#ffd54a" : "#38f3ff", 4, 0.2);
-    spawnParticles(e.x, e.y, isCrit ? "#ffd54a" : "#38f3ff", e.type === "mop" ? 26 : 10, 190, true);
+    spawnParticles(e.x, e.y, isCrit ? "#ffd54a" : "#38f3ff", e.type === "mop" ? 28 : 10, 190, true);
 
     state.gems.push({ x: e.x, y: e.y, kind: "xp", val: e.xp, forcePull: false });
-    if (Math.random() < 0.55) {
+    if (Math.random() < 0.5) {
       state.gems.push({
         x: e.x + (Math.random() - 0.5) * 22,
         y: e.y + (Math.random() - 0.5) * 22,
@@ -482,13 +577,32 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
       });
     }
     if (e.type === "mop") {
-      state.shake = 0.85;
-      spawnMysteryCrate(0, 28000, { x: e.x, y: e.y });
-      showToast("🧹 拖把 Boss 炸裂！爆出一个超级金箱！", "gold");
+      state.shake = 0.9;
+      // Boss EXCLUSIVELY drops a Super Golden Crate + 65% chance for Scarce Gold Core 💎!
+      state.crates.push({ x: e.x, y: e.y, minVal: 28000, progress: 0, tickAcc: 0 });
+      if (state.rng() < 0.65) {
+        state.gems.push({ x: e.x + 28, y: e.y, kind: "core", val: 1, forcePull: false });
+      }
+      showToast("👑 击败拖把王！爆出 Boss 专属超级金箱与稀缺金核 💎！", "gold");
     }
     return true;
   }
   return false;
+}
+
+function damagePoop(idx, dmg) {
+  const poop = state.poops[idx];
+  poop.hp -= dmg;
+  poop.flash = 0.08;
+  if (poop.hp <= 0) {
+    // Purifying poop with weapons instead of stepping on it rewards hidden cash!
+    spawnParticles(poop.x, poop.y, "#ffd54a", 16, 170, true);
+    spawnRing(poop.x, poop.y, 8, 65, "#39ff88", 4, 0.24);
+    sfx.playBigGold();
+    spawnText(poop.x, poop.y - 20, "✨ 净化粑粑 +¥3,500!", "#39ff88", 18);
+    state.looseCoins += Math.round(3500 * state.lootMult);
+    state.poops.splice(idx, 1);
+  }
 }
 
 function shatterProp(prop) {
@@ -508,15 +622,15 @@ function shatterProp(prop) {
 
 function updateWeapons(dt) {
   const p = state.player;
-  const cdMult = (1 / state.fireRateMult) * (p.overdrive > 0 ? 0.45 : 1);
+  const cdMult = (1 / state.fireRateMult) * (p.overdrive > 0 ? 0.45 : state.fever > 0 ? 0.65 : 1);
 
-  // 1. Electric Fly Swatter — dramatic visual scaling Lv1 -> Lv5 (wide arc -> 360° lightning storm!)
+  // 1. Electric Fly Swatter
   if (p.weapons.swatter > 0) {
     p.cooldowns.swatter -= dt;
     if (p.cooldowns.swatter <= 0) {
       const lv = p.weapons.swatter;
-      p.cooldowns.swatter = Math.max(0.32, (0.85 - lv * 0.1) * cdMult);
-      const range = 104 + lv * 18;
+      p.cooldowns.swatter = Math.max(0.3, (0.84 - lv * 0.1) * cdMult);
+      const range = 106 + lv * 18;
       const dmg = 26 + lv * 14;
       let hitAny = false;
       for (let i = state.enemies.length - 1; i >= 0; i--) {
@@ -527,66 +641,61 @@ function updateWeapons(dt) {
         if (d <= range + e.r) {
           hitAny = true;
           const crit = Math.random() < 0.28;
-          const kb = 200;
-          if (damageEnemy(e, crit ? dmg * 1.85 : dmg, (dx / (d || 1)) * kb, (dy / (d || 1)) * kb, crit)) {
+          if (damageEnemy(e, crit ? dmg * 1.85 : dmg, (dx / (d || 1)) * 200, (dy / (d || 1)) * 200, crit)) {
             state.enemies.splice(i, 1);
           }
         }
       }
-      // Also shatter nearby cardboard props!
+      // Can purify pet poop safely at range!
+      for (let i = state.poops.length - 1; i >= 0; i--) {
+        if (Math.hypot(state.poops[i].x - p.x, state.poops[i].y - p.y) <= range + 16) {
+          damagePoop(i, dmg);
+        }
+      }
       for (let i = state.props.length - 1; i >= 0; i--) {
         if (Math.hypot(state.props[i].x - p.x, state.props[i].y - p.y) <= range + 16) {
           shatterProp(state.props[i]);
           state.props.splice(i, 1);
         }
       }
-      if (lv >= 3) {
-        spawnRing(p.x, p.y, 24, range, "#38f3ff", 7, 0.22);
-      } else {
-        state.vfx.push({
-          type: "swatter",
-          x: p.x,
-          y: p.y,
-          r: range * 0.9,
-          startA: p.facing - (1.2 + lv * 0.35),
-          endA: p.facing + (1.2 + lv * 0.35),
-          life: 0.2,
-          maxLife: 0.2,
-        });
-      }
+      if (lv >= 3) spawnRing(p.x, p.y, 24, range, "#38f3ff", 7, 0.22);
+      else state.vfx.push({ type: "swatter", x: p.x, y: p.y, r: range * 0.9, startA: p.facing - (1.2 + lv * 0.35), endA: p.facing + (1.2 + lv * 0.35), life: 0.2, maxLife: 0.2 });
       if (hitAny) {
         sfx.playZap();
-        state.shake = Math.max(state.shake, 0.18);
+        state.shake = Math.max(state.shake, 0.16);
       }
     }
   }
 
-  // 2. Laser Pointer — scales from 1 beam to 5 beams!
+  // 2. Laser Pointer
   if (p.weapons.laser > 0) {
     p.cooldowns.laser -= dt;
-    if (p.cooldowns.laser <= 0 && state.enemies.length > 0) {
+    if (p.cooldowns.laser <= 0 && (state.enemies.length > 0 || state.poops.length > 0)) {
       const lv = p.weapons.laser;
       p.cooldowns.laser = Math.max(0.28, (0.82 - lv * 0.1) * cdMult);
-      const sorted = [...state.enemies].sort(
-        (a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y)
-      );
+      const sorted = [...state.enemies].sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
       const shots = Math.min(sorted.length, lv);
       const dmg = 34 + lv * 18;
       for (let s = 0; s < shots; s++) {
         const target = sorted[s];
-        if (!target || Math.hypot(target.x - p.x, target.y - p.y) > 390) continue;
+        if (!target || Math.hypot(target.x - p.x, target.y - p.y) > 400) continue;
         state.vfx.push({ type: "laser", x1: p.x, y1: p.y, x2: target.x, y2: target.y, life: 0.18, maxLife: 0.18 });
         const crit = Math.random() < 0.45;
         const idx = state.enemies.indexOf(target);
-        if (idx >= 0 && damageEnemy(target, crit ? dmg * 1.9 : dmg, 0, 0, crit)) {
-          state.enemies.splice(idx, 1);
+        if (idx >= 0 && damageEnemy(target, crit ? dmg * 1.9 : dmg, 0, 0, crit)) state.enemies.splice(idx, 1);
+      }
+      if (shots === 0 && state.poops.length > 0) {
+        const pp = state.poops[0];
+        if (Math.hypot(pp.x - p.x, pp.y - p.y) < 340) {
+          state.vfx.push({ type: "laser", x1: p.x, y1: p.y, x2: pp.x, y2: pp.y, life: 0.18, maxLife: 0.18 });
+          damagePoop(0, dmg);
         }
       }
       sfx.playLaser();
     }
   }
 
-  // 3. Orbiting Duct-Tape Spatulas
+  // 3. Orbiting Spatulas
   if (p.weapons.spatula > 0) {
     const lv = p.weapons.spatula;
     const count = 1 + lv;
@@ -599,9 +708,7 @@ function updateWeapons(dt) {
       for (let j = state.enemies.length - 1; j >= 0; j--) {
         const e = state.enemies[j];
         if (Math.hypot(e.x - sx, e.y - sy) < e.r + 18 && e.flash <= 0) {
-          if (damageEnemy(e, dmg, Math.cos(a) * 140, Math.sin(a) * 140, Math.random() < 0.2)) {
-            state.enemies.splice(j, 1);
-          }
+          if (damageEnemy(e, dmg, Math.cos(a) * 140, Math.sin(a) * 140, Math.random() < 0.2)) state.enemies.splice(j, 1);
         }
       }
     }
@@ -626,15 +733,13 @@ function updateWeapons(dt) {
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
         if (Math.abs(diff) <= 0.72) {
-          if (damageEnemy(e, dmg, (dx / (d || 1)) * 320, (dy / (d || 1)) * 320, false)) {
-            state.enemies.splice(i, 1);
-          }
+          if (damageEnemy(e, dmg, (dx / (d || 1)) * 320, (dy / (d || 1)) * 320, false)) state.enemies.splice(i, 1);
         }
       }
     }
   }
 
-  // 5. Tesla Power Strip (Chain Lightning!)
+  // 5. Tesla Power Strip
   if (p.weapons.tesla > 0) {
     p.cooldowns.tesla -= dt;
     if (p.cooldowns.tesla <= 0 && state.enemies.length > 0) {
@@ -663,9 +768,7 @@ function updateWeapons(dt) {
         cx = best.x;
         cy = best.y;
         const idx = state.enemies.indexOf(best);
-        if (idx >= 0 && damageEnemy(best, dmg, 0, 0, Math.random() < 0.3)) {
-          state.enemies.splice(idx, 1);
-        }
+        if (idx >= 0 && damageEnemy(best, dmg, 0, 0, Math.random() < 0.3)) state.enemies.splice(idx, 1);
       }
       if (pts.length > 1) {
         state.vfx.push({ type: "tesla", pts, life: 0.22, maxLife: 0.22 });
@@ -681,14 +784,7 @@ function buildLevelUpChoices() {
   for (const w of Object.values(WEAPONS)) {
     const cur = p.weapons[w.id] || 0;
     if (cur < w.maxLv) {
-      pool.push({
-        kind: "weapon",
-        id: w.id,
-        icon: w.icon,
-        name: w.name,
-        tag: cur === 0 ? "新外挂" : `LV ${cur} → ${cur + 1}`,
-        desc: w.desc,
-      });
+      pool.push({ kind: "weapon", id: w.id, icon: w.icon, name: w.name, tag: cur === 0 ? "新外挂" : `LV ${cur} → ${cur + 1}`, desc: w.desc });
     }
   }
   for (const pa of Object.values(PASSIVES)) {
@@ -750,31 +846,35 @@ function openLevelUp() {
   screenLevelUp.hidden = false;
 }
 
-function activateDockForWave() {
-  const p = state.player;
-  state.dock.x = p.x > ARENA.width / 2 ? 200 : ARENA.width - 200;
-  state.dock.y = p.y > ARENA.height / 2 ? 230 : ARENA.height - 230;
-  state.dock.active = true;
-  state.dock.progress = 0;
-  sfx.setUrgent(true);
-
-  // Enrage all living enemies for thrilling extraction sprint!
-  for (const e of state.enemies) {
-    e.enraged = true;
-    e.speed *= 1.18;
+function checkCleanlinessMilestones() {
+  const pct = state.cleanTracker.percent;
+  if (!state.milestones.m35 && pct >= 35) {
+    state.milestones.m35 = true;
+    state.dock.active = true;
+    state.dock.progress = 0;
+    sfx.setUrgent(true);
+    sfx.playExtractTick(0.8);
+    showToast("⚡ 清扫达 35%！充电桩撤离点已激活！可去撤离，或冲 70% 唤醒拖把王！", "green");
   }
-
-  if (!state.onboarding.firstDockShown) {
-    state.onboarding.firstDockShown = true;
-    showToast("🚨 人类快醒了！冲进绿圈充电桩守 3 秒撤离，或留下来贪下一波（大金×1.6）！", "green");
-  } else {
-    showToast(`🚨 第 ${state.wave} 波撤离警报！冲进充电桩还是继续赌命？`, "green");
+  if (!state.milestones.m70 && pct >= 70) {
+    state.milestones.m70 = true;
+    sfx.playHordeHorn();
+    spawnEnemy("mop", { x: 740, y: 820 });
+    showToast("👑 清扫达 70%！全图大金 +30%，旋转拖把王苏醒（利用家具掩体撞晕它）！", "pink");
+  }
+  if (!state.milestones.m100 && pct >= 100) {
+    state.milestones.m100 = true;
+    state.coresEarned += 1;
+    sfx.playExtractSuccess();
+    spawnRing(state.player.x, state.player.y, 20, 360, "#39ff88", 12, 0.55);
+    showJackpotBanner("100% 完美洁癖成就！", "+1 稀缺金核 💎", "✨ 客厅一尘不染 ✨");
   }
 }
 
 function finishRun(extracted) {
   state.phase = "ended";
   sfx.setUrgent(false);
+  sfx.setFever(false);
   sfx.stopBgm();
   btnOverdrive.hidden = true;
 
@@ -800,6 +900,7 @@ function finishRun(extracted) {
     if (!item.isGhost) save.museum[item.lootId] = (save.museum[item.lootId] || 0) + 1;
   }
   save.coins += earned;
+  save.goldCores = (save.goldCores || 0) + state.coresEarned;
   save.totalExtracted += earned;
   save.runsPlayed += 1;
   if (extracted && earned > save.bestRunValue) save.bestRunValue = earned;
@@ -808,11 +909,11 @@ function finishRun(extracted) {
   document.getElementById("res-eyebrow").textContent = extracted ? "EXTRACTION SUCCESS · 安全撤离" : "GREEDY WIPEOUT · 贪心翻车";
   document.getElementById("res-title").textContent = extracted ? "✅ 满载冲回充电桩！" : "💥 电量炸穿 · 贪心翻车！";
   document.getElementById("res-sub").textContent = extracted
-    ? `成功带出 ${keptItems.length} 件大金！${save.extractStreak >= 2 ? `（触发 ${save.extractStreak} 连撤收益加成！）` : ""}`
-    : `未撤离的 ¥${Math.max(0, totalVal - safeVal).toLocaleString()} 已散落客厅！好在安全箱保住了 ¥${safeVal.toLocaleString()}。`;
+    ? `客厅清扫 ${state.cleanTracker.percent}% · 带出 ${keptItems.length} 件大金${state.coresEarned > 0 ? ` + 💎${state.coresEarned} 金核` : ""}！`
+    : `客厅清扫 ${state.cleanTracker.percent}% · 安全箱保底 ¥${safeVal.toLocaleString()}${state.coresEarned > 0 ? ` + 💎${state.coresEarned} 金核` : ""}。`;
   document.getElementById("res-k1").textContent = extracted ? "实际落袋" : "痛失估值";
   document.getElementById("res-v1").textContent = `¥${(extracted ? earned : Math.max(0, totalVal - safeVal)).toLocaleString()}`;
-  document.getElementById("res-v2").textContent = `${state.wave}波 / ${state.kills}杀`;
+  document.getElementById("res-v2").textContent = `${state.cleanTracker.percent}% / ${state.kills}杀`;
   document.getElementById("res-v3").textContent = `¥${safeVal.toLocaleString()}`;
 
   const receiptImg = document.getElementById("receipt-img");
@@ -833,7 +934,7 @@ function finishRun(extracted) {
         state.phase = "playing";
         screenResult.hidden = true;
         btnOverdrive.hidden = false;
-        sfx.startBgm();
+        sfx.startBgm("living");
         showToast("⚡ 满血满能量复活！立刻开过载冲回充电桩！", "green");
       });
     };
@@ -866,8 +967,8 @@ function finishRun(extracted) {
       lootId: topLoot ? topLoot.lootId : "catcan",
     });
     const text = extracted
-      ? `我在《半夜扫地机：客厅摸金》带走了 ¥${earned.toLocaleString()}！敢来挑战今日客厅吗？ ${shareUrl}`
-      : `我在《半夜扫地机》第${state.wave}波贪心翻车，痛失 ¥${totalVal.toLocaleString()}！快点链接去客厅捡我的遗产： ${shareUrl}`;
+      ? `我在《半夜扫地机：客厅摸金》清扫 ${state.cleanTracker.percent}% 并带走 ¥${earned.toLocaleString()}！来挑战今日客厅： ${shareUrl}`
+      : `我在《半夜扫地机》贪心翻车，痛失 ¥${totalVal.toLocaleString()}！快点链接去客厅捡我的遗产： ${shareUrl}`;
     await copyToClipboard(text);
     showToast("🔗 已复制带遗产坐标的挑战文案！快发微信群或 X！", "pink");
   };
@@ -876,10 +977,11 @@ function finishRun(extracted) {
     const dataUrl = renderReceiptPoster({
       extracted,
       value: extracted ? (state.doubledOnce ? earned * 2 : earned) : totalVal,
+      cleanPct: state.cleanTracker.percent,
       wave: state.wave,
       kills: state.kills,
       lootNames: state.bagLoot.map((l) => `${l.short} (¥${l.value.toLocaleString()})`),
-      modeLabel: state.mode === "daily" ? `今日同图榜 #${state.seedStr}` : "自由客厅模式",
+      modeLabel: state.mode === "daily" ? `今日同图榜 #${state.seedStr}` : "L型客厅模式",
       streak: save.extractStreak,
       rescuedGhost: state.rescuedGhost,
     });
@@ -906,15 +1008,25 @@ function update(rawDt) {
   state.time += dt;
   state.shake = Math.max(0, state.shake - rawDt * 2.6);
 
+  if (state.comboTimer > 0) {
+    state.comboTimer -= dt;
+    if (state.comboTimer <= 0) state.combo = 0;
+  }
+  if (state.fever > 0) {
+    state.fever -= dt;
+    if (state.fever <= 0) sfx.setFever(false);
+  }
+
   const p = state.player;
   p.hurtFlash = Math.max(0, p.hurtFlash - dt);
   p.invuln = Math.max(0, p.invuln - dt);
+  p.poopSlow = Math.max(0, p.poopSlow - dt);
   if (p.overdrive > 0) {
     p.overdrive = Math.max(0, p.overdrive - dt);
     if (Math.random() < 0.5) spawnParticles(p.x, p.y, "#38f3ff", 1, 90, true);
   }
 
-  // Movement Input
+  // Smooth Q-Bouncy Inertia + Drift Feel!
   let ix = 0;
   let iy = 0;
   if (state.keys.has("KeyW") || state.keys.has("ArrowUp")) iy -= 1;
@@ -926,40 +1038,101 @@ function update(rawDt) {
     iy += state.joy.dy;
   }
   const mag = Math.hypot(ix, iy);
-  const moveSpd = p.speed * (p.overdrive > 0 ? 1.55 : 1);
-  if (mag > 0.05) {
-    const nx = ix / Math.max(1, mag);
-    const ny = iy / Math.max(1, mag);
-    p.x = Math.max(p.r + 10, Math.min(ARENA.width - p.r - 10, p.x + nx * moveSpd * dt));
-    p.y = Math.max(p.r + 68, Math.min(ARENA.height - p.r - 10, p.y + ny * moveSpd * dt));
-    p.facing = Math.atan2(ny, nx);
+  const moveSpd = p.speed * (p.overdrive > 0 ? 1.55 : p.poopSlow > 0 ? 0.55 : state.fever > 0 ? 1.18 : 1);
+  const tx = mag > 0.05 ? (ix / Math.max(1, mag)) * moveSpd : 0;
+  const ty = mag > 0.05 ? (iy / Math.max(1, mag)) * moveSpd : 0;
+  const accel = Math.min(1, dt * 11);
+  // Emit cute white drift dust puffs when making sharp turns!
+  const turnDelta = Math.hypot(tx - p.vx, ty - p.vy);
+  if (turnDelta > 180 && mag > 0.2 && Math.random() < 0.45) {
+    spawnParticles(p.x, p.y + 10, "#e2e8f0", 2, 55, false);
+  }
+  p.vx += (tx - p.vx) * accel;
+  p.vy += (ty - p.vy) * accel;
 
-    // Interactive Dust-Cleaning Trail + Charge!
-    cleanDustAt(state.dustLayer, p.x, p.y, p.overdrive > 0 ? 52 : 34);
-    state.dustCleanAcc += dt;
-    if (state.dustCleanAcc > 0.25) {
-      state.dustCleanAcc = 0;
-      p.charge = Math.min(100, p.charge + 1.4);
-      spawnParticles(p.x - nx * 18, p.y - ny * 18, "#7ef9ff", 1, 45, false);
+  p.x += p.vx * dt;
+  p.y += p.vy * dt;
+  clampToRoom(p, p.r);
+
+  if (Math.hypot(p.vx, p.vy) > 18) {
+    p.facing = Math.atan2(p.vy, p.vx);
+    if (p.poopSlow > 0) {
+      // Roomba Poop Nightmare: smears brown trails back onto the floor!
+      smearPoopAt(state.dustLayer, p.x, p.y, 20);
+      state.cleanTracker.dirtyAt(p.x, p.y, 26);
+    } else {
+      const cleanR = p.overdrive > 0 ? 54 : 38;
+      cleanDustAt(state.dustLayer, p.x, p.y, cleanR);
+      const newly = state.cleanTracker.markClean(p.x, p.y, cleanR);
+      if (newly > 0) {
+        p.charge = Math.min(100, p.charge + newly * 0.7);
+        checkCleanlinessMilestones();
+      }
     }
   }
 
-  // Smooth Camera
-  const targetCamX = Math.max(vw / 2, Math.min(ARENA.width - vw / 2, p.x));
-  const targetCamY = Math.max(vh / 2, Math.min(ARENA.height - vh / 2, p.y));
+  // Camera
+  const targetCamX = Math.max(vw / 2, Math.min(ROOM.width - vw / 2, p.x));
+  const targetCamY = Math.max(vh / 2, Math.min(ROOM.height - vh / 2, p.y));
   state.cam.x += (targetCamX - state.cam.x) * Math.min(1, dt * 8.5);
   state.cam.y += (targetCamY - state.cam.y) * Math.min(1, dt * 8.5);
 
-  // Ramming destructible props
-  for (let i = state.props.length - 1; i >= 0; i--) {
-    const pr = state.props[i];
-    if (Math.hypot(p.x - pr.x, p.y - pr.y) < p.r + 22) {
-      shatterProp(pr);
-      state.props.splice(i, 1);
+  // Interactive Power-Strip Shock Traps!
+  for (const strip of state.shockStrips) {
+    strip.cd = Math.max(0, strip.cd - dt);
+    if (strip.cd <= 0 && Math.hypot(p.x - strip.x, p.y - strip.y) < 38) {
+      strip.cd = 16;
+      sfx.playOverdriveBlast();
+      state.shake = 0.65;
+      spawnRing(strip.x, strip.y, 16, 260, "#38f3ff", 10, 0.35);
+      spawnText(strip.x, strip.y - 24, "⚡ 漏电插线板全屏麻痹！", "#38f3ff", 20);
+      for (let i = state.enemies.length - 1; i >= 0; i--) {
+        const e = state.enemies[i];
+        if (Math.hypot(e.x - strip.x, e.y - strip.y) < 260) {
+          e.stun = Math.max(e.stun, 1.8);
+          if (damageEnemy(e, 75, 0, 0, true)) state.enemies.splice(i, 1);
+        }
+      }
     }
   }
 
-  // Opening Mystery Gold Crates (0.85s tactile suction ritual!)
+  // Pet Poop Step-On Nightmare Check!
+  for (let i = state.poops.length - 1; i >= 0; i--) {
+    const poop = state.poops[i];
+    poop.flash = Math.max(0, poop.flash - dt);
+    if (Math.hypot(p.x - poop.x, p.y - poop.y) < p.r + 14 && p.overdrive <= 0) {
+      p.poopSlow = 2.4;
+      sfx.playPoopSplat();
+      vibrate(40);
+      state.shake = 0.5;
+      smearPoopAt(state.dustLayer, poop.x, poop.y, 38);
+      state.cleanTracker.dirtyAt(poop.x, poop.y, 44);
+      spawnText(poop.x, poop.y - 24, "💩 踩雷！涂脏地板了！", "#c08457", 19);
+      showToast("💩 扫地机终极噩梦！踩到粑粑减速并弄脏地板！（用武器远程清掉可爆金币）", "pink");
+      state.poops.splice(i, 1);
+    }
+  }
+
+  // Native Furniture Search Spots (Sofa cracks, under tables, TV console)
+  for (const spot of state.nativeSpots) {
+    if (spot.searched) continue;
+    if (Math.hypot(p.x - spot.x, p.y - spot.y) < 62) {
+      spot.progress += dt / 0.8;
+      spot.tickAcc += dt;
+      if (spot.tickAcc >= 0.14) {
+        spot.tickAcc = 0;
+        sfx.playCrateTick(spot.progress);
+      }
+      if (spot.progress >= 1) {
+        spot.searched = true;
+        grantLootReward(spot.x, spot.y, spot.minVal, `🔍 ${spot.label}出大金！`);
+      }
+    } else {
+      spot.progress = Math.max(0, spot.progress - dt * 0.8);
+    }
+  }
+
+  // Boss/Elite Mystery Crates
   for (let i = state.crates.length - 1; i >= 0; i--) {
     const cr = state.crates[i];
     if (Math.hypot(p.x - cr.x, p.y - cr.y) < 76) {
@@ -970,7 +1143,7 @@ function update(rawDt) {
         sfx.playCrateTick(cr.progress);
       }
       if (cr.progress >= 1) {
-        popMysteryCrate(cr);
+        grantLootReward(cr.x, cr.y, cr.minVal, "👑 Boss 超级金箱出货！");
         state.crates.splice(i, 1);
       }
     } else {
@@ -978,30 +1151,25 @@ function update(rawDt) {
     }
   }
 
-  // Wave & Charging Dock Director
-  state.waveTimer -= dt;
-  if (state.waveTimer <= 0) {
-    if (!state.dock.active) {
-      activateDockForWave();
-      state.waveTimer = 18;
-    } else {
-      state.dock.active = false;
-      sfx.setUrgent(false);
-      state.wave += 1;
-      state.waveTimer = 30;
-      spawnMysteryCrate(260, 18800);
-      showToast(`🔥 贪心进入第 ${state.wave} 波！大金价值暴涨，拖把 Boss 来袭！`, "pink");
-      if (state.wave >= 2 && state.bossSpawnedWave < state.wave) {
-        state.bossSpawnedWave = state.wave;
-        spawnEnemy("mop");
-      }
+  // Ramming destructible props
+  for (let i = state.props.length - 1; i >= 0; i--) {
+    const pr = state.props[i];
+    if (Math.hypot(p.x - pr.x, p.y - pr.y) < p.r + 22) {
+      shatterProp(pr);
+      state.props.splice(i, 1);
     }
   }
 
-  // Charging Dock Extraction
+  // Periodic Horde Swarm Timer!
+  state.hordeTimer -= dt;
+  if (state.hordeTimer <= 0) {
+    state.hordeTimer = 26;
+    triggerHordeSwarm();
+  }
+
+  // Charging Dock Extraction Check (unlocked at 35% Cleanliness!)
   if (state.dock.active) {
-    const distDock = Math.hypot(p.x - state.dock.x, p.y - state.dock.y);
-    if (distDock <= state.dock.radius) {
+    if (Math.hypot(p.x - state.dock.x, p.y - state.dock.y) <= state.dock.radius) {
       state.dock.progress += dt / 3.0;
       state.dock.tickAcc += dt;
       if (state.dock.tickAcc >= 0.45) {
@@ -1018,33 +1186,26 @@ function update(rawDt) {
     }
   }
 
-  // Dense, juicy enemy spawns!
-  const spawnRate = Math.max(0.18, (state.dock.active ? 0.34 : 0.62) - state.wave * 0.1);
+  // Ambient enemy spawns
+  const spawnRate = Math.max(0.24, 0.72 - state.wave * 0.08);
   state.spawnAcc -= dt;
-  if (state.spawnAcc <= 0 && state.enemies.length < 95) {
+  if (state.spawnAcc <= 0 && state.enemies.length < 90) {
     state.spawnAcc = spawnRate;
     spawnEnemy();
   }
 
-  // Periodic Mystery Gold Crates
-  state.crateAcc -= dt;
-  if (state.crateAcc <= 0 && state.crates.length < 3) {
-    state.crateAcc = Math.max(11, 17 - state.wave * 2);
-    spawnMysteryCrate(280, state.wave >= 2 ? 12000 : 8800);
-  }
-
-  // Cat Paw Slam Hazard
-  if (state.time > 20) {
+  // Real Tabby Cat Paw Slams
+  if (state.time > 16) {
     state.pawAcc -= dt;
     if (state.pawAcc <= 0) {
-      state.pawAcc = Math.max(6, 11 - state.wave * 1.4);
+      state.pawAcc = Math.max(6.5, 11.5 - state.wave * 1.1);
       state.catPaws.push({
         x: p.x + (Math.random() - 0.5) * 110,
         y: p.y + (Math.random() - 0.5) * 110,
         radius: 68,
         phase: "warn",
-        warnDur: 1.2,
-        timer: 1.2,
+        warnDur: 1.25,
+        timer: 1.25,
       });
     }
   }
@@ -1053,11 +1214,11 @@ function update(rawDt) {
     paw.timer -= dt;
     if (paw.phase === "warn" && paw.timer <= 0) {
       paw.phase = "slam";
-      paw.timer = 0.42;
-      state.shake = Math.max(state.shake, 0.55);
+      paw.timer = 0.55;
+      state.shake = Math.max(state.shake, 0.6);
       sfx.playCatSlam();
-      spawnRing(paw.x, paw.y, 16, paw.radius * 1.3, "#ff4c76", 7, 0.3);
-      if (Math.hypot(p.x - paw.x, p.y - paw.y) < paw.radius + p.r * 0.6 && p.invuln <= 0) {
+      spawnRing(paw.x, paw.y, 16, paw.radius * 1.35, "#ff4c76", 7, 0.32);
+      if (Math.hypot(p.x - paw.x, p.y - paw.y) < paw.radius + p.r * 0.55 && p.invuln <= 0) {
         p.hp -= 20;
         p.hurtFlash = 0.2;
         p.invuln = 0.7;
@@ -1070,18 +1231,91 @@ function update(rawDt) {
     }
   }
 
-  // Weapons
   updateWeapons(dt);
 
-  // Enemies movement + Vacuum Vortex Pull on low-HP dust bunnies + Overdrive Ram!
+  // Enemies AI (including Boss 3-Skill Bullet/Charge/Wall-Stun & Sock Poison Projectiles!)
   for (let i = state.enemies.length - 1; i >= 0; i--) {
     const e = state.enemies[i];
     e.flash = Math.max(0, e.flash - dt);
+    if (e.stun > 0) {
+      e.stun -= dt;
+      continue;
+    }
+
     const dx = p.x - e.x;
     const dy = p.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
-    e.x += ((dx / d) * e.speed + e.vx) * dt;
-    e.y += ((dy / d) * e.speed + e.vy) * dt;
+
+    if (e.type === "mop") {
+      // Boss 3-Skill State Machine!
+      e.aiTimer -= dt;
+      if (!e.summonedHalf && e.hp < e.maxHp * 0.55) {
+        e.summonedHalf = true;
+        showToast("🧹 拖把王半血狂暴！甩出 6 只毛球小弟！", "pink");
+        for (let k = 0; k < 6; k++) {
+          const a = (k / 6) * Math.PI * 2;
+          spawnEnemy("dust", { x: e.x + Math.cos(a) * 65, y: e.y + Math.sin(a) * 65 });
+        }
+      }
+      if (e.aiState === "chase") {
+        e.x += ((dx / d) * e.speed + e.vx) * dt;
+        e.y += ((dy / d) * e.speed + e.vy) * dt;
+        if (e.aiTimer <= 0) {
+          if (Math.random() < 0.52) {
+            // Skill 1: Red-line Telegraph High-Speed Charge!
+            e.aiState = "windup";
+            e.aiTimer = 0.85;
+            e.chargeAng = Math.atan2(dy, dx);
+          } else {
+            // Skill 2: 360° Water-Drop Bullet Ring (blockable by sofa/furniture!)
+            e.aiTimer = 3.2;
+            const n = 10;
+            for (let k = 0; k < n; k++) {
+              const a = (k / n) * Math.PI * 2 + state.time;
+              state.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 210, vy: Math.sin(a) * 210, r: 8, dmg: 12, color: "#38f3ff", life: 3.0 });
+            }
+            spawnRing(e.x, e.y, 20, 95, "#38f3ff", 5, 0.25);
+          }
+        }
+      } else if (e.aiState === "windup") {
+        if (e.aiTimer <= 0) {
+          e.aiState = "charge";
+          e.aiTimer = 0.95;
+          sfx.playZap();
+        }
+      } else if (e.aiState === "charge") {
+        e.x += Math.cos(e.chargeAng) * 430 * dt;
+        e.y += Math.sin(e.chargeAng) * 430 * dt;
+        const hitWall = clampToRoom(e, e.r);
+        if (hitWall) {
+          // Tactical Cover Stun!
+          e.aiState = "chase";
+          e.aiTimer = 3.2;
+          e.stun = 2.2;
+          state.shake = 0.7;
+          sfx.playBossStun();
+          spawnRing(e.x, e.y, 18, 110, "#ffe066", 7, 0.3);
+          showToast("💫 拖把王一头撞晕在家具上！伤害 +50%，快集火！", "gold");
+        } else if (e.aiTimer <= 0) {
+          e.aiState = "chase";
+          e.aiTimer = 2.6;
+        }
+      }
+      clampToRoom(e, e.r);
+    } else {
+      // Standard monsters + Sock ranged poison bubble!
+      e.x += ((dx / d) * e.speed + e.vx) * dt;
+      e.y += ((dy / d) * e.speed + e.vy) * dt;
+      clampToRoom(e, e.r);
+      if (e.type === "sock" && d < 320) {
+        e.shootCd -= dt;
+        if (e.shootCd <= 0) {
+          e.shootCd = 3.6;
+          state.enemyBullets.push({ x: e.x, y: e.y, vx: (dx / d) * 175, vy: (dy / d) * 175, r: 7, dmg: 10, color: "#84cc16", life: 2.4 });
+        }
+      }
+    }
+
     e.vx *= Math.pow(0.05, dt);
     e.vy *= Math.pow(0.05, dt);
 
@@ -1103,25 +1337,50 @@ function update(rawDt) {
     }
   }
 
+  // Enemy Projectiles (blocked cleanly by Solid Furniture Obstacles!)
+  for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+    const b = state.enemyBullets[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.life -= dt;
+    if (b.life <= 0 || pointHitsObstacle(b.x, b.y)) {
+      spawnParticles(b.x, b.y, b.color, 4, 80, false);
+      state.enemyBullets.splice(i, 1);
+      continue;
+    }
+    if (Math.hypot(b.x - p.x, b.y - p.y) < b.r + p.r - 3 && p.invuln <= 0) {
+      p.hp -= b.dmg;
+      p.hurtFlash = 0.18;
+      p.invuln = 0.5;
+      sfx.playHurt();
+      spawnText(p.x, p.y - 24, `-${b.dmg}`, "#ff4c76", 17);
+      state.enemyBullets.splice(i, 1);
+    }
+  }
+
   if (p.hp <= 0) {
     p.hp = 0;
     finishRun(false);
     return;
   }
 
-  // Gems & Coins magnet suction
+  // Gems, Coins & Rare Gold Core suction
   for (let i = state.gems.length - 1; i >= 0; i--) {
     const g = state.gems[i];
     const dx = p.x - g.x;
     const dy = p.y - g.y;
     const d = Math.hypot(dx, dy);
-    if (g.forcePull || d < p.magnet) {
-      g.x += (dx / (d || 1)) * 540 * dt;
-      g.y += (dy / (d || 1)) * 540 * dt;
+    if (g.forcePull || d < p.magnet * (state.fever > 0 ? 1.5 : 1)) {
+      g.x += (dx / (d || 1)) * 560 * dt;
+      g.y += (dy / (d || 1)) * 560 * dt;
     }
     if (d < p.r + 12) {
       p.charge = Math.min(100, p.charge + 1.5);
-      if (g.kind === "coin") {
+      if (g.kind === "core") {
+        state.coresEarned += g.val;
+        sfx.playBigGold();
+        spawnText(p.x, p.y - 28, "+1 稀缺金核 💎!", "#38f3ff", 22);
+      } else if (g.kind === "coin") {
         state.looseCoins += g.val;
         sfx.playXp();
       } else {
@@ -1138,16 +1397,16 @@ function update(rawDt) {
     }
   }
 
-  // Friend Ghost Drop / Loose Loot Pickup
+  // Friend Ghost Drop Pickup
   for (let i = state.lootDrops.length - 1; i >= 0; i--) {
     const drop = state.lootDrops[i];
     if (Math.hypot(p.x - drop.x, p.y - drop.y) < p.r + 32) {
       state.bagLoot.push(drop);
       sfx.playBigGold();
       vibrate(28);
-      state.shake = Math.max(state.shake, 0.45);
+      state.shake = 0.45;
       spawnParticles(drop.x, drop.y, "#ffd54a", 24, 210, true);
-      showJackpotBanner(drop.name, drop.value);
+      showJackpotBanner(drop.name, drop.value, "📦 成功捡漏群友遗产！");
       if (drop.isGhost) state.rescuedGhost = drop.owner;
       state.lootDrops.splice(i, 1);
     }
@@ -1180,27 +1439,33 @@ function update(rawDt) {
     if (tx.life <= 0) state.texts.splice(i, 1);
   }
 
-  // Sync HUD & Overdrive Button
+  // Sync HUD
   document.getElementById("hud-hp").style.width = `${Math.max(0, (p.hp / p.maxHp) * 100)}%`;
   document.getElementById("hud-val").textContent = `¥${Math.round(getTotalRunValue()).toLocaleString()}`;
   const lockedCount = Math.min(save.safeBoxSlots, state.bagLoot.length);
   document.getElementById("hud-safe").textContent = `🔒${lockedCount}/${save.safeBoxSlots}`;
   const timerEl = document.getElementById("hud-timer");
-  const sec = Math.max(0, Math.ceil(state.waveTimer));
-  timerEl.textContent = state.dock.active ? `⚡${sec}s` : `00:${String(sec).padStart(2, "0")}`;
-  timerEl.classList.toggle("urgent", state.dock.active && sec <= 10);
+  const sec = Math.max(0, Math.ceil(state.hordeTimer));
+  timerEl.textContent = `潮:${sec}s`;
+  timerEl.classList.toggle("urgent", sec <= 5);
   document.getElementById("hud-xp").style.width = `${Math.min(100, (p.xp / p.xpNext) * 100)}%`;
-  document.getElementById("hud-wave").textContent = `第 ${state.wave} 波 · 估值 ×${(1 + (state.wave - 1) * 0.6).toFixed(1)}`;
-  document.getElementById("hud-lv").textContent = `LV ${p.lv}`;
+
+  const cleanEl = document.getElementById("hud-clean");
+  const pct = state.cleanTracker.percent;
+  cleanEl.textContent = pct >= 100 ? "🧹 100% 完美!" : pct >= 70 ? `🧹 ${pct}% (冲100%💎)` : pct >= 35 ? `🧹 ${pct}% (可撤离)` : `🧹 ${pct}% (35%开撤)`;
+  cleanEl.classList.toggle("done", pct >= 35);
+
+  document.getElementById("hud-wave").textContent = `第${state.wave}波 · LV${p.lv}`;
+  document.getElementById("hud-combo").textContent = state.fever > 0 ? "🔥FEVER" : state.combo >= 5 ? `${state.combo}连击` : "";
 
   const ready = p.charge >= 100;
   btnOverdrive.classList.toggle("ready", ready);
   odTxt.textContent = p.overdrive > 0 ? "暴走中!" : ready ? "过载清屏!" : `${Math.floor(p.charge)}%`;
 }
 
-// Workshop & Museum Shop
+// Workshop & Museum Shop (Dual Currency ready!)
 function renderShop() {
-  document.getElementById("shop-coins").textContent = `¥${Math.round(save.coins).toLocaleString()}`;
+  document.getElementById("shop-coins").textContent = `¥${Math.round(save.coins).toLocaleString()} · 💎${save.goldCores || 0}`;
   document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === currentShopTab));
   const box = document.getElementById("shop-content");
   box.innerHTML = "";
@@ -1209,6 +1474,9 @@ function renderShop() {
     for (const sk of SKINS) {
       const owned = save.skinsOwned.includes(sk.id);
       const equipped = save.equippedSkin === sk.id;
+      const needCore = sk.corePrice || 0;
+      const canAfford = save.coins >= sk.price && (save.goldCores || 0) >= needCore;
+      const priceLabel = needCore > 0 ? `¥${sk.price.toLocaleString()}+💎${needCore}` : `¥${sk.price.toLocaleString()}`;
       const row = document.createElement("div");
       row.className = "shop-item";
       row.innerHTML = `
@@ -1216,14 +1484,15 @@ function renderShop() {
           <div class="name">${sk.name}</div>
           <div class="desc">${sk.desc}</div>
         </div>
-        <button class="shop-btn ${equipped ? "owned" : ""}">${equipped ? "使用中" : owned ? "装备" : `¥${sk.price.toLocaleString()}`}</button>
+        <button class="shop-btn ${equipped ? "owned" : ""}">${equipped ? "使用中" : owned ? "装备" : priceLabel}</button>
       `;
       const btn = row.querySelector("button");
-      if (!owned && save.coins < sk.price) btn.disabled = true;
+      if (!owned && !canAfford) btn.disabled = true;
       btn.onclick = () => {
         if (owned) save.equippedSkin = sk.id;
-        else if (save.coins >= sk.price) {
+        else if (canAfford) {
           save.coins -= sk.price;
+          save.goldCores = (save.goldCores || 0) - needCore;
           save.skinsOwned.push(sk.id);
           save.equippedSkin = sk.id;
           sfx.playBigGold();
