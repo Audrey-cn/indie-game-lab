@@ -1275,25 +1275,88 @@ function drawCatPaw(ctx, paw) {
   ctx.restore();
 }
 
+// Pre-baked Additive Bloom Glow & Starburst VFX Sprites (Zero flat AI circles!)
+const VFX_SPRITES = {};
+function getGlowSprite(color) {
+  if (VFX_SPRITES[color]) return VFX_SPRITES[color];
+  const c = document.createElement("canvas");
+  c.width = 96;
+  c.height = 96;
+  const g = c.getContext("2d");
+  const rg = g.createRadialGradient(48, 48, 2, 48, 48, 46);
+  rg.addColorStop(0, "#ffffff");
+  rg.addColorStop(0.28, color);
+  rg.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = rg;
+  g.fillRect(0, 0, 96, 96);
+  g.fillStyle = "rgba(255,255,255,0.88)";
+  g.beginPath();
+  g.moveTo(48, 8); g.quadraticCurveTo(51, 45, 88, 48);
+  g.quadraticCurveTo(51, 51, 48, 88); g.quadraticCurveTo(45, 51, 8, 48);
+  g.quadraticCurveTo(45, 45, 48, 8);
+  g.fill();
+  VFX_SPRITES[color] = c;
+  return c;
+}
+
 function drawWeaponVfx(ctx, state, time) {
   const { player } = state;
+  const evos = player.evolutions || {};
+
+  // Golden Gravity Vortex Aura (when evolved!)
+  if (evos.golden_vortex) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let k = 0; k < 3; k++) {
+      const a0 = time * (2.6 + k * 0.7) + k * 2.1;
+      ctx.strokeStyle = k === 0 ? "rgba(255, 213, 74, 0.55)" : "rgba(255, 168, 40, 0.35)";
+      ctx.lineWidth = 5 - k;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, 130 - k * 26, a0, a0 + 2.3);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Orbiting Spatula Blades (with Motion Trail + Flame Tornado / Golden Evolution!)
   if (player.weapons.spatula > 0) {
-    const count = 1 + player.weapons.spatula;
-    const rad = 68 + player.weapons.spatula * 7;
+    const isFlame = !!evos.flame_tornado;
+    const isGold = !!evos.golden_vortex;
+    const count = 1 + player.weapons.spatula + (isFlame ? 2 : 0);
+    const rad = (68 + player.weapons.spatula * 7) * (isFlame ? 1.18 : 1);
+    const rotSpd = isFlame ? 6.8 : 4.8;
+    // Additive crescent motion trail ring
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
     for (let i = 0; i < count; i++) {
-      const a = time * 4.8 + (i / count) * Math.PI * 2;
+      const a = time * rotSpd + (i / count) * Math.PI * 2;
+      ctx.strokeStyle = isFlame ? "rgba(255, 110, 35, 0.65)" : isGold ? "rgba(255, 213, 74, 0.55)" : "rgba(180, 230, 255, 0.35)";
+      ctx.lineWidth = isFlame ? 14 : 8;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, rad, a - 0.68, a);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    for (let i = 0; i < count; i++) {
+      const a = time * rotSpd + (i / count) * Math.PI * 2;
       const sx = player.x + Math.cos(a) * rad;
       const sy = player.y + Math.sin(a) * rad;
       ctx.save();
       ctx.translate(sx, sy);
       ctx.rotate(a + Math.PI / 2);
-      ctx.fillStyle = "#e2ecfc";
+      if (isFlame) {
+        const fl = getGlowSprite("#ff6b22");
+        ctx.drawImage(fl, -26, -26, 52, 52);
+      }
+      ctx.fillStyle = isFlame ? "#ff9f43" : isGold ? "#ffe066" : "#e2ecfc";
       ctx.strokeStyle = "#161426";
       ctx.lineWidth = 2.6;
       roundRect(ctx, -7, -20, 14, 24, 3);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#ffd64f";
+      ctx.fillStyle = isFlame ? "#ff3b30" : "#ffd64f";
       ctx.fillRect(-3.5, 4, 7, 13);
       ctx.strokeRect(-3.5, 4, 7, 13);
       ctx.restore();
@@ -1305,55 +1368,114 @@ function drawWeaponVfx(ctx, state, time) {
     ctx.save();
     ctx.globalAlpha = a;
     if (fx.type === "ring") {
+      ctx.globalCompositeOperation = "lighter";
       const r = fx.r0 + (fx.r1 - fx.r0) * (1 - a);
       ctx.strokeStyle = fx.color;
-      ctx.lineWidth = (fx.width || 6) * a;
+      ctx.lineWidth = (fx.width || 6) * 2.4 * a;
+      ctx.globalAlpha = a * 0.32;
       ctx.beginPath();
       ctx.arc(fx.x, fx.y, r, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.globalAlpha = a * 0.92;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = Math.max(1.6, (fx.width || 6) * 0.6 * a);
+      ctx.stroke();
     } else if (fx.type === "swatter") {
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineCap = "round";
       ctx.strokeStyle = "#38f3ff";
-      ctx.lineWidth = 12 * a;
+      ctx.lineWidth = 22 * a;
+      ctx.globalAlpha = a * 0.3;
       ctx.beginPath();
       ctx.arc(fx.x, fx.y, fx.r, fx.startA, fx.endA);
       ctx.stroke();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 4 * a;
-      ctx.beginPath();
-      ctx.arc(fx.x, fx.y, fx.r * 0.92, fx.startA, fx.endA);
+      ctx.globalAlpha = a * 0.9;
+      ctx.strokeStyle = "#7ef9ff";
+      ctx.lineWidth = 9 * a;
       ctx.stroke();
-    } else if (fx.type === "laser") {
-      ctx.strokeStyle = "#ff2e6d";
-      ctx.lineWidth = 10 * a;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 3 * a;
+      ctx.beginPath();
+      ctx.arc(fx.x, fx.y, fx.r + 3, fx.startA + 0.12, fx.endA - 0.12);
+      ctx.stroke();
+      const tipX = fx.x + Math.cos(fx.endA) * fx.r;
+      const tipY = fx.y + Math.sin(fx.endA) * fx.r;
+      const flare = getGlowSprite("#38f3ff");
+      ctx.drawImage(flare, tipX - 28 * a, tipY - 28 * a, 56 * a, 56 * a);
+    } else if (fx.type === "laser" || fx.type === "prism_beam") {
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineCap = "round";
+      const beamCol = fx.color || (fx.type === "prism_beam" ? "#38f3ff" : "#ff2e6d");
+      const wMult = fx.type === "prism_beam" ? 1.55 : 1;
+      ctx.strokeStyle = beamCol;
+      ctx.lineWidth = 18 * a * wMult;
+      ctx.globalAlpha = a * 0.35;
       ctx.beginPath();
       ctx.moveTo(fx.x1, fx.y1);
       ctx.lineTo(fx.x2, fx.y2);
       ctx.stroke();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 3.5 * a;
+      ctx.globalAlpha = a * 0.95;
+      ctx.lineWidth = 7 * a * wMult;
       ctx.stroke();
-    } else if (fx.type === "hairdryer") {
-      ctx.fillStyle = "rgba(255, 168, 76, 0.38)";
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2.6 * a * wMult;
+      ctx.stroke();
+      const flare = getGlowSprite(beamCol);
+      const fs = (fx.type === "prism_beam" ? 68 : 48) * a;
+      ctx.drawImage(flare, fx.x2 - fs / 2, fx.y2 - fs / 2, fs, fs);
+    } else if (fx.type === "hairdryer" || fx.type === "flame_wave") {
+      ctx.globalCompositeOperation = "lighter";
+      const isFlame = fx.type === "flame_wave";
+      const rg = ctx.createRadialGradient(fx.x, fx.y, 14, fx.x, fx.y, fx.r);
+      rg.addColorStop(0, isFlame ? "rgba(255, 240, 150, 0.72)" : "rgba(255, 224, 150, 0.55)");
+      rg.addColorStop(0.55, isFlame ? "rgba(255, 90, 30, 0.45)" : "rgba(255, 148, 56, 0.32)");
+      rg.addColorStop(1, "rgba(255, 80, 20, 0)");
+      ctx.fillStyle = rg;
       ctx.beginPath();
       ctx.moveTo(fx.x, fx.y);
-      ctx.arc(fx.x, fx.y, fx.r, fx.angle - 0.6, fx.angle + 0.6);
+      ctx.arc(fx.x, fx.y, fx.r, fx.angle - 0.62, fx.angle + 0.62);
       ctx.closePath();
       ctx.fill();
-    } else if (fx.type === "tesla") {
-      ctx.strokeStyle = "#c084fc";
-      ctx.lineWidth = 6 * a;
-      ctx.beginPath();
-      ctx.moveTo(fx.pts[0].x, fx.pts[0].y);
-      for (let i = 1; i < fx.pts.length; i++) {
-        const prev = fx.pts[i - 1];
-        const cur = fx.pts[i];
-        ctx.lineTo((prev.x + cur.x) / 2 + (Math.random() - 0.5) * 20, (prev.y + cur.y) / 2 + (Math.random() - 0.5) * 20);
-        ctx.lineTo(cur.x, cur.y);
+      ctx.strokeStyle = isFlame ? "#ffd54a" : "#ffbe76";
+      ctx.lineWidth = 3.5 * a;
+      for (let k = 0; k < 3; k++) {
+        const rr = fx.r * (0.38 + k * 0.24 + (1 - a) * 0.18);
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, rr, fx.angle - 0.46, fx.angle + 0.46);
+        ctx.stroke();
       }
-      ctx.stroke();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2 * a;
-      ctx.stroke();
+    } else if (fx.type === "tesla" || fx.type === "thunder_storm") {
+      ctx.globalCompositeOperation = "lighter";
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      const boltCol = fx.type === "thunder_storm" ? "#e879f9" : "#a855f7";
+      const drawBolt = (width, color, alphaMult, jitter) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width * a;
+        ctx.globalAlpha = a * alphaMult;
+        ctx.beginPath();
+        ctx.moveTo(fx.pts[0].x, fx.pts[0].y);
+        for (let i = 1; i < fx.pts.length; i++) {
+          const prev = fx.pts[i - 1];
+          const cur = fx.pts[i];
+          const mx1 = prev.x + (cur.x - prev.x) * 0.33 + (Math.random() - 0.5) * jitter;
+          const my1 = prev.y + (cur.y - prev.y) * 0.33 + (Math.random() - 0.5) * jitter;
+          const mx2 = prev.x + (cur.x - prev.x) * 0.66 + (Math.random() - 0.5) * jitter;
+          const my2 = prev.y + (cur.y - prev.y) * 0.66 + (Math.random() - 0.5) * jitter;
+          ctx.lineTo(mx1, my1);
+          ctx.lineTo(mx2, my2);
+          ctx.lineTo(cur.x, cur.y);
+        }
+        ctx.stroke();
+      };
+      drawBolt(fx.type === "thunder_storm" ? 16 : 11, boltCol, 0.38, 26);
+      drawBolt(fx.type === "thunder_storm" ? 6 : 4, "#f0abfc", 0.85, 18);
+      drawBolt(2.2, "#ffffff", 0.95, 10);
+      const flare = getGlowSprite(boltCol);
+      for (let i = 1; i < fx.pts.length; i++) {
+        const pt = fx.pts[i];
+        ctx.drawImage(flare, pt.x - 24 * a, pt.y - 24 * a, 48 * a, 48 * a);
+      }
     }
     ctx.restore();
   }

@@ -275,26 +275,63 @@
       text-shadow: 0 2px 0 var(--ink);
     }
     .home-bottom { display: flex; flex-direction: column; gap: 10px; }
-    .equipped-strip {
-      display: flex; align-items: center; justify-content: space-between;
-      background: rgba(18, 22, 46, 0.88); border: 2.5px solid var(--ink);
-      border-radius: 14px; padding: 8px 12px; box-shadow: 0 4px 0 var(--ink);
+    .pilot-pill {
+      align-self: center; display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(16, 20, 44, 0.86); border: 2px solid rgba(255,255,255,0.22);
+      border-radius: 999px; padding: 5px 12px; cursor: pointer;
+      box-shadow: 0 3px 0 var(--ink); backdrop-filter: blur(6px);
     }
-    .equipped-strip .eq-name { font-size: 13px; font-weight: 900; color: var(--gold); }
-    .equipped-strip .eq-skill { font-size: 11px; font-weight: 800; color: var(--cyan); }
-    .mode-pills { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    #map-selector {
-      display: flex !important; overflow-x: auto; gap: 6px; padding-bottom: 2px;
-      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    .pilot-pill .eq-name { font-size: 11.5px; font-weight: 900; color: var(--gold); }
+    .pilot-pill .eq-edit { font-size: 10px; font-weight: 900; color: var(--cyan); background: rgba(56,243,255,0.16); padding: 2px 7px; border-radius: 999px; }
+
+    /* Horizontal Snap-Scroll Map Cards (Vampire-Survivors / Mobile Hub Style!) */
+    #map-carousel {
+      display: flex; overflow-x: auto; gap: 10px; padding: 4px 2px 6px;
+      scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch;
     }
-    #map-selector::-webkit-scrollbar { display: none; }
-    #map-selector .stab { flex: 0 0 auto; white-space: nowrap; padding: 7px 10px; font-size: 11px; }
-    .mpill {
-      padding: 9px; border-radius: 12px; border: 2.5px solid var(--ink);
-      background: rgba(24, 30, 58, 0.9); color: var(--muted);
-      font-size: 12px; font-weight: 900; cursor: pointer; box-shadow: 0 3px 0 var(--ink);
+    #map-carousel::-webkit-scrollbar { display: none; }
+    .map-card {
+      flex: 0 0 156px; scroll-snap-align: center;
+      border-radius: 16px; border: 2.5px solid var(--ink); overflow: hidden;
+      background: rgba(18, 22, 46, 0.92); box-shadow: 0 5px 0 var(--ink);
+      cursor: pointer; text-align: left; color: #fff; padding: 0;
+      transition: transform 0.15s, border-color 0.15s;
     }
-    .mpill.active { background: #173a5e; border-color: var(--cyan); color: #fff; }
+    .map-card:active { transform: scale(0.97); }
+    .map-card.active {
+      border-color: var(--gold);
+      box-shadow: 0 5px 0 #7a4200, 0 0 22px rgba(255, 213, 74, 0.55);
+      transform: translateY(-2px);
+    }
+    .map-card.locked { filter: grayscale(0.45) brightness(0.82); }
+    .map-card-art {
+      height: 74px; width: 100%; background-size: cover; background-position: center;
+      position: relative; border-bottom: 2px solid var(--ink);
+    }
+    .map-card-mult {
+      position: absolute; top: 5px; right: 5px; font-size: 9.5px; font-weight: 900;
+      padding: 2px 6px; border-radius: 999px; background: rgba(10,14,32,0.86); color: var(--gold);
+      border: 1.5px solid rgba(255,213,74,0.6);
+    }
+    .map-card-lock {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(8,10,22,0.52); font-size: 22px;
+    }
+    .map-card-body { padding: 7px 9px 8px; }
+    .map-card-name { font-size: 12px; font-weight: 900; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .map-card-sub { font-size: 10px; font-weight: 800; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .map-card.active .map-card-sub { color: var(--cyan); }
+
+    .play-cta-row { display: flex; gap: 8px; align-items: stretch; }
+    .play-cta-row .gbtn-play { flex: 1; }
+    .daily-toggle {
+      width: 82px; border-radius: 16px; border: 3px solid var(--ink);
+      background: rgba(24, 30, 58, 0.92); color: var(--muted);
+      font-size: 11px; font-weight: 900; cursor: pointer; box-shadow: 0 5px 0 var(--ink);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    }
+    .daily-toggle.active { background: #173a5e; border-color: var(--cyan); color: #fff; }
+    .daily-toggle:active { transform: translateY(3px); }
     .ghost-banner {
       background: rgba(120, 20, 96, 0.9); border: 2.5px solid #ff5ce1;
       border-radius: 12px; padding: 8px 10px; font-size: 12px; font-weight: 900;
@@ -466,6 +503,38 @@
     .vcard.r-cyan .vcard-head { background: linear-gradient(90deg, #67f5ff, #38bdf8); }
     .vcard.r-purple .vcard-head { background: linear-gradient(90deg, #e879f9, #a855f7); color: #fff; }
     .vcard.r-gold .vcard-head { background: linear-gradient(90deg, #ffe26a, #f59e0b); }
+    .vcard.r-evo {
+      border-color: #ffd54a;
+      background: linear-gradient(180deg, #52183b, #230f2e);
+      box-shadow: 0 5px 0 #4d0e28, 0 0 24px rgba(255, 110, 60, 0.72);
+    }
+    .vcard.r-evo .vcard-head { background: linear-gradient(90deg, #ff4d6d, #ffd54a); color: #240900; }
+    .vcard-evo-hint { font-size: 9px; font-weight: 800; color: #ffe58f; margin-top: 3px; opacity: 0.9; text-align: center; padding: 0 4px; }
+
+    /* ===== GOLDEN RAYS UNBOXING REVEAL MODAL ===== */
+    .unbox-stage {
+      position: relative; width: 170px; height: 170px; margin: 4px auto 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .unbox-rays {
+      position: absolute; inset: -16px; border-radius: 50%; pointer-events: none;
+      background: repeating-conic-gradient(from 0deg, rgba(255,213,74,0.42) 0deg 14deg, rgba(255,213,74,0) 14deg 30deg);
+      -webkit-mask-image: radial-gradient(circle, #000 32%, transparent 72%);
+      mask-image: radial-gradient(circle, #000 32%, transparent 72%);
+      animation: spinRays 7s linear infinite;
+    }
+    .unbox-glow {
+      position: absolute; inset: 14px; border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle, rgba(255,226,106,0.72), rgba(255,140,26,0.18) 58%, transparent 74%);
+      animation: pulse 0.9s infinite alternate;
+    }
+    .unbox-img {
+      position: relative; z-index: 2; width: 128px; height: 128px; object-fit: contain;
+      filter: drop-shadow(0 8px 14px rgba(0,0,0,0.55));
+      animation: unboxPop 0.42s cubic-bezier(0.2, 1.45, 0.35, 1) both;
+    }
+    @keyframes spinRays { to { transform: rotate(360deg); } }
+    @keyframes unboxPop { 0% { transform: scale(0.2) rotate(-14deg); opacity: 0; } 70% { transform: scale(1.12) rotate(4deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); opacity: 1; } }
     .vcard-orb {
       width: 58px; height: 58px; border-radius: 50%; margin: 10px 0 6px;
       display: flex; align-items: center; justify-content: center; font-size: 30px;
@@ -574,35 +643,31 @@
       </div>
 
       <div class="lobby-body">
-        <!-- Tab 1: Home / Play -->
+        <!-- Tab 1: Home / Play (Decluttered + Dynamic Map Backdrop + Map Card Carousel!) -->
         <div class="lobby-page" id="page-home">
           <div class="game-logo">
             <div class="logo-badge">ROOMBA RAID · 零带入搜打撤</div>
             <div class="logo-title">半夜扫地机</div>
-            <div class="logo-sub">全屋探索 · 钻桌躲猫掌 · 3星狂开箱</div>
+            <button class="pilot-pill" id="btn-quick-garage" style="margin-top:8px">
+              <span class="eq-name" id="home-eq-name">🤖 经典暴富号 · 🌱俏皮呆毛</span>
+              <span class="eq-edit">换装</span>
+            </button>
           </div>
 
           <div class="home-bottom">
             <div id="title-ghost-banner" class="ghost-banner" hidden></div>
 
-            <div class="equipped-strip">
-              <div>
-                <div class="eq-name" id="home-eq-name">🤖 经典暴富号</div>
-                <div class="eq-skill" id="home-eq-skill">专属技：过载双雷环</div>
-              </div>
-              <button class="mini-buy" id="btn-quick-garage">换装</button>
-            </div>
-
-            <!-- 3 Procedural Maps Selector (Vampire-Survivors Style!) -->
-            <div class="sub-tabs" id="map-selector" style="margin-bottom:0"></div>
+            <!-- 5 Map Carousel Cards (Clicking switches the entire Home Backdrop!) -->
+            <div id="map-carousel"></div>
             <div id="map-desc" style="font-size:11px;font-weight:800;color:#ffe58f;text-align:center;text-shadow:0 1.5px 0 #141126"></div>
 
-            <div class="mode-pills">
-              <button class="mpill active" id="mode-free">🎲 每次随机户型</button>
-              <button class="mpill" id="mode-daily">📅 今日同图榜</button>
+            <div class="play-cta-row">
+              <button class="gbtn gbtn-play" id="btn-play">⚡ 开始清扫</button>
+              <button class="daily-toggle" id="mode-daily-toggle" title="切换今日同图榜 / 每次随机户型">
+                <span style="font-size:16px" id="mode-ico">🎲</span>
+                <span id="mode-lbl">随机户型</span>
+              </button>
             </div>
-
-            <button class="gbtn gbtn-play" id="btn-play">⚡ 开始清扫 · 1秒开吸！</button>
           </div>
         </div>
 
@@ -698,15 +763,20 @@
       </div>
     </div>
 
-    <!-- Star Chest Reward Popup (Special Item / Gold Core / Cosmetic) -->
+    <!-- Golden Rays Unboxing Reveal Modal (Boss Crates / Secret Vaults / Star Chests!) -->
     <div class="overlay" id="reward-popup" hidden style="z-index:48">
-      <div class="game-modal">
+      <div class="game-modal" style="border-color:var(--gold)">
         <div class="modal-body">
-          <div style="font-size:11px;font-weight:900;color:var(--gold);letter-spacing:0.12em">STAR REWARD · 星级宝箱开启</div>
-          <div id="rw-icon" style="font-size:52px;margin:10px 0 6px">💎</div>
-          <h2 id="rw-title" style="font-size:21px;font-weight:900">获得稀缺金核 ×1</h2>
-          <p id="rw-desc" style="font-size:13px;color:var(--muted);margin:6px 0 16px">可用于解锁高阶机身与 T3 传奇天赋！</p>
-          <button class="gbtn gbtn-play" id="btn-rw-ok">确认</button>
+          <div id="rw-sub" style="font-size:11px;font-weight:900;color:var(--gold);letter-spacing:0.12em">✨ GOLDEN UNBOXING · 拆箱出货 ✨</div>
+          <div class="unbox-stage">
+            <div class="unbox-rays"></div>
+            <div class="unbox-glow"></div>
+            <img id="rw-img" class="unbox-img" alt="开箱物件">
+          </div>
+          <h2 id="rw-title" style="font-size:21px;font-weight:900">黄金橡胶鸭奖杯</h2>
+          <div id="rw-val" style="font-size:20px;font-weight:900;color:var(--gold);margin-top:2px">+¥42,000</div>
+          <p id="rw-desc" style="font-size:12px;color:var(--muted);margin:6px 0 14px">已装入安全箱 / 收藏展柜！</p>
+          <button class="gbtn gbtn-gold" id="btn-rw-ok">收下战利品</button>
         </div>
       </div>
     </div>

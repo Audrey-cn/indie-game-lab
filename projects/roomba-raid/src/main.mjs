@@ -19,7 +19,9 @@ import {
   TALENT_COSTS,
   TALENT_STYLES,
   WEAPONS,
+  WEAPON_EVOLUTIONS,
 } from "./config.mjs";
+import { LOOT_ART, MAP_BACKDROPS } from "./art-assets.mjs";
 import { sfx } from "./audio.mjs";
 import {
   buildChallengeUrl,
@@ -197,24 +199,36 @@ function refreshLobby() {
   const skin = getEquippedSkin();
   const acc = ACCESSORIES.find((a) => a.id === save.equippedAcc) || ACCESSORIES[0];
   document.getElementById("home-eq-name").textContent = `🤖 ${skin.name} · ${acc.icon}${acc.name}`;
-  document.getElementById("home-eq-skill").textContent = `专属技：${skin.skillName} · ${skin.desc}`;
-  document.getElementById("mode-free").classList.toggle("active", selectedMode === "free");
-  document.getElementById("mode-daily").classList.toggle("active", selectedMode === "daily");
+  const dailyBtn = document.getElementById("mode-daily-toggle");
+  dailyBtn.classList.toggle("active", selectedMode === "daily");
+  document.getElementById("mode-ico").textContent = selectedMode === "daily" ? "📅" : "🎲";
+  document.getElementById("mode-lbl").textContent = selectedMode === "daily" ? "今日同图" : "随机户型";
 
-  // Render 3 Procedural Maps Selector!
-  const mapSel = document.getElementById("map-selector");
+  // Dynamic Home Backdrop + 5-Map Horizontal Card Carousel!
+  const mapSel = document.getElementById("map-carousel");
   mapSel.innerHTML = "";
   let activeMap = MAPS.find((m) => m.id === save.selectedMap) || MAPS[0];
   if (!isMapUnlocked(activeMap)) {
     activeMap = MAPS[0];
     save.selectedMap = "living";
   }
+  document.getElementById("page-home").style.backgroundImage = `url("${MAP_BACKDROPS[activeMap.id] || POSTERS.lobby}")`;
+
   for (const m of MAPS) {
     const unlocked = isMapUnlocked(m);
-    const btn = document.createElement("button");
-    btn.className = `stab ${save.selectedMap === m.id ? "active" : ""}`;
-    btn.textContent = unlocked ? m.name : `🔒 ${m.name}`;
-    btn.onclick = () => {
+    const card = document.createElement("button");
+    card.className = `map-card ${save.selectedMap === m.id ? "active" : ""} ${unlocked ? "" : "locked"}`;
+    card.innerHTML = `
+      <div class="map-card-art" style='background-image:url("${MAP_BACKDROPS[m.id] || POSTERS.lobby}")'>
+        <span class="map-card-mult">大金 ×${m.lootMult}</span>
+        ${unlocked ? "" : '<div class="map-card-lock">🔒</div>'}
+      </div>
+      <div class="map-card-body">
+        <div class="map-card-name">${m.name}</div>
+        <div class="map-card-sub">${unlocked ? m.tag : m.unlockReq.label}</div>
+      </div>
+    `;
+    card.onclick = () => {
       if (!unlocked) {
         const prog = m.unlockReq.type === "kills" ? `（当前 ${save.totalKills || 0}/${m.unlockReq.count}）` : "";
         showToast(`🔒 ${m.unlockReq.label}${prog}`, "pink");
@@ -224,7 +238,7 @@ function refreshLobby() {
       writeSave(save);
       refreshLobby();
     };
-    mapSel.appendChild(btn);
+    mapSel.appendChild(card);
   }
   document.getElementById("map-desc").textContent = `${activeMap.tag} · ${activeMap.desc}`;
 
@@ -682,7 +696,9 @@ function startRun() {
       giantCharges: 1 + (tLv("cl_giant2") >= 4 ? 2 : tLv("cl_giant2") >= 1 ? 1 : 0),
       giantAdUsed: false,
       weapons: { swatter: 1, laser: Math.min(5, tLv("th_start")), spatula: 0, hairdryer: 0, tesla: 0 },
-      cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6 },
+      passives: { magnet: 0, turbo: 0, battery: 0 },
+      evolutions: {},
+      cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6, evoStorm: 0.8 },
     },
     cam: { x: layout.startPos.x, y: layout.startPos.y },
     bagLoot: [],
@@ -820,21 +836,28 @@ function spawnText(x, y, text, color = "#ffffff", size = 17) {
   state.texts.push({ x, y, text, color, size, vy: -64, life: 0.72, maxLife: 0.72 });
 }
 
-function grantLootReward(x, y, minVal, sourceLabel = "✨ 发现大金 ✨") {
+function grantLootReward(x, y, minVal, sourceLabel = "✨ 拆箱出大金 ✨") {
   const item = pickWeightedLoot(state.rng, minVal);
   const cleanBonus = state.milestones.m70 ? 1.3 : 1;
   const waveScale = 1 + (state.wave - 1) * 0.45;
   const val = Math.round(item.value * waveScale * cleanBonus * state.lootMult);
   const drop = { x, y, lootId: item.id, name: item.name, short: item.short, value: val, rarity: item.rarity, isGhost: false };
   state.bagLoot.push(drop);
-  state.slowMo = 0.28;
   state.shake = 0.7;
-  sfx.playCratePop();
+  sfx.playUnboxingFanfare();
   vibrate(32);
-  spawnRing(x, y, 16, 145, "#ffd54a", 8, 0.38);
-  spawnParticles(x, y, "#ffd54a", 26, 230, true);
+  spawnRing(x, y, 16, 155, "#ffd54a", 8, 0.38);
+  spawnParticles(x, y, "#ffd54a", 28, 230, true);
   spawnText(x, y - 24, `+¥${val.toLocaleString()}!`, "#ffd54a", 23);
-  showJackpotBanner(item.name, val, sourceLabel);
+  // Show Golden Rays Unboxing Reveal Modal with the actual Illustrated Object Artwork!
+  openUnboxingReveal({
+    artKey: item.id,
+    sub: sourceLabel,
+    title: item.name,
+    valueText: `+¥${val.toLocaleString()}`,
+    desc: item.rarity === "red" || item.rarity === "gold" ? "🔥 顶级珍品！撤离带回可解锁隐藏款机身！" : "已装入背包，冲回充电桩即可全额落袋！",
+    pauseGame: true,
+  });
 }
 
 function triggerClone() {
@@ -1177,17 +1200,36 @@ function updateWeapons(dt) {
     p.cooldowns.laser -= dt;
     if (p.cooldowns.laser <= 0 && state.enemies.length > 0) {
       const lv = p.weapons.laser;
-      p.cooldowns.laser = Math.max(0.28, (0.82 - lv * 0.1) * cdMult);
+      const isPrism = !!(p.evolutions && p.evolutions.prism_railgun);
+      p.cooldowns.laser = Math.max(0.24, (0.82 - lv * 0.1) * cdMult * (isPrism ? 0.78 : 1));
       const sorted = [...state.enemies].sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
-      const shots = Math.min(sorted.length, lv);
-      const dmg = (34 + lv * 18) * (p.giant > 0 ? 1.5 : 1);
+      const shots = Math.min(sorted.length, isPrism ? Math.max(3, lv) : lv);
+      const dmg = (34 + lv * 18) * (p.giant > 0 ? 1.5 : 1) * (isPrism ? 1.45 : 1);
+      const prismCols = ["#38f3ff", "#ff4d94", "#ffd54a", "#c084fc"];
       for (let s = 0; s < shots; s++) {
         const target = sorted[s];
-        if (!target || Math.hypot(target.x - p.x, target.y - p.y) > 400) continue;
-        state.vfx.push({ type: "laser", x1: p.x, y1: p.y, x2: target.x, y2: target.y, life: 0.18, maxLife: 0.18 });
-        const crit = Math.random() < 0.45 + state.critBonus;
+        if (!target || Math.hypot(target.x - p.x, target.y - p.y) > 440) continue;
+        const col = isPrism ? prismCols[s % prismCols.length] : "#ff2e6d";
+        state.vfx.push({ type: isPrism ? "prism_beam" : "laser", color: col, x1: p.x, y1: p.y, x2: target.x, y2: target.y, life: 0.22, maxLife: 0.22 });
+        const crit = Math.random() < (isPrism ? 0.72 : 0.45) + state.critBonus;
         const idx = state.enemies.indexOf(target);
-        if (idx >= 0 && damageEnemy(target, crit ? dmg * 1.9 : dmg, 0, 0, crit)) state.enemies.splice(idx, 1);
+        if (idx >= 0 && damageEnemy(target, crit ? dmg * 2.0 : dmg, 0, 0, crit)) state.enemies.splice(idx, 1);
+        // Prism Railgun Evolution: Ricochet beam to 2 nearby enemies!
+        if (isPrism) {
+          let prevX = target.x;
+          let prevY = target.y;
+          const used = new Set([target]);
+          for (let b = 0; b < 2; b++) {
+            const next = state.enemies.find((e) => !used.has(e) && Math.hypot(e.x - prevX, e.y - prevY) < 230);
+            if (!next) break;
+            used.add(next);
+            state.vfx.push({ type: "prism_beam", color: prismCols[(s + b + 1) % prismCols.length], x1: prevX, y1: prevY, x2: next.x, y2: next.y, life: 0.22, maxLife: 0.22 });
+            const ni = state.enemies.indexOf(next);
+            if (ni >= 0 && damageEnemy(next, dmg * 1.15, 0, 0, true)) state.enemies.splice(ni, 1);
+            prevX = next.x;
+            prevY = next.y;
+          }
+        }
       }
       sfx.playLaser();
     }
@@ -1195,17 +1237,39 @@ function updateWeapons(dt) {
 
   if (p.weapons.spatula > 0) {
     const lv = p.weapons.spatula;
-    const count = 1 + lv;
-    const rad = 68 + lv * 7;
-    const dmg = 28 + lv * 12;
+    const isFlame = !!(p.evolutions && p.evolutions.flame_tornado);
+    const isGold = !!(p.evolutions && p.evolutions.golden_vortex);
+    const count = 1 + lv + (isFlame ? 2 : 0);
+    const rad = (68 + lv * 7) * (isFlame ? 1.18 : 1);
+    const rotSpd = isFlame ? 6.8 : 4.8;
+    const dmg = (28 + lv * 12) * (isFlame ? 1.65 : 1.15);
+
+    // Golden Gravity Vortex Evolution: Pulls nearby enemies inward toward the spinning blades!
+    if (isGold) {
+      for (const e of state.enemies) {
+        if (e.type === "mop") continue;
+        const dx = p.x - e.x;
+        const dy = p.y - e.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 48 && d < 235) {
+          e.x += (dx / d) * 85 * dt;
+          e.y += (dy / d) * 85 * dt;
+        }
+      }
+    }
+
     for (let i = 0; i < count; i++) {
-      const a = state.time * 4.8 + (i / count) * Math.PI * 2;
+      const a = state.time * rotSpd + (i / count) * Math.PI * 2;
       const sx = p.x + Math.cos(a) * rad;
       const sy = p.y + Math.sin(a) * rad;
       for (let j = state.enemies.length - 1; j >= 0; j--) {
         const e = state.enemies[j];
-        if (Math.hypot(e.x - sx, e.y - sy) < e.r + 18 && e.flash <= 0) {
-          if (damageEnemy(e, dmg, Math.cos(a) * 140, Math.sin(a) * 140, Math.random() < 0.2 + state.critBonus)) state.enemies.splice(j, 1);
+        if (Math.hypot(e.x - sx, e.y - sy) < e.r + (isFlame ? 24 : 18) && e.flash <= 0) {
+          const killed = damageEnemy(e, dmg, Math.cos(a) * 140, Math.sin(a) * 140, Math.random() < 0.25 + state.critBonus);
+          if (killed) {
+            if (isGold) state.gems.push({ x: e.x, y: e.y, kind: "coin", val: 260, forcePull: true });
+            state.enemies.splice(j, 1);
+          }
         }
       }
     }
@@ -1215,23 +1279,28 @@ function updateWeapons(dt) {
     p.cooldowns.hairdryer -= dt;
     if (p.cooldowns.hairdryer <= 0) {
       const lv = p.weapons.hairdryer;
-      p.cooldowns.hairdryer = Math.max(0.55, (1.3 - lv * 0.13) * cdMult);
-      const range = 165 + lv * 22;
-      const dmg = 26 + lv * 15;
-      state.vfx.push({ type: "hairdryer", x: p.x, y: p.y, r: range, angle: p.facing, life: 0.25, maxLife: 0.25 });
-      for (let i = state.enemies.length - 1; i >= 0; i--) {
-        const e = state.enemies[i];
-        const dx = e.x - p.x;
-        const dy = e.y - p.y;
-        const d = Math.hypot(dx, dy);
-        if (d > range + e.r) continue;
-        let diff = Math.atan2(dy, dx) - p.facing;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        if (Math.abs(diff) <= 0.72) {
-          if (damageEnemy(e, dmg, (dx / (d || 1)) * 320, (dy / (d || 1)) * 320, false)) state.enemies.splice(i, 1);
+      const isFlame = !!(p.evolutions && p.evolutions.flame_tornado);
+      p.cooldowns.hairdryer = Math.max(0.45, (1.3 - lv * 0.13) * cdMult * (isFlame ? 0.78 : 1));
+      const range = (165 + lv * 22) * (isFlame ? 1.25 : 1);
+      const dmg = (26 + lv * 15) * (isFlame ? 1.6 : 1);
+      const dirs = isFlame ? [p.facing, p.facing + Math.PI] : [p.facing];
+      for (const ang of dirs) {
+        state.vfx.push({ type: isFlame ? "flame_wave" : "hairdryer", x: p.x, y: p.y, r: range, angle: ang, life: 0.28, maxLife: 0.28 });
+        for (let i = state.enemies.length - 1; i >= 0; i--) {
+          const e = state.enemies[i];
+          const dx = e.x - p.x;
+          const dy = e.y - p.y;
+          const d = Math.hypot(dx, dy);
+          if (d > range + e.r) continue;
+          let diff = Math.atan2(dy, dx) - ang;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          if (Math.abs(diff) <= 0.74) {
+            if (damageEnemy(e, dmg, (dx / (d || 1)) * 340, (dy / (d || 1)) * 340, isFlame)) state.enemies.splice(i, 1);
+          }
         }
       }
+      sfx.playHairdryer();
     }
   }
 
@@ -1239,16 +1308,17 @@ function updateWeapons(dt) {
     p.cooldowns.tesla -= dt;
     if (p.cooldowns.tesla <= 0 && state.enemies.length > 0) {
       const lv = p.weapons.tesla;
-      p.cooldowns.tesla = Math.max(0.55, (1.25 - lv * 0.12) * cdMult);
-      const jumps = 3 + lv * 2;
-      const dmg = 34 + lv * 16;
+      const isStorm = !!(p.evolutions && p.evolutions.thunder_storm);
+      p.cooldowns.tesla = Math.max(0.48, (1.25 - lv * 0.12) * cdMult * (isStorm ? 0.8 : 1));
+      const jumps = (3 + lv * 2) + (isStorm ? 5 : 0);
+      const dmg = (34 + lv * 16) * (isStorm ? 1.55 : 1);
       const pts = [{ x: p.x, y: p.y }];
       const hitSet = new Set();
       let cx = p.x;
       let cy = p.y;
       for (let k = 0; k < jumps; k++) {
         let best = null;
-        let bestD = 260;
+        let bestD = isStorm ? 320 : 260;
         for (const e of state.enemies) {
           if (hitSet.has(e)) continue;
           const d = Math.hypot(e.x - cx, e.y - cy);
@@ -1262,11 +1332,13 @@ function updateWeapons(dt) {
         pts.push({ x: best.x, y: best.y });
         cx = best.x;
         cy = best.y;
+        if (isStorm) best.stun = Math.max(best.stun, 0.9);
         const idx = state.enemies.indexOf(best);
-        if (idx >= 0 && damageEnemy(best, dmg, 0, 0, Math.random() < 0.3 + state.critBonus)) state.enemies.splice(idx, 1);
+        if (idx >= 0 && damageEnemy(best, dmg, 0, 0, isStorm || Math.random() < 0.3 + state.critBonus)) state.enemies.splice(idx, 1);
       }
       if (pts.length > 1) {
-        state.vfx.push({ type: "tesla", pts, life: 0.22, maxLife: 0.22 });
+        state.vfx.push({ type: isStorm ? "thunder_storm" : "tesla", pts, life: 0.28, maxLife: 0.28 });
+        if (isStorm) spawnRing(p.x, p.y, 24, 210, "#e879f9", 9, 0.32);
         sfx.playZap();
       }
     }
@@ -1277,6 +1349,25 @@ function openLevelUp() {
   state.phase = "levelup";
   sfx.playLevelUp();
   const p = state.player;
+  const evoPool = [];
+  for (const evo of WEAPON_EVOLUTIONS) {
+    if (p.evolutions[evo.id]) continue;
+    const ready = Object.entries(evo.req).every(([k, need]) => ((p.weapons[k] || 0) + (p.passives[k] || 0)) >= need);
+    if (ready) {
+      evoPool.push({
+        kind: "evolution",
+        id: evo.id,
+        icon: evo.icon,
+        name: evo.name,
+        lv: 5,
+        rarity: "r-evo",
+        badge: "🔥 超武进化",
+        kw: evo.kw,
+        hint: evo.formula,
+      });
+    }
+  }
+
   const pool = [];
   for (const w of Object.values(WEAPONS)) {
     const cur = p.weapons[w.id] || 0;
@@ -1290,6 +1381,7 @@ function openLevelUp() {
         rarity: cur >= 3 ? "r-gold" : cur === 0 ? "r-purple" : "r-cyan",
         badge: cur === 0 ? "新外挂" : `LV.${cur + 1}`,
         kw: w.tag,
+        hint: w.evoHint || "",
       });
     }
   }
@@ -1299,22 +1391,34 @@ function openLevelUp() {
       id: pa.id,
       icon: pa.icon,
       name: pa.name,
-      lv: 1,
+      lv: (p.passives[pa.id] || 0) + 1,
       rarity: "r-cyan",
       badge: "强化",
       kw: pa.tag,
+      hint: pa.evoHint || "",
     });
   }
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(state.rng() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  const choices = pool.slice(0, 3);
+  const choices = [...evoPool.slice(0, 1), ...pool].slice(0, 3);
   const applyChoice = (c) => {
-    if (c.kind === "weapon") p.weapons[c.id] = (p.weapons[c.id] || 0) + 1;
-    else if (c.id === "magnet") p.magnet *= 1.35;
-    else if (c.id === "turbo") p.speed *= 1.14;
-    else if (c.id === "battery") {
+    if (c.kind === "evolution") {
+      p.evolutions[c.id] = true;
+      sfx.playEvolution();
+      spawnRing(p.x, p.y, 20, 280, "#ffd54a", 12, 0.45);
+      showJackpotBanner(c.name, "🔥 武器进化质变！", "✨ 超武觉醒 ✨");
+    } else if (c.kind === "weapon") {
+      p.weapons[c.id] = (p.weapons[c.id] || 0) + 1;
+    } else if (c.id === "magnet") {
+      p.passives.magnet = (p.passives.magnet || 0) + 1;
+      p.magnet *= 1.35;
+    } else if (c.id === "turbo") {
+      p.passives.turbo = (p.passives.turbo || 0) + 1;
+      p.speed *= 1.14;
+    } else if (c.id === "battery") {
+      p.passives.battery = (p.passives.battery || 0) + 1;
       p.maxHp += 25;
       p.hp = Math.min(p.maxHp, p.hp + 40);
     }
@@ -1325,20 +1429,23 @@ function openLevelUp() {
   for (const c of choices) {
     const btn = document.createElement("button");
     btn.className = `vcard ${c.rarity}`;
-    const stars = c.kind === "weapon" ? "★".repeat(c.lv) + "☆".repeat(Math.max(0, 5 - c.lv)) : "✦✦✦";
+    const stars = c.kind === "evolution" ? "★★★★★" : c.kind === "weapon" ? "★".repeat(c.lv) + "☆".repeat(Math.max(0, 5 - c.lv)) : "✦✦✦";
     btn.innerHTML = `
       <div class="vcard-head">${c.badge}</div>
       <div class="vcard-orb">${c.icon}</div>
       <div class="vcard-name">${c.name}</div>
       <div class="vcard-stars">${stars}</div>
       <div class="vcard-kw">${c.kw}</div>
+      ${c.hint ? `<div class="vcard-evo-hint">${c.hint}</div>` : ""}
     `;
     btn.onclick = () => {
       applyChoice(c);
       screenLevelUp.hidden = true;
       state.phase = "playing";
-      spawnRing(p.x, p.y, 16, 130, "#ffd54a", 7, 0.3);
-      showToast(`✨ 焊上新外挂：${c.name}！`, "gold");
+      if (c.kind !== "evolution") {
+        spawnRing(p.x, p.y, 16, 130, "#ffd54a", 7, 0.3);
+        showToast(`✨ 焊上新外挂：${c.name}！`, "gold");
+      }
     };
     listEl.appendChild(btn);
   }
@@ -1380,9 +1487,19 @@ function checkCleanlinessMilestones() {
   }
 }
 
-function openRewardPopup(icon, title, desc) {
-  document.getElementById("rw-icon").textContent = icon;
+function openUnboxingReveal({ artKey = "duck", sub = "✨ GOLDEN UNBOXING · 拆箱出货 ✨", title, valueText = "", desc = "", pauseGame = false }) {
+  if (pauseGame && state && state.phase === "playing") state.phase = "unboxing";
+  document.getElementById("rw-sub").textContent = sub;
+  const img = document.getElementById("rw-img");
+  img.src = LOOT_ART[artKey] || LOOT_ART.crate;
+  // Re-trigger pop-in animation cleanly
+  img.style.animation = "none";
+  void img.offsetWidth;
+  img.style.animation = "";
   document.getElementById("rw-title").textContent = title;
+  const valEl = document.getElementById("rw-val");
+  valEl.textContent = valueText;
+  valEl.hidden = !valueText;
   document.getElementById("rw-desc").textContent = desc;
   rewardPopup.hidden = false;
 }
@@ -1457,26 +1574,26 @@ function finishRun(extracted) {
         if (btn.classList.contains("opened")) return;
         btn.classList.add("opened");
         btn.textContent = "✅ 已领取";
-        sfx.playCratePop();
+        sfx.playUnboxingFanfare();
         if (i === 1) {
           save.boosters.radar = true;
           writeSave(save);
-          openRewardPopup("📡", "获得【大金探测器】×1", "下局开场自动在客厅额外刷出 1 个超级金箱！");
+          openUnboxingReveal({ artKey: "crate", sub: "★ 1星宝箱开启", title: "大金探测器 ×1", valueText: "下局自动生效", desc: "下局开场自动在客厅额外刷出 1 个超级金箱！" });
         } else if (i === 2) {
           save.goldCores = (save.goldCores || 0) + 1;
           writeSave(save);
-          openRewardPopup("💎", "获得【稀缺金核】×1", "可用于车库解锁高阶机身与 T3 传奇天赋！");
+          openUnboxingReveal({ artKey: "core", sub: "★★ 2星金核箱开启", title: "稀缺金核 ×1", valueText: "+💎 1", desc: "可用于车库解锁高阶机身与 T3 传奇天赋！" });
         } else {
           const lockedSkins = SKINS.filter((s) => !save.skinsOwned.includes(s.id) && !s.hiddenLootReq);
           if (lockedSkins.length > 0) {
             const pick = lockedSkins[Math.floor(Math.random() * lockedSkins.length)];
             save.skinsOwned.push(pick.id);
             writeSave(save);
-            openRewardPopup("🤖", `解锁限定机身【${pick.name}】！`, `专属技：${pick.skillName} · 已存入剪影车库！`);
+            openUnboxingReveal({ artKey: "skin", sub: "★★★ 3星珍稀箱开启", title: `限定机身【${pick.name}】`, valueText: "NEW 解锁！", desc: `专属技：${pick.skillName} · 已存入剪影车库！` });
           } else {
             save.goldCores = (save.goldCores || 0) + 2;
             writeSave(save);
-            openRewardPopup("💎", "获得【稀缺金核】×2", "全常规机身已集齐，折算双倍稀缺金核！");
+            openUnboxingReveal({ artKey: "core", sub: "★★★ 3星珍稀箱开启", title: "双倍稀缺金核 ×2", valueText: "+💎 2", desc: "全常规机身已集齐，折算双倍稀缺金核！" });
           }
         }
       };
@@ -2231,8 +2348,16 @@ document.getElementById("btn-quit-run").onclick = () => {
   screenPause.hidden = true;
   if (state) finishRun(false);
 };
-document.getElementById("btn-rw-ok").onclick = () => {
+const closeUnboxing = () => {
   rewardPopup.hidden = true;
+  if (state && state.phase === "unboxing") {
+    state.phase = "playing";
+    state.player.invuln = Math.max(state.player.invuln, 1.0);
+  }
+};
+document.getElementById("btn-rw-ok").onclick = closeUnboxing;
+rewardPopup.onclick = (e) => {
+  if (e.target === rewardPopup) closeUnboxing();
 };
 document.getElementById("btn-share-close").onclick = () => {
   shareModal.hidden = true;
@@ -2277,12 +2402,8 @@ window.addEventListener("pointermove", (e) => movePointer(e.pointerId, e.clientX
 window.addEventListener("pointerup", (e) => endPointer(e.pointerId));
 window.addEventListener("pointercancel", (e) => endPointer(e.pointerId));
 
-document.getElementById("mode-free").onclick = () => {
-  selectedMode = "free";
-  refreshLobby();
-};
-document.getElementById("mode-daily").onclick = () => {
-  selectedMode = "daily";
+document.getElementById("mode-daily-toggle").onclick = () => {
+  selectedMode = selectedMode === "daily" ? "free" : "daily";
   refreshLobby();
 };
 document.getElementById("btn-play").onclick = startRun;

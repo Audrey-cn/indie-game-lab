@@ -259,17 +259,61 @@ export const DEATH_QUIPS = {
 };
 
 export const WEAPONS = {
-  swatter: { id: "swatter", name: "高压电蚊拍", tag: "近身横扫", color: "#38f3ff", icon: "⚡", desc: "释放高压青蓝电弧横扫怪潮并击退，3级进化360°雷环", maxLv: 5 },
-  laser: { id: "laser", name: "红外激光笔", tag: "锁敌暴击", color: "#ff4477", icon: "🔴", desc: "自动锁敌发射高暴击激光束，满级5道齐射", maxLv: 5 },
-  spatula: { id: "spatula", name: "胶带黄油刀铲", tag: "环绕斩击", color: "#ffd859", icon: "🔪", desc: "高速环绕机身旋转切割靠近的怪潮", maxLv: 5 },
-  hairdryer: { id: "hairdryer", name: "涡轮吹风机", tag: "击退风暴", color: "#ff9848", icon: "💨", desc: "朝前方轰出热风冲击波，击飞怪群开路", maxLv: 5 },
-  tesla: { id: "tesla", name: "暴走插线板", tag: "连锁闪电", color: "#9f84ff", icon: "🔌", desc: "召唤高电压闪电在怪群间跳跃传导", maxLv: 5 },
+  swatter: { id: "swatter", name: "高压电蚊拍", tag: "近身横扫", color: "#38f3ff", icon: "⚡", desc: "释放高压青蓝电弧横扫怪潮并击退，3级进化360°雷环", maxLv: 5, evoHint: "配🔌插线板→雷神磁暴阵" },
+  laser: { id: "laser", name: "红外激光笔", tag: "锁敌暴击", color: "#ff4477", icon: "🔴", desc: "自动锁敌发射高暴击激光束，满级5道齐射", maxLv: 5, evoHint: "配🛞越野轮→棱镜轨道炮" },
+  spatula: { id: "spatula", name: "胶带黄油刀铲", tag: "环绕斩击", color: "#ffd859", icon: "🔪", desc: "高速环绕机身旋转切割靠近的怪潮", maxLv: 5, evoHint: "配💨吹风机→焚天烈焰阵" },
+  hairdryer: { id: "hairdryer", name: "涡轮吹风机", tag: "击退风暴", color: "#ff9848", icon: "💨", desc: "朝前方轰出热风冲击波，击飞怪群开路", maxLv: 5, evoHint: "配🔪黄油刀→焚天烈焰阵" },
+  tesla: { id: "tesla", name: "暴走插线板", tag: "连锁闪电", color: "#9f84ff", icon: "🔌", desc: "召唤高电压闪电在怪群间跳跃传导", maxLv: 5, evoHint: "配⚡电蚊拍→雷神磁暴阵" },
 };
 
+// Vampire-Survivors-style Weapon Evolution Synergies!
+export const WEAPON_EVOLUTIONS = [
+  {
+    id: "thunder_storm",
+    name: "⚡ 雷神磁暴阵",
+    icon: "🌩️",
+    req: { swatter: 3, tesla: 2 },
+    formula: "高压电蚊拍 Lv.3 + 暴走插线板 Lv.2",
+    kw: "全屏紫电风暴+感电麻痹",
+    desc: "周期爆发巨型球状磁暴环并连锁电击 10 个目标，附带感电眩晕！",
+    color: "#c084fc",
+  },
+  {
+    id: "flame_tornado",
+    name: "🔥 焚天烈焰刀阵",
+    icon: "🔥",
+    req: { hairdryer: 3, spatula: 2 },
+    formula: "涡轮吹风机 Lv.3 + 黄油刀铲 Lv.2",
+    kw: "烈焰刀阵+穿透火球齐射",
+    desc: "刀片燃起炽热火环高速绞杀，并向四周喷射穿透烈焰冲击波！",
+    color: "#ff7a33",
+  },
+  {
+    id: "prism_railgun",
+    name: "🌈 棱镜轨道光炮",
+    icon: "🌈",
+    req: { laser: 3, turbo: 1 },
+    formula: "红外激光笔 Lv.3 + 静音越野轮 Lv.1",
+    kw: "三道彩虹贯穿折射光束",
+    desc: "激光进化为高能棱镜轨道炮，命中后自动折射弹跳 3 次，暴击翻倍！",
+    color: "#38f3ff",
+  },
+  {
+    id: "golden_vortex",
+    name: "👑 黄金引力黑洞",
+    icon: "🌀",
+    req: { spatula: 3, magnet: 1 },
+    formula: "黄油刀铲 Lv.3 + 涡轮强吸口 Lv.1",
+    kw: "黑洞卷怪+击杀狂爆金币",
+    desc: "周身展开金色引力漩涡强行卷入怪潮绞杀，每次击杀额外爆大额金币！",
+    color: "#ffd54a",
+  },
+];
+
 export const PASSIVES = {
-  magnet: { id: "magnet", name: "涡轮强吸口", tag: "吸尘范围", color: "#57f287", icon: "🧲", desc: "吸尘与大金拾取范围 +35%" },
-  turbo: { id: "turbo", name: "静音越野轮", tag: "冲刺移速", color: "#4de1ff", icon: "🛞", desc: "移动速度 +14%，钻桌躲猫掌更稳" },
-  battery: { id: "battery", name: "快充锂电芯", tag: "续航回血", color: "#ff7eb6", icon: "🔋", desc: "最大生命 +25 并立刻恢复 40 点电量" },
+  magnet: { id: "magnet", name: "涡轮强吸口", tag: "吸尘范围", color: "#57f287", icon: "🧲", desc: "吸尘与大金拾取范围 +35%", evoHint: "配🔪黄油刀→黄金黑洞" },
+  turbo: { id: "turbo", name: "静音越野轮", tag: "冲刺移速", color: "#4de1ff", icon: "🛞", desc: "移动速度 +14%，钻桌躲猫掌更稳", evoHint: "配🔴激光笔→棱镜光炮" },
+  battery: { id: "battery", name: "快充锂电芯", tag: "续航回血", color: "#ff7eb6", icon: "🔋", desc: "最大生命 +25 并立刻恢复 40 点电量", evoHint: "提升生存容错" },
 };
 
 export const LOOT_ITEMS = [

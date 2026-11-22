@@ -198,34 +198,70 @@ class SoundEngine {
     }
   }
 
-  // ===== COMBAT & ENVIRONMENT SFX =====
+  // ===== LAYERED FOLEY COMBAT & UNBOXING SFX (Non-generic, multi-transient punch!) =====
   playHit(crit = false) {
     if (!this.ctx || this.muted) return;
     const now = performance.now();
-    if (now - this.lastHitTime < 28) return;
+    if (now - this.lastHitTime < 30) return;
     this.lastHitTime = now;
     if (crit) {
-      this.tone(160, 48, 0.11, "sine", 0.22);
-      this.tone(860, 1580, 0.1, "triangle", 0.16);
-      this.noise(0.05, 0.1, 3600, 1.4);
+      // Sub-bass thump + metallic ring + crisp transient snap
+      this.tone(175, 42, 0.12, "sine", 0.24);
+      this.tone(1040, 1860, 0.09, "triangle", 0.14);
+      this.tone(1560, 2240, 0.07, "sine", 0.08, 0.02);
+      this.noise(0.055, 0.12, 4200, 1.5);
     } else {
-      this.tone(150, 55, 0.07, "sine", 0.14);
-      this.tone(320 + Math.random() * 90, 140, 0.055, "triangle", 0.09);
+      // Soft padded thud + short paper-crunch foley
+      this.tone(155, 58, 0.065, "sine", 0.14);
+      this.noise(0.035, 0.075, 2200 + Math.random() * 800, 1.4);
     }
   }
 
   playKill() {
-    this.tone(190, 60, 0.09, "sine", 0.16);
-    this.noise(0.06, 0.08, 2800, 1.2);
+    this.tone(220, 68, 0.09, "sine", 0.17);
+    this.tone(520, 880, 0.06, "triangle", 0.08, 0.02);
+    this.noise(0.06, 0.08, 3200, 1.2);
   }
 
   playZap() {
-    this.tone(760, 240, 0.09, "sawtooth", 0.085, 0, 2600);
-    this.noise(0.07, 0.08, 4200, 2.0);
+    // Layered Electric Arc: low plasma crack + dual detuned high-voltage crackle + filtered spark hiss
+    this.tone(180, 52, 0.09, "sine", 0.16);
+    this.tone(820, 290, 0.085, "sawtooth", 0.07, 0, 2800);
+    this.tone(1240, 480, 0.065, "triangle", 0.06, 0.015, 3600);
+    this.noise(0.08, 0.11, 5200, 2.2);
   }
 
   playLaser() {
-    this.tone(1480, 340, 0.11, "sawtooth", 0.08, 0, 3000);
+    // High-energy optical rail pulse: sharp crystal ping + harmonic sweep + airy shimmer
+    this.tone(1920, 520, 0.11, "triangle", 0.095, 0, 3800);
+    this.tone(1440, 380, 0.1, "sine", 0.085, 0.01);
+    this.noise(0.04, 0.055, 6200, 2.8);
+  }
+
+  playHairdryer() {
+    // Warm pressurized turbine whoosh!
+    this.tone(140, 85, 0.16, "sine", 0.12);
+    this.noise(0.18, 0.14, 1450, 0.85);
+    this.noise(0.14, 0.08, 3100, 1.2);
+  }
+
+  playEvolution() {
+    // Epic Vampire-Survivors-style Super Weapon Evolution Fanfare!
+    this.tone(130, 42, 0.45, "sine", 0.34);
+    this.noise(0.28, 0.16, 2600, 0.9);
+    [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98].forEach((n, i) => {
+      this.tone(n, n * 1.02, 0.34, "triangle", 0.15, i * 0.055);
+      this.tone(n * 1.5, n * 1.51, 0.24, "sine", 0.07, i * 0.055 + 0.02);
+    });
+  }
+
+  playUnboxingFanfare() {
+    // Golden Crate Pop -> Rising Harp Shimmer -> Satisfying Coin/Crystal Chime!
+    this.tone(160, 46, 0.22, "sine", 0.28);
+    this.noise(0.12, 0.14, 3400, 1.1);
+    [587.33, 739.99, 880, 1174.66, 1479.98, 1760, 2349.32].forEach((n, i) => {
+      this.tone(n, n * 1.015, 0.32, "triangle", 0.14, 0.04 + i * 0.048);
+    });
   }
 
   playOverdriveBlast() {
