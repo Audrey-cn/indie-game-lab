@@ -74,4 +74,4 @@ npm run qa:bench     # Run performance benchmark + Arcade + breakdown captures
 
 Early prototyping explored AI-assisted workflows (Fable 5.2 + Codex), followed by hands-on engineering passes covering `<2 MB` single-file optimization, GPU Earth shader migration, HDR selective Bloom, real-time Render Breakdown tooling, modular decomposition, and deterministic Playwright QA.
 
-Music: “In This Moment” by Scott Buckley (CC BY 4.0, trimmed to a seamless 40s loop in the lightweight single-file build). Full attributions in [`CREDITS.md`](./CREDITS.md).
+Music in the lean public playable is an original zero-byte procedural deep-space synth (generated live with Web Audio, no embedded audio files). “In This Moment” by Scott Buckley (CC BY 4.0) is the licensed source score, retained in source and used in the v0.1.1 README demo clip. Full attributions in [`CREDITS.md`](./CREDITS.md).

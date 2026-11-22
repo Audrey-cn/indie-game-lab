@@ -107,4 +107,4 @@ npm run qa:bench     # 性能基线采集、Arcade 验收与 Breakdown 截图生
 
 项目早期原型借助 **Fable 5.2** 快速探索，后续结合试玩与性能剖析，借助 AI 编码工具链迭代推进，并由开发者主导完成**包体极限瘦身、GPU Shader 迁移、HDR Bloom 与 Breakdown 调试管线、架构拆解以及 Playwright 端到端基准测试**。
 
-配乐为 Scott Buckley 的《In This Moment》（CC BY 4.0，单文件轻量版使用 40 秒无缝循环片段）。所有第三方素材来源与许可证详见 [`CREDITS.md`](./CREDITS.md)。
+轻量公开试玩版的背景音乐为项目原创的零字节程序化深空合成器（Web Audio 实时生成，不内嵌音频文件）；Scott Buckley 的《In This Moment》（CC BY 4.0）为授权源曲，保留于源码并用于 v0.1.1 README 演示片段。所有第三方素材来源与许可证详见 [`CREDITS.md`](./CREDITS.md)。

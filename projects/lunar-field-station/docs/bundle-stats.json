@@ -1,15 +1,15 @@
 {
-  "profile": "qa",
-  "output": "lunar-qa.html",
-  "totalBytes": 1901382,
-  "totalMB": 1.813,
-  "gzipBytes": 826528,
-  "gzipKB": 807.2,
+  "profile": "playable",
+  "output": "index.html",
+  "totalBytes": 1898801,
+  "totalMB": 1.811,
+  "gzipBytes": 825642,
+  "gzipKB": 806.3,
   "breakdownBytes": {
-    "jsBundleMinified": 1841874,
+    "jsBundleMinified": 1839041,
     "musicBase64": 0,
     "titleVideoBase64": 0,
     "titlePosterBase64": 0,
-    "htmlCssShell": 58405
+    "htmlCssShell": 58657
   }
 }
