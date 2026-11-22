@@ -1,15 +1,19 @@
-// Roomba Raid v0.3.0 — Irregular L-Room, Cover Furniture, Under-Table Hidden Zones,
-// Cleanliness Milestones (35%/70%/100%), Native Search Spots, Boss 3-Skill Bullet/Charge/Stun AI,
-// Cat Paw Sprite, Pet Poop Nightmare/Purify Bonus, Periodic Horde Swarms, Drift Feel & 128-Step BGM!
+// Roomba Raid v0.4.0 — Full Mobile Game Lobby + 2400x2200 Multi-Room Apartment
+// + Chasing Cat Paw (Duck Under Tables to Dodge!) + Pooper & Milk-Tea Slime Enemies
+// + 3-Star Clickable Settlement Chests + Victory/Defeat Comedy Posters
+// + 11-Skin Silhouette Garage + Graphical 3-Tier Talent Tree + 6-Enemy Codex!
 
 import {
   BOOSTERS,
+  DEATH_QUIPS,
   DEFAULT_SAVE,
+  ENEMY_CODEX,
   LOOT_ITEMS,
   MUSEUM_SETS,
   PASSIVES,
   SAFE_BOX_PRICES,
   SKINS,
+  TALENT_TREE,
   WEAPONS,
 } from "./config.mjs";
 import { sfx } from "./audio.mjs";
@@ -28,12 +32,14 @@ import {
 import {
   clampToRoom,
   createCleanTracker,
+  isUnderHiddenCover,
   NATIVE_SPOT_DEFS,
   pointHitsObstacle,
   ROOM,
   SHOCK_STRIP_DEFS,
 } from "./room-layout.mjs";
 import { cleanDustAt, createDustLayer, renderGame, renderReceiptPoster, smearPoopAt } from "./renderer.mjs";
+import { POSTERS, SPRITE_URLS } from "./sprites.mjs";
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
@@ -53,10 +59,18 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
+// Set Full-Bleed Mobile Game Lobby Poster!
+document.getElementById("page-home").style.backgroundImage = `url(${POSTERS.lobby})`;
+
 let save = loadSave(DEFAULT_SAVE);
+if (!save.talentsUnlocked) save.talentsUnlocked = [];
+if (!save.talentsEquipped) save.talentsEquipped = { 1: null, 2: null, 3: null };
+
 const urlCtx = parseUrlContext();
 let selectedMode = urlCtx.seed ? "daily" : "free";
-let currentShopTab = "skins";
+let currentNav = "home";
+let currentCodexTab = "enemies";
+let selectedSkinId = save.equippedSkin || "classic";
 let state = null;
 let lastTs = 0;
 
@@ -67,10 +81,9 @@ const briefingEl = document.getElementById("briefing-banner");
 const jackpotEl = document.getElementById("jackpot-banner");
 const btnOverdrive = document.getElementById("btn-overdrive");
 const odTxt = document.getElementById("od-txt");
-const screenTitle = document.getElementById("screen-title");
+const lobbyShell = document.getElementById("lobby-shell");
 const screenLevelUp = document.getElementById("screen-levelup");
 const screenResult = document.getElementById("screen-result");
-const screenShop = document.getElementById("screen-shop");
 
 let toastTimer = null;
 function showToast(msg, style = "") {
@@ -84,7 +97,7 @@ function showToast(msg, style = "") {
 }
 
 let jackpotTimer = null;
-function showJackpotBanner(name, value, sub = "✨ 沙发底爆出大金 ✨") {
+function showJackpotBanner(name, value, sub = "✨ 发现大金 ✨") {
   document.querySelector("#jackpot-banner .jt-sub").textContent = sub;
   document.getElementById("jt-name").textContent = name;
   document.getElementById("jt-val").textContent = typeof value === "string" ? value : `+¥${value.toLocaleString()}`;
@@ -93,6 +106,10 @@ function showJackpotBanner(name, value, sub = "✨ 沙发底爆出大金 ✨") {
   jackpotTimer = setTimeout(() => {
     jackpotEl.hidden = true;
   }, 2200);
+}
+
+function getActiveTalents() {
+  return new Set(Object.values(save.talentsEquipped || {}).filter(Boolean));
 }
 
 function getMuseumBonuses() {
@@ -107,22 +124,260 @@ function getEquippedSkin() {
   return SKINS.find((s) => s.id === save.equippedSkin) || SKINS[0];
 }
 
-function updateTitleUI() {
-  document.getElementById("st-coins").textContent = `¥${Math.round(save.coins).toLocaleString()}`;
-  document.getElementById("st-cores").textContent = `💎${save.goldCores || 0}`;
-  document.getElementById("st-streak").textContent = `${save.extractStreak}连`;
+// ===== MOBILE GAME LOBBY RENDERERS =====
+function refreshLobby() {
+  document.getElementById("top-coins").textContent = `💰 ¥${Math.round(save.coins).toLocaleString()}`;
+  document.getElementById("top-cores").textContent = `💎 ${save.goldCores || 0}`;
+  document.getElementById("top-streak").textContent = `🔥 ${save.extractStreak}连撤`;
+
+  const skin = getEquippedSkin();
+  document.getElementById("home-eq-name").textContent = `🤖 ${skin.name}（${skin.sizeClass}）`;
+  document.getElementById("home-eq-skill").textContent = `专属技：${skin.skillName} · ${skin.desc}`;
   document.getElementById("mode-free").classList.toggle("active", selectedMode === "free");
   document.getElementById("mode-daily").classList.toggle("active", selectedMode === "daily");
 
   const ghostBanner = document.getElementById("title-ghost-banner");
   if (urlCtx.ghostDrop) {
     ghostBanner.hidden = false;
-    ghostBanner.textContent = `📦 检测到群友 @${urlCtx.ghostDrop.owner} 的翻车遗产（¥${urlCtx.ghostDrop.value.toLocaleString()}）！进场可去捡漏带走！`;
+    ghostBanner.textContent = `📦 检测到群友 @${urlCtx.ghostDrop.owner} 的翻车遗产（¥${urlCtx.ghostDrop.value.toLocaleString()}）！`;
   } else {
     ghostBanner.hidden = true;
   }
+
+  document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === currentNav));
+  document.getElementById("page-home").hidden = currentNav !== "home";
+  document.getElementById("page-garage").hidden = currentNav !== "garage";
+  document.getElementById("page-talents").hidden = currentNav !== "talents";
+  document.getElementById("page-codex").hidden = currentNav !== "codex";
+
+  if (currentNav === "garage") renderGarage();
+  else if (currentNav === "talents") renderTalentTree();
+  else if (currentNav === "codex") renderCodex();
 }
 
+function renderGarage() {
+  document.getElementById("garage-count").textContent = `${save.skinsOwned.length} / ${SKINS.length}`;
+  const grid = document.getElementById("skin-grid");
+  grid.innerHTML = "";
+
+  for (const sk of SKINS) {
+    const owned = save.skinsOwned.includes(sk.id);
+    const equipped = save.equippedSkin === sk.id;
+    const card = document.createElement("div");
+    card.className = `skin-card ${equipped ? "equipped" : ""} ${!owned ? "locked" : ""} ${sk.hiddenLootReq ? "hidden-skin" : ""}`;
+    const priceTxt = owned
+      ? (equipped ? "✅ 出战中" : "已解锁")
+      : sk.hiddenLootReq
+        ? "🎁 珍品直兑"
+        : sk.corePrice > 0
+          ? `¥${(sk.price / 1000).toFixed(0)}k+💎${sk.corePrice}`
+          : `¥${(sk.price / 1000).toFixed(0)}k`;
+    card.innerHTML = `
+      <span class="skin-size">${sk.sizeClass}</span>
+      <img class="skin-img" src="${SPRITE_URLS.hero}" style="filter:${sk.filter}" alt="${sk.name}">
+      <div class="skin-name">${owned ? sk.name : (sk.hiddenLootReq ? "？？？隐藏款" : sk.name)}</div>
+      <div class="skin-price">${priceTxt}</div>
+    `;
+    card.onclick = () => {
+      selectedSkinId = sk.id;
+      renderGarage();
+    };
+    grid.appendChild(card);
+  }
+
+  // Detail & Action bar for selected skin
+  const sk = SKINS.find((s) => s.id === selectedSkinId) || SKINS[0];
+  const owned = save.skinsOwned.includes(sk.id);
+  const equipped = save.equippedSkin === sk.id;
+  const detail = document.getElementById("skin-detail");
+
+  let actionHtml = "";
+  let canUnlock = false;
+  if (owned) {
+    actionHtml = `<button class="gbtn ${equipped ? "gbtn-dark" : "gbtn-play"}" id="btn-skin-act" style="margin-top:8px;padding:10px;font-size:14px">${equipped ? "✅ 当前正在使用" : "⚡ 立即装备出战"}</button>`;
+  } else if (sk.hiddenLootReq) {
+    const have = save.museum[sk.hiddenLootReq.lootId] || 0;
+    canUnlock = have >= sk.hiddenLootReq.count;
+    actionHtml = `<button class="gbtn ${canUnlock ? "gbtn-gold" : "gbtn-dark"}" id="btn-skin-act" style="margin-top:8px;padding:10px;font-size:13px" ${canUnlock ? "" : "disabled"}>${canUnlock ? "🎁 珍品数量达标！免费兑换隐藏款" : `🔒 ${sk.hiddenLootReq.label}（当前 ${have}/${sk.hiddenLootReq.count}）`}</button>`;
+  } else {
+    canUnlock = save.coins >= sk.price && (save.goldCores || 0) >= (sk.corePrice || 0);
+    const label = sk.corePrice > 0 ? `解锁：¥${sk.price.toLocaleString()} + 💎${sk.corePrice}` : `解锁：¥${sk.price.toLocaleString()}`;
+    actionHtml = `<button class="gbtn ${canUnlock ? "gbtn-gold" : "gbtn-dark"}" id="btn-skin-act" style="margin-top:8px;padding:10px;font-size:14px" ${canUnlock ? "" : "disabled"}>${label}</button>`;
+  }
+
+  detail.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong style="font-size:15px;color:var(--gold)">${sk.name}</strong>
+      <span style="font-size:11px;color:var(--cyan);font-weight:900">专属技：${sk.skillName}</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px">${sk.desc}</div>
+    ${actionHtml}
+  `;
+
+  const actBtn = document.getElementById("btn-skin-act");
+  if (actBtn) {
+    actBtn.onclick = () => {
+      if (owned) {
+        save.equippedSkin = sk.id;
+      } else if (canUnlock) {
+        if (!sk.hiddenLootReq) {
+          save.coins -= sk.price;
+          save.goldCores = (save.goldCores || 0) - (sk.corePrice || 0);
+        }
+        save.skinsOwned.push(sk.id);
+        save.equippedSkin = sk.id;
+        sfx.playBigGold();
+      }
+      writeSave(save);
+      refreshLobby();
+    };
+  }
+}
+
+function renderTalentTree() {
+  const wrap = document.getElementById("talent-tree");
+  wrap.innerHTML = "";
+  for (const t of TALENT_TREE) {
+    const tierEl = document.createElement("div");
+    tierEl.className = "tree-tier";
+    tierEl.innerHTML = `<div class="tier-title">${t.title}</div><div class="tier-nodes"></div>`;
+    const grid = tierEl.querySelector(".tier-nodes");
+
+    for (const node of t.nodes) {
+      const unlocked = save.talentsUnlocked.includes(node.id);
+      const active = save.talentsEquipped[t.tier] === node.id;
+      const canBuy = save.coins >= node.price && (save.goldCores || 0) >= node.core;
+      const btn = document.createElement("button");
+      btn.className = `tnode ${unlocked ? "unlocked" : ""} ${active ? "active" : ""}`;
+      btn.innerHTML = `
+        <div class="tnode-orb">${node.icon}</div>
+        <div class="tnode-name">${node.name}</div>
+        <div class="tnode-stat">${node.stat}</div>
+        <div class="tnode-cost">${active ? "✅ 激活中" : unlocked ? "点击切换" : (node.core > 0 ? `¥${node.price / 1000}k+💎${node.core}` : `¥${node.price / 1000}k`)}</div>
+      `;
+      btn.onclick = () => {
+        if (unlocked) {
+          save.talentsEquipped[t.tier] = active ? null : node.id;
+          sfx.playXp();
+        } else if (canBuy) {
+          save.coins -= node.price;
+          save.goldCores = (save.goldCores || 0) - node.core;
+          save.talentsUnlocked.push(node.id);
+          save.talentsEquipped[t.tier] = node.id;
+          sfx.playLevelUp();
+        } else {
+          showToast("金币或稀缺金核 💎 不足！去摸大金或扫满 100% 吧！", "pink");
+          return;
+        }
+        writeSave(save);
+        refreshLobby();
+      };
+      grid.appendChild(btn);
+    }
+    wrap.appendChild(tierEl);
+  }
+}
+
+function renderCodex() {
+  document.querySelectorAll(".stab").forEach((b) => b.classList.toggle("active", b.dataset.ctab === currentCodexTab));
+  const list = document.getElementById("codex-list");
+  list.innerHTML = "";
+
+  if (currentCodexTab === "enemies") {
+    for (const en of ENEMY_CODEX) {
+      const row = document.createElement("div");
+      row.className = "codex-row";
+      row.innerHTML = `
+        <img class="codex-ico" src="${SPRITE_URLS[en.sprite]}" style="${en.id === "slime" ? "filter:sepia(1) hue-rotate(-10deg) saturate(2.4)" : ""}" alt="${en.name}">
+        <div class="codex-meta">
+          <div class="codex-name">${en.name} <span style="font-size:10px;color:var(--cyan);margin-left:4px">${en.role}</span></div>
+          <div class="codex-desc">${en.desc}</div>
+        </div>
+      `;
+      list.appendChild(row);
+    }
+  } else if (currentCodexTab === "museum") {
+    for (const set of MUSEUM_SETS) {
+      const done = set.items.every((id) => (save.museum[id] || 0) > 0);
+      const row = document.createElement("div");
+      row.className = "codex-row";
+      row.innerHTML = `
+        <div class="codex-meta">
+          <div class="codex-name">${done ? "✅" : "🔒"} ${set.name}</div>
+          <div class="codex-desc">${set.buffText}</div>
+        </div>
+        <span style="font-size:11px;font-weight:900;color:${done ? "var(--green)" : "var(--muted)"}">${done ? "已激活" : "未集齐"}</span>
+      `;
+      list.appendChild(row);
+    }
+    for (const item of LOOT_ITEMS) {
+      const count = save.museum[item.id] || 0;
+      const icoKey = item.id === "catcan" || item.id === "duck" ? "catcan" : item.id === "cash" ? "cash" : item.id === "ring" ? "ring" : "crate";
+      const row = document.createElement("div");
+      row.className = "codex-row";
+      row.innerHTML = `
+        <img class="codex-ico" src="${SPRITE_URLS[icoKey]}" style="${count > 0 ? "" : "filter:brightness(0) opacity(0.45)"}" alt="${item.name}">
+        <div class="codex-meta">
+          <div class="codex-name" style="color:${count > 0 ? item.color : "var(--muted)"}">${count > 0 ? item.name : "？？？未发现大金"}</div>
+          <div class="codex-desc">基础估值 ¥${item.value.toLocaleString()} · 累计带回 ${count} 件</div>
+        </div>
+      `;
+      list.appendChild(row);
+    }
+  } else {
+    // Safe Box & Black Market Boosters
+    const nextSlot = save.safeBoxSlots + 1;
+    const slotPrice = SAFE_BOX_PRICES[nextSlot];
+    const sb = document.createElement("div");
+    sb.className = "codex-row";
+    sb.innerHTML = `
+      <div class="codex-meta">
+        <div class="codex-name">🔒 尘盒安全箱（${save.safeBoxSlots}/3 格）</div>
+        <div class="codex-desc">最贵大金自动上锁，翻车也能保底带回！</div>
+      </div>
+      <button class="mini-buy ${!slotPrice ? "owned" : ""}">${slotPrice ? `¥${slotPrice.toLocaleString()}` : "已满级"}</button>
+    `;
+    const sbBtn = sb.querySelector("button");
+    if (!slotPrice || save.coins < slotPrice) sbBtn.disabled = true;
+    sbBtn.onclick = () => {
+      if (slotPrice && save.coins >= slotPrice) {
+        save.coins -= slotPrice;
+        save.safeBoxSlots = nextSlot;
+        writeSave(save);
+        sfx.playBigGold();
+        refreshLobby();
+      }
+    };
+    list.appendChild(sb);
+
+    for (const b of BOOSTERS) {
+      const queued = Boolean(save.boosters[b.id]);
+      const row = document.createElement("div");
+      row.className = "codex-row";
+      row.innerHTML = `
+        <div class="codex-meta">
+          <div class="codex-name">${b.icon} ${b.name}</div>
+          <div class="codex-desc">${b.desc}</div>
+        </div>
+        <button class="mini-buy ${queued ? "owned" : ""}">${queued ? "下局生效" : `¥${b.price.toLocaleString()}`}</button>
+      `;
+      const btn = row.querySelector("button");
+      if (queued || save.coins < b.price) btn.disabled = true;
+      btn.onclick = () => {
+        if (save.coins >= b.price) {
+          save.coins -= b.price;
+          save.boosters[b.id] = true;
+          writeSave(save);
+          sfx.playLevelUp();
+          refreshLobby();
+        }
+      };
+      list.appendChild(row);
+    }
+  }
+}
+
+// ===== CORE GAMEPLAY SIMULATION =====
 function pickWeightedLoot(rng, minValue = 0) {
   const pool = LOOT_ITEMS.filter((i) => i.value >= minValue);
   const list = pool.length ? pool : LOOT_ITEMS;
@@ -135,13 +390,13 @@ function pickWeightedLoot(rng, minValue = 0) {
   return list[0];
 }
 
-function findSafePoint(rng, pad = 110) {
+function findSafePoint(rng, pad = 120) {
   for (let tries = 0; tries < 40; tries++) {
     const x = pad + rng() * (ROOM.width - pad * 2);
     const y = pad + rng() * (ROOM.height - pad * 2);
     if (!pointHitsObstacle(x, y)) return { x, y };
   }
-  return { x: 560, y: 480 };
+  return { x: 560, y: 400 };
 }
 
 function startRun() {
@@ -154,6 +409,7 @@ function startRun() {
   const seedStr = isDaily ? (urlCtx.seed || getTodaySeedString()) : String(Date.now());
   const rng = createRng(hashSeed(seedStr));
   const skin = getEquippedSkin();
+  const talents = getActiveTalents();
   const museumBonus = getMuseumBonuses();
   const highRisk = Boolean(save.boosters.highrisk);
   const startLvUp = Boolean(save.boosters.lv3);
@@ -161,143 +417,117 @@ function startRun() {
   save.boosters = {};
   writeSave(save);
 
-  const maxHp = Math.round(115 * skin.bonus.hp);
+  const maxHp = Math.round((115 + (talents.has("t1_armor") ? 35 : 0)) * skin.bonus.hp);
 
   state = {
     phase: "playing",
     mode: isDaily ? "daily" : "free",
     seedStr,
     rng,
+    talents,
     time: 0,
     slowMo: 0,
     wave: 1,
-    hordeTimer: 26, // Periodic Horde Swarm every 26s!
+    hordeTimer: 26,
     highRisk,
-    lootMult: skin.bonus.loot * museumBonus.lootMult * (highRisk ? 1.8 : 1),
-    fireRateMult: museumBonus.fireRate,
+    lootMult: skin.bonus.loot * museumBonus.lootMult * (highRisk ? 1.8 : 1) * (talents.has("t3_greed") ? 1.25 : 1),
+    fireRateMult: museumBonus.fireRate * (talents.has("t2_haste") ? 1.18 : 1),
+    critBonus: talents.has("t2_crit") ? 0.18 : 0,
+    chargeMult: (talents.has("t3_charge") ? 1.45 : 1) * (skin.id === "hidden_duck" ? 1.3 : 1),
     kills: 0,
     combo: 0,
     comboTimer: 0,
     fever: 0,
     shake: 0,
     hitstop: 0,
+    lastHitSource: "default",
     revivedOnce: false,
     doubledOnce: false,
     rescuedGhost: null,
     coresEarned: 0,
+    secretBedFound: false,
     dustLayer: createDustLayer(),
     cleanTracker: createCleanTracker(),
     milestones: { m35: false, m70: false, m100: false },
-    dustCleanAcc: 0,
     player: {
-      x: 560,
-      y: 440,
+      x: 520,
+      y: 380,
       vx: 0,
       vy: 0,
-      r: 23,
+      r: Math.round(23 * (skin.scale || 1)),
       facing: 0,
       hp: maxHp,
       maxHp,
-      speed: 255 * skin.bonus.speed,
-      magnet: skin.id === "cat" ? 165 : 122,
+      speed: 260 * skin.bonus.speed * (talents.has("t1_drift") ? 1.14 : 1),
+      magnet: (skin.id === "cat" ? 170 : 126) * (talents.has("t1_suck") ? 1.28 : 1),
+      cleanRadius: (skin.id === "sakura" ? 48 : 40) * (talents.has("t1_suck") ? 1.28 : 1),
       lv: 1,
       xp: 0,
       xpNext: 8,
       hurtFlash: 0,
       invuln: 0,
       poopSlow: 0,
+      slimeDebuff: 0,
       skin: skin.id,
       charge: 45,
       overdrive: 0,
-      weapons: { swatter: 1, laser: 0, spatula: 0, hairdryer: 0, tesla: 0 },
+      weapons: { swatter: 1, laser: talents.has("t3_start") ? 1 : 0, spatula: 0, hairdryer: 0, tesla: 0 },
       cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6 },
     },
-    cam: { x: 560, y: 440 },
+    cam: { x: 520, y: 380 },
     bagLoot: [],
     looseCoins: 0,
     enemies: [],
     enemyBullets: [],
+    puddles: [],
     ragdolls: [],
     props: [],
     poops: [],
     nativeSpots: NATIVE_SPOT_DEFS.map((d) => ({ ...d, progress: 0, tickAcc: 0, searched: false })),
     shockStrips: SHOCK_STRIP_DEFS.map((d) => ({ ...d, cd: 0 })),
-    crates: [], // Reserved ONLY for Boss / Elite drops!
+    crates: [],
     gems: [],
     lootDrops: [],
     catPaws: [],
     vfx: [],
     particles: [],
     texts: [],
-    dock: { active: false, x: 1180, y: 1120, radius: 70, progress: 0, tickAcc: 0 },
+    dock: { active: false, x: 1860, y: 1060, radius: 72, progress: 0, tickAcc: 0 },
     spawnAcc: 0.4,
-    pawAcc: 16,
+    pawAcc: 15,
     keys: new Set(),
     joy: { active: false, id: null, ox: 0, oy: 0, cx: 0, cy: 0, dx: 0, dy: 0 },
   };
 
-  cleanDustAt(state.dustLayer, state.player.x, state.player.y, 48);
-  state.cleanTracker.markClean(state.player.x, state.player.y, 50);
+  cleanDustAt(state.dustLayer, state.player.x, state.player.y, 54);
+  state.cleanTracker.markClean(state.player.x, state.player.y, 56);
 
-  // Instant Action Hook: 12 cute Dust-Bunnies right around the player
+  // Instant Action Hook: 12 enemies nearby
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2 + rng() * 0.25;
-    const dist = 150 + (i % 3) * 45;
+    const dist = 160 + (i % 3) * 48;
     const ex = state.player.x + Math.cos(a) * dist;
     const ey = state.player.y + Math.sin(a) * dist;
     if (!pointHitsObstacle(ex, ey)) {
-      state.enemies.push({
-        type: i % 5 === 0 ? "sock" : "dust",
-        x: ex,
-        y: ey,
-        r: i % 5 === 0 ? 19 : 17,
-        hp: i % 5 === 0 ? 34 : 20,
-        maxHp: i % 5 === 0 ? 34 : 20,
-        speed: i % 5 === 0 ? 96 : 86,
-        dmg: 8,
-        xp: 3,
-        vx: 0,
-        vy: 0,
-        flash: 0,
-        stun: 0,
-        shootCd: 2.5 + rng() * 2,
-        enraged: false,
-        seed: i * 1.3,
-      });
+      spawnEnemy(i % 5 === 0 ? "sock" : "dust", { x: ex, y: ey });
     }
   }
 
-  // Destructible Living Room Props
-  for (let i = 0; i < 12; i++) {
-    const pt = findSafePoint(rng, 110);
-    state.props.push({
-      x: pt.x,
-      y: pt.y,
-      kind: i % 2 === 0 ? "box" : "snack",
-      rot: (rng() - 0.5) * 0.5,
-      flash: 0,
-    });
+  for (let i = 0; i < 16; i++) {
+    const pt = findSafePoint(rng, 120);
+    state.props.push({ x: pt.x, y: pt.y, kind: i % 2 === 0 ? "box" : "snack", rot: (rng() - 0.5) * 0.5, flash: 0 });
   }
 
-  // 4 Hilarious Pet Poop Hazards (including 1 sneaky poop under the coffee table!)
-  const poopCoords = [
-    { x: 520, y: 760 }, // Sneaky under coffee table!
-    findSafePoint(rng, 160),
-    findSafePoint(rng, 160),
-    findSafePoint(rng, 160),
-  ];
-  for (const pt of poopCoords) {
-    state.poops.push({ x: pt.x, y: pt.y, hp: 32, flash: 0 });
+  for (const pt of [{ x: 470, y: 580 }, findSafePoint(rng, 180), findSafePoint(rng, 180), findSafePoint(rng, 180)]) {
+    state.poops.push({ x: pt.x, y: pt.y, hp: 30, flash: 0 });
   }
 
-  if (extraRadar) {
-    state.crates.push({ x: 560, y: 310, minVal: 18800, progress: 0, tickAcc: 0 });
-  }
+  if (extraRadar) state.crates.push({ x: 640, y: 380, minVal: 18800, progress: 0, tickAcc: 0 });
 
   if (urlCtx.ghostDrop) {
     state.lootDrops.push({
       x: 780,
-      y: 440,
+      y: 420,
       isGhost: true,
       owner: urlCtx.ghostDrop.owner,
       lootId: urlCtx.ghostDrop.lootId,
@@ -308,14 +538,12 @@ function startRun() {
     });
   }
 
-  screenTitle.hidden = true;
+  lobbyShell.hidden = true;
   screenResult.hidden = true;
-  screenShop.hidden = true;
   screenLevelUp.hidden = true;
   hudEl.hidden = false;
   btnOverdrive.hidden = false;
 
-  // Dramatic 1.6s Mission Briefing Banner!
   briefingEl.hidden = false;
   setTimeout(() => {
     briefingEl.hidden = true;
@@ -367,21 +595,12 @@ function spawnText(x, y, text, color = "#ffffff", size = 17) {
   state.texts.push({ x, y, text, color, size, vy: -64, life: 0.72, maxLife: 0.72 });
 }
 
-function grantLootReward(x, y, minVal, sourceLabel = "✨ 掏出沙发底大金 ✨") {
+function grantLootReward(x, y, minVal, sourceLabel = "✨ 发现大金 ✨") {
   const item = pickWeightedLoot(state.rng, minVal);
   const cleanBonus = state.milestones.m70 ? 1.3 : 1;
   const waveScale = 1 + (state.wave - 1) * 0.45;
   const val = Math.round(item.value * waveScale * cleanBonus * state.lootMult);
-  const drop = {
-    x,
-    y,
-    lootId: item.id,
-    name: item.name,
-    short: item.short,
-    value: val,
-    rarity: item.rarity,
-    isGhost: false,
-  };
+  const drop = { x, y, lootId: item.id, name: item.name, short: item.short, value: val, rarity: item.rarity, isGhost: false };
   state.bagLoot.push(drop);
   state.slowMo = 0.28;
   state.shake = 0.7;
@@ -406,27 +625,22 @@ function triggerOverdrive() {
   sfx.playOverdriveBlast();
   vibrate(45);
 
-  // Skin-Specific Active Skills (20 Minutes Till Dawn style!)
-  const blastR = p.skin === "classic" ? 340 : 280;
+  const blastR = p.skin === "classic" ? 340 : 285;
   spawnRing(p.x, p.y, 20, blastR, "#38f3ff", 12, 0.4);
-  if (p.skin === "classic") {
-    spawnRing(p.x, p.y, 10, blastR * 0.72, "#ffd54a", 10, 0.48);
-    spawnText(p.x, p.y - 36, "⚡ 暴富双雷环清屏！", "#ffd54a", 23);
-  } else if (p.skin === "gold") {
-    // 24K Gold Crown bursts extra bonus coins around!
+  if (p.skin === "gold" || p.skin === "hidden_diamond") {
     for (let k = 0; k < 10; k++) {
       const a = (k / 10) * Math.PI * 2;
       state.gems.push({ x: p.x + Math.cos(a) * 80, y: p.y + Math.sin(a) * 80, kind: "coin", val: 888, forcePull: true });
     }
-    spawnText(p.x, p.y - 36, "👑 撒币震爆清屏！", "#ffd54a", 23);
+    spawnText(p.x, p.y - 36, "👑 撒币星爆清屏！", "#ffd54a", 23);
   } else if (p.skin === "cyber") {
-    // Cyber Neon Blink Dash forward!
     p.x += Math.cos(p.facing) * 140;
     p.y += Math.sin(p.facing) * 140;
     clampToRoom(p, p.r);
     spawnText(p.x, p.y - 36, "⚡ 赛博闪现清屏！", "#38f3ff", 23);
   } else {
-    spawnText(p.x, p.y - 36, "🐱 招财吸宝暴走！", "#ff9ed0", 23);
+    spawnRing(p.x, p.y, 10, blastR * 0.72, "#ffd54a", 10, 0.48);
+    spawnText(p.x, p.y - 36, "⚡ 过载清屏暴走！", "#ffd54a", 23);
   }
 
   spawnParticles(p.x, p.y, "#38f3ff", 32, 290, true);
@@ -438,12 +652,9 @@ function triggerOverdrive() {
     const dy = e.y - p.y;
     const d = Math.hypot(dx, dy) || 1;
     if (d < blastR) {
-      if (damageEnemy(e, 95 + state.wave * 35, (dx / d) * 380, (dy / d) * 380, true)) {
-        state.enemies.splice(i, 1);
-      }
+      if (damageEnemy(e, 95 + state.wave * 35, (dx / d) * 380, (dy / d) * 380, true)) state.enemies.splice(i, 1);
     }
   }
-  // Clear enemy bullets on Overdrive!
   state.enemyBullets.length = 0;
   for (const g of state.gems) g.forcePull = true;
 }
@@ -473,16 +684,20 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
   let type = forcedType;
   if (!type) {
     const r = Math.random();
-    if (state.wave >= 2 && r < 0.28) type = "sock";
-    else if (state.wave >= 2 && r < 0.42) type = "lego";
+    if (state.wave >= 2 && r < 0.14) type = "pooper";
+    else if (state.wave >= 2 && r < 0.28) type = "slime";
+    else if (state.wave >= 2 && r < 0.46) type = "sock";
+    else if (state.wave >= 2 && r < 0.58) type = "lego";
     else type = "dust";
   }
 
-  const hpScale = (1 + (state.wave - 1) * 0.48) * (state.highRisk ? 1.35 : 1);
+  const hpScale = (1 + (state.wave - 1) * 0.46) * (state.highRisk ? 1.35 : 1);
   const specs = {
     dust: { r: 17, hp: 22 * hpScale, speed: 88 + state.wave * 8, dmg: 8, xp: 3 },
-    sock: { r: 19, hp: 46 * hpScale, speed: 102 + state.wave * 9, dmg: 12, xp: 6 },
+    sock: { r: 19, hp: 46 * hpScale, speed: 100 + state.wave * 8, dmg: 11, xp: 6 },
     lego: { r: 20, hp: 82 * hpScale, speed: 62 + state.wave * 5, dmg: 16, xp: 9 },
+    pooper: { r: 18, hp: 38 * hpScale, speed: 122 + state.wave * 6, dmg: 6, xp: 8 },
+    slime: { r: 19, hp: 50 * hpScale, speed: 82 + state.wave * 6, dmg: 9, xp: 8 },
     mop: { r: 36, hp: 480 * hpScale, speed: 95 + state.wave * 8, dmg: 20, xp: 34 },
   };
   const sp = specs[type];
@@ -500,10 +715,11 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
     vy: 0,
     flash: 0,
     stun: 0,
-    aiState: "chase", // For Boss: chase | windup | charge
+    aiState: "chase",
     aiTimer: 3.5,
     chargeAng: 0,
     shootCd: 2.2 + Math.random() * 2,
+    dropCd: 3.5 + Math.random() * 2,
     summonedHalf: false,
     enraged: state.dock.active,
     seed: Math.random() * 10,
@@ -514,15 +730,16 @@ function triggerHordeSwarm() {
   state.wave += 1;
   sfx.playHordeHorn();
   state.shake = 0.5;
-  showToast(`🚨 第 ${state.wave} 波怪潮来袭！毛球与臭袜子军团从阳台涌入！`, "pink");
+  showToast(`🚨 第 ${state.wave} 波怪潮！撒屎怪与奶茶怪倾巢而出！`, "pink");
   const count = Math.min(18, 9 + state.wave * 3);
   for (let i = 0; i < count; i++) {
-    spawnEnemy(i % 4 === 0 ? "sock" : "dust");
+    const t = i % 6 === 0 ? "pooper" : i % 5 === 0 ? "slime" : i % 4 === 0 ? "sock" : "dust";
+    spawnEnemy(t);
   }
 }
 
 function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
-  const bonusDmg = e.stun > 0 ? dmg * 1.5 : dmg; // +50% damage on stunned Boss!
+  const bonusDmg = e.stun > 0 ? dmg * 1.5 : dmg;
   e.hp -= bonusDmg;
   e.flash = 0.09;
   e.vx += kbX;
@@ -547,12 +764,13 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
       sfx.setFever(true);
       showToast("🔥 狂热连击 FEVER！5秒攻速吸力暴涨！", "gold");
     }
-    state.player.charge = Math.min(100, state.player.charge + (e.type === "mop" ? 40 : 4.2));
+    state.player.charge = Math.min(100, state.player.charge + (e.type === "mop" ? 40 : 4.2) * state.chargeMult);
     sfx.playKill();
 
     const ang = Math.atan2(kbY || (e.y - state.player.y), kbX || (e.x - state.player.x));
     state.ragdolls.push({
       type: e.type,
+      sprite: e.type === "pooper" ? "poop" : e.type === "slime" ? "dust" : e.type,
       x: e.x,
       y: e.y,
       r: e.r,
@@ -572,18 +790,15 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
         x: e.x + (Math.random() - 0.5) * 22,
         y: e.y + (Math.random() - 0.5) * 22,
         kind: "coin",
-        val: Math.round((300 + state.wave * 180) * state.lootMult),
+        val: Math.round((320 + state.wave * 180) * state.lootMult),
         forcePull: false,
       });
     }
     if (e.type === "mop") {
       state.shake = 0.9;
-      // Boss EXCLUSIVELY drops a Super Golden Crate + 65% chance for Scarce Gold Core 💎!
       state.crates.push({ x: e.x, y: e.y, minVal: 28000, progress: 0, tickAcc: 0 });
-      if (state.rng() < 0.65) {
-        state.gems.push({ x: e.x + 28, y: e.y, kind: "core", val: 1, forcePull: false });
-      }
-      showToast("👑 击败拖把王！爆出 Boss 专属超级金箱与稀缺金核 💎！", "gold");
+      if (state.rng() < 0.7) state.gems.push({ x: e.x + 28, y: e.y, kind: "core", val: 1, forcePull: false });
+      showToast("👑 击败拖把王！爆出 Boss 超级金箱与稀缺金核 💎！", "gold");
     }
     return true;
   }
@@ -595,7 +810,6 @@ function damagePoop(idx, dmg) {
   poop.hp -= dmg;
   poop.flash = 0.08;
   if (poop.hp <= 0) {
-    // Purifying poop with weapons instead of stepping on it rewards hidden cash!
     spawnParticles(poop.x, poop.y, "#ffd54a", 16, 170, true);
     spawnRing(poop.x, poop.y, 8, 65, "#39ff88", 4, 0.24);
     sfx.playBigGold();
@@ -622,9 +836,9 @@ function shatterProp(prop) {
 
 function updateWeapons(dt) {
   const p = state.player;
-  const cdMult = (1 / state.fireRateMult) * (p.overdrive > 0 ? 0.45 : state.fever > 0 ? 0.65 : 1);
+  const debuffMult = p.slimeDebuff > 0 ? 1.45 : 1; // Milk-tea slime slows attack speed!
+  const cdMult = (1 / state.fireRateMult) * debuffMult * (p.overdrive > 0 ? 0.45 : state.fever > 0 ? 0.65 : 1);
 
-  // 1. Electric Fly Swatter
   if (p.weapons.swatter > 0) {
     p.cooldowns.swatter -= dt;
     if (p.cooldowns.swatter <= 0) {
@@ -640,17 +854,12 @@ function updateWeapons(dt) {
         const d = Math.hypot(dx, dy);
         if (d <= range + e.r) {
           hitAny = true;
-          const crit = Math.random() < 0.28;
-          if (damageEnemy(e, crit ? dmg * 1.85 : dmg, (dx / (d || 1)) * 200, (dy / (d || 1)) * 200, crit)) {
-            state.enemies.splice(i, 1);
-          }
+          const crit = Math.random() < 0.28 + state.critBonus;
+          if (damageEnemy(e, crit ? dmg * 1.85 : dmg, (dx / (d || 1)) * 200, (dy / (d || 1)) * 200, crit)) state.enemies.splice(i, 1);
         }
       }
-      // Can purify pet poop safely at range!
       for (let i = state.poops.length - 1; i >= 0; i--) {
-        if (Math.hypot(state.poops[i].x - p.x, state.poops[i].y - p.y) <= range + 16) {
-          damagePoop(i, dmg);
-        }
+        if (Math.hypot(state.poops[i].x - p.x, state.poops[i].y - p.y) <= range + 16) damagePoop(i, dmg);
       }
       for (let i = state.props.length - 1; i >= 0; i--) {
         if (Math.hypot(state.props[i].x - p.x, state.props[i].y - p.y) <= range + 16) {
@@ -667,7 +876,6 @@ function updateWeapons(dt) {
     }
   }
 
-  // 2. Laser Pointer
   if (p.weapons.laser > 0) {
     p.cooldowns.laser -= dt;
     if (p.cooldowns.laser <= 0 && (state.enemies.length > 0 || state.poops.length > 0)) {
@@ -680,7 +888,7 @@ function updateWeapons(dt) {
         const target = sorted[s];
         if (!target || Math.hypot(target.x - p.x, target.y - p.y) > 400) continue;
         state.vfx.push({ type: "laser", x1: p.x, y1: p.y, x2: target.x, y2: target.y, life: 0.18, maxLife: 0.18 });
-        const crit = Math.random() < 0.45;
+        const crit = Math.random() < 0.45 + state.critBonus;
         const idx = state.enemies.indexOf(target);
         if (idx >= 0 && damageEnemy(target, crit ? dmg * 1.9 : dmg, 0, 0, crit)) state.enemies.splice(idx, 1);
       }
@@ -695,7 +903,6 @@ function updateWeapons(dt) {
     }
   }
 
-  // 3. Orbiting Spatulas
   if (p.weapons.spatula > 0) {
     const lv = p.weapons.spatula;
     const count = 1 + lv;
@@ -708,13 +915,12 @@ function updateWeapons(dt) {
       for (let j = state.enemies.length - 1; j >= 0; j--) {
         const e = state.enemies[j];
         if (Math.hypot(e.x - sx, e.y - sy) < e.r + 18 && e.flash <= 0) {
-          if (damageEnemy(e, dmg, Math.cos(a) * 140, Math.sin(a) * 140, Math.random() < 0.2)) state.enemies.splice(j, 1);
+          if (damageEnemy(e, dmg, Math.cos(a) * 140, Math.sin(a) * 140, Math.random() < 0.2 + state.critBonus)) state.enemies.splice(j, 1);
         }
       }
     }
   }
 
-  // 4. Hairdryer Turbo Cone
   if (p.weapons.hairdryer > 0) {
     p.cooldowns.hairdryer -= dt;
     if (p.cooldowns.hairdryer <= 0) {
@@ -739,7 +945,6 @@ function updateWeapons(dt) {
     }
   }
 
-  // 5. Tesla Power Strip
   if (p.weapons.tesla > 0) {
     p.cooldowns.tesla -= dt;
     if (p.cooldowns.tesla <= 0 && state.enemies.length > 0) {
@@ -768,7 +973,7 @@ function updateWeapons(dt) {
         cx = best.x;
         cy = best.y;
         const idx = state.enemies.indexOf(best);
-        if (idx >= 0 && damageEnemy(best, dmg, 0, 0, Math.random() < 0.3)) state.enemies.splice(idx, 1);
+        if (idx >= 0 && damageEnemy(best, dmg, 0, 0, Math.random() < 0.3 + state.critBonus)) state.enemies.splice(idx, 1);
       }
       if (pts.length > 1) {
         state.vfx.push({ type: "tesla", pts, life: 0.22, maxLife: 0.22 });
@@ -778,14 +983,14 @@ function updateWeapons(dt) {
   }
 }
 
-function buildLevelUpChoices() {
+function openLevelUp() {
+  state.phase = "levelup";
+  sfx.playLevelUp();
   const p = state.player;
   const pool = [];
   for (const w of Object.values(WEAPONS)) {
     const cur = p.weapons[w.id] || 0;
-    if (cur < w.maxLv) {
-      pool.push({ kind: "weapon", id: w.id, icon: w.icon, name: w.name, tag: cur === 0 ? "新外挂" : `LV ${cur} → ${cur + 1}`, desc: w.desc });
-    }
+    if (cur < w.maxLv) pool.push({ kind: "weapon", id: w.id, icon: w.icon, name: w.name, tag: cur === 0 ? "新外挂" : `LV ${cur} → ${cur + 1}`, desc: w.desc });
   }
   for (const pa of Object.values(PASSIVES)) {
     pool.push({ kind: "passive", id: pa.id, icon: pa.icon, name: pa.name, tag: pa.tag, desc: pa.desc });
@@ -794,24 +999,17 @@ function buildLevelUpChoices() {
     const j = Math.floor(state.rng() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  return pool.slice(0, 3);
-}
+  const choices = pool.slice(0, 3);
+  const applyChoice = (c) => {
+    if (c.kind === "weapon") p.weapons[c.id] = (p.weapons[c.id] || 0) + 1;
+    else if (c.id === "magnet") p.magnet *= 1.35;
+    else if (c.id === "turbo") p.speed *= 1.14;
+    else if (c.id === "battery") {
+      p.maxHp += 25;
+      p.hp = Math.min(p.maxHp, p.hp + 40);
+    }
+  };
 
-function applyChoice(c) {
-  const p = state.player;
-  if (c.kind === "weapon") p.weapons[c.id] = (p.weapons[c.id] || 0) + 1;
-  else if (c.id === "magnet") p.magnet *= 1.35;
-  else if (c.id === "turbo") p.speed *= 1.14;
-  else if (c.id === "battery") {
-    p.maxHp += 25;
-    p.hp = Math.min(p.maxHp, p.hp + 40);
-  }
-}
-
-function openLevelUp() {
-  state.phase = "levelup";
-  sfx.playLevelUp();
-  const choices = buildLevelUpChoices();
   const listEl = document.getElementById("choice-list");
   listEl.innerHTML = "";
   for (const c of choices) {
@@ -828,7 +1026,7 @@ function openLevelUp() {
       applyChoice(c);
       screenLevelUp.hidden = true;
       state.phase = "playing";
-      spawnRing(state.player.x, state.player.y, 16, 130, "#ffd54a", 7, 0.3);
+      spawnRing(p.x, p.y, 16, 130, "#ffd54a", 7, 0.3);
       showToast(`✨ 焊上新外挂：${c.name}！`, "gold");
     };
     listEl.appendChild(btn);
@@ -839,7 +1037,7 @@ function openLevelUp() {
       screenLevelUp.hidden = true;
       state.phase = "playing";
       sfx.playBigGold();
-      spawnRing(state.player.x, state.player.y, 16, 180, "#ffd54a", 10, 0.36);
+      spawnRing(p.x, p.y, 16, 180, "#ffd54a", 10, 0.36);
       showToast("🔥 贪心满载！3 件战术外挂全部焊上机身！", "gold");
     });
   };
@@ -854,20 +1052,20 @@ function checkCleanlinessMilestones() {
     state.dock.progress = 0;
     sfx.setUrgent(true);
     sfx.playExtractTick(0.8);
-    showToast("⚡ 清扫达 35%！充电桩撤离点已激活！可去撤离，或冲 70% 唤醒拖把王！", "green");
+    showToast("★ 探索清扫 35%！充电桩已解锁 + 结算获 1 星宝箱！", "green");
   }
   if (!state.milestones.m70 && pct >= 70) {
     state.milestones.m70 = true;
     sfx.playHordeHorn();
-    spawnEnemy("mop", { x: 740, y: 820 });
-    showToast("👑 清扫达 70%！全图大金 +30%，旋转拖把王苏醒（利用家具掩体撞晕它）！", "pink");
+    spawnEnemy("mop", { x: 1050, y: 920 });
+    showToast("★★ 清扫 70%！结算 2 星宝箱 + 拖把王苏醒（引撞沙发击晕它）！", "pink");
   }
   if (!state.milestones.m100 && pct >= 100) {
     state.milestones.m100 = true;
     state.coresEarned += 1;
     sfx.playExtractSuccess();
     spawnRing(state.player.x, state.player.y, 20, 360, "#39ff88", 12, 0.55);
-    showJackpotBanner("100% 完美洁癖成就！", "+1 稀缺金核 💎", "✨ 客厅一尘不染 ✨");
+    showJackpotBanner("★★★ 100% 全屋完美探索！", "+1 稀缺金核 💎 · 结算3星满箱", "✨ 洁癖天花板 ✨");
   }
 }
 
@@ -878,6 +1076,8 @@ function finishRun(extracted) {
   sfx.stopBgm();
   btnOverdrive.hidden = true;
 
+  const pct = state.cleanTracker.percent;
+  const stars = pct >= 100 ? 3 : pct >= 70 ? 2 : pct >= 35 ? 1 : 0;
   const totalVal = getTotalRunValue();
   const { safeItems, safeVal } = getSafeBoxValueAndItems();
 
@@ -906,15 +1106,51 @@ function finishRun(extracted) {
   if (extracted && earned > save.bestRunValue) save.bestRunValue = earned;
   writeSave(save);
 
-  document.getElementById("res-eyebrow").textContent = extracted ? "EXTRACTION SUCCESS · 安全撤离" : "GREEDY WIPEOUT · 贪心翻车";
-  document.getElementById("res-title").textContent = extracted ? "✅ 满载冲回充电桩！" : "💥 电量炸穿 · 贪心翻车！";
-  document.getElementById("res-sub").textContent = extracted
-    ? `客厅清扫 ${state.cleanTracker.percent}% · 带出 ${keptItems.length} 件大金${state.coresEarned > 0 ? ` + 💎${state.coresEarned} 金核` : ""}！`
-    : `客厅清扫 ${state.cleanTracker.percent}% · 安全箱保底 ¥${safeVal.toLocaleString()}${state.coresEarned > 0 ? ` + 💎${state.coresEarned} 金核` : ""}。`;
+  // Set Victory / Defeat Comedy Poster & Cause-of-Death Quip!
+  document.getElementById("res-poster").src = extracted ? POSTERS.victory : POSTERS.defeat;
+  const quipEl = document.getElementById("res-quip");
+  quipEl.className = `death-quip ${extracted ? "win" : ""}`;
+  quipEl.textContent = extracted
+    ? (stars === 3 ? "🏆 三星完美扫光！猫主子当场气晕！" : "😎 戴上墨镜安全跑路，主人明天找耳机找疯！")
+    : (DEATH_QUIPS[state.lastHitSource] || DEATH_QUIPS.default);
+
+  document.getElementById("res-title").textContent = extracted ? "✅ 满载冲回充电桩！" : "💥 贪心翻车 · 电量炸穿！";
   document.getElementById("res-k1").textContent = extracted ? "实际落袋" : "痛失估值";
   document.getElementById("res-v1").textContent = `¥${(extracted ? earned : Math.max(0, totalVal - safeVal)).toLocaleString()}`;
-  document.getElementById("res-v2").textContent = `${state.cleanTracker.percent}% / ${state.kills}杀`;
+  document.getElementById("res-v2").textContent = `${pct}% / ${state.kills}杀`;
   document.getElementById("res-v3").textContent = `¥${safeVal.toLocaleString()}`;
+
+  // Render 3-Star Rating & Interactive Click-to-Pop Star Reward Chests!
+  const starsEl = document.getElementById("res-stars");
+  starsEl.innerHTML = [1, 2, 3].map((i) => `<span class="${i <= stars ? "" : "off"}">★</span>`).join("");
+
+  const chestsEl = document.getElementById("res-chests");
+  chestsEl.innerHTML = "";
+  if (stars === 0) {
+    chestsEl.innerHTML = `<span style="font-size:11px;color:var(--muted)">探索清扫达 35% / 70% / 100% 即可在结算狂开 1~3 个星级宝箱！</span>`;
+  } else {
+    for (let i = 1; i <= stars; i++) {
+      const btn = document.createElement("button");
+      btn.className = "reward-chest";
+      btn.textContent = i === 3 ? "👑 开3星金核箱" : `🎁 开${i}星宝箱`;
+      btn.onclick = () => {
+        if (btn.classList.contains("opened")) return;
+        btn.classList.add("opened");
+        sfx.playCratePop();
+        if (i === 3) {
+          save.goldCores = (save.goldCores || 0) + 1;
+          save.coins += 18888;
+          btn.textContent = "✅ +💎1 +¥18,888";
+        } else {
+          const bonus = i * 8800;
+          save.coins += bonus;
+          btn.textContent = `✅ +¥${bonus.toLocaleString()}`;
+        }
+        writeSave(save);
+      };
+      chestsEl.appendChild(btn);
+    }
+  }
 
   const receiptImg = document.getElementById("receipt-img");
   receiptImg.style.display = "none";
@@ -935,7 +1171,7 @@ function finishRun(extracted) {
         screenResult.hidden = true;
         btnOverdrive.hidden = false;
         sfx.startBgm("living");
-        showToast("⚡ 满血满能量复活！立刻开过载冲回充电桩！", "green");
+        showToast("⚡ 满血复活！快钻桌底或冲充电桩！", "green");
       });
     };
   } else if (extracted && !state.doubledOnce && earned > 0) {
@@ -951,7 +1187,6 @@ function finishRun(extracted) {
         adBtn.hidden = true;
         document.getElementById("res-v1").textContent = `¥${(earned * 2).toLocaleString()}`;
         sfx.playBigGold();
-        showToast(`💰 收益翻倍成功！共入账 ¥${(earned * 2).toLocaleString()}`, "gold");
       });
     };
   } else {
@@ -967,8 +1202,8 @@ function finishRun(extracted) {
       lootId: topLoot ? topLoot.lootId : "catcan",
     });
     const text = extracted
-      ? `我在《半夜扫地机：客厅摸金》清扫 ${state.cleanTracker.percent}% 并带走 ¥${earned.toLocaleString()}！来挑战今日客厅： ${shareUrl}`
-      : `我在《半夜扫地机》贪心翻车，痛失 ¥${totalVal.toLocaleString()}！快点链接去客厅捡我的遗产： ${shareUrl}`;
+      ? `我在《半夜扫地机》探索 ${pct}%（${stars}星）带走 ¥${earned.toLocaleString()}！敢来挑战吗？ ${shareUrl}`
+      : `我在《半夜扫地机》翻车了（${DEATH_QUIPS[state.lastHitSource] || ""}）痛失 ¥${totalVal.toLocaleString()}！快来捡遗产： ${shareUrl}`;
     await copyToClipboard(text);
     showToast("🔗 已复制带遗产坐标的挑战文案！快发微信群或 X！", "pink");
   };
@@ -977,17 +1212,17 @@ function finishRun(extracted) {
     const dataUrl = renderReceiptPoster({
       extracted,
       value: extracted ? (state.doubledOnce ? earned * 2 : earned) : totalVal,
-      cleanPct: state.cleanTracker.percent,
+      cleanPct: pct,
+      stars,
       wave: state.wave,
       kills: state.kills,
       lootNames: state.bagLoot.map((l) => `${l.short} (¥${l.value.toLocaleString()})`),
-      modeLabel: state.mode === "daily" ? `今日同图榜 #${state.seedStr}` : "L型客厅模式",
+      modeLabel: state.mode === "daily" ? `今日同图榜 #${state.seedStr}` : "豪宅摸金",
       streak: save.extractStreak,
       rescuedGhost: state.rescuedGhost,
     });
     receiptImg.src = dataUrl;
     receiptImg.style.display = "block";
-    showToast("🧾 摸金小票已生成！长按或右键即可保存晒图", "gold");
   };
 
   screenResult.hidden = false;
@@ -1021,12 +1256,27 @@ function update(rawDt) {
   p.hurtFlash = Math.max(0, p.hurtFlash - dt);
   p.invuln = Math.max(0, p.invuln - dt);
   p.poopSlow = Math.max(0, p.poopSlow - dt);
+  p.slimeDebuff = Math.max(0, p.slimeDebuff - dt);
   if (p.overdrive > 0) {
     p.overdrive = Math.max(0, p.overdrive - dt);
     if (Math.random() < 0.5) spawnParticles(p.x, p.y, "#38f3ff", 1, 90, true);
   }
 
-  // Smooth Q-Bouncy Inertia + Drift Feel!
+  // Check sticky Milk-Tea Puddles (movement + fire-rate debuff!)
+  for (let i = state.puddles.length - 1; i >= 0; i--) {
+    const pd = state.puddles[i];
+    pd.life -= dt;
+    if (pd.life <= 0) {
+      state.puddles.splice(i, 1);
+      continue;
+    }
+    if (Math.hypot(p.x - pd.x, p.y - pd.y) < pd.r && p.overdrive <= 0) {
+      p.slimeDebuff = 0.45;
+      state.lastHitSource = "slime";
+    }
+  }
+
+  // Movement w/ Inertia & Drift
   let ix = 0;
   let iy = 0;
   if (state.keys.has("KeyW") || state.keys.has("ArrowUp")) iy -= 1;
@@ -1038,46 +1288,52 @@ function update(rawDt) {
     iy += state.joy.dy;
   }
   const mag = Math.hypot(ix, iy);
-  const moveSpd = p.speed * (p.overdrive > 0 ? 1.55 : p.poopSlow > 0 ? 0.55 : state.fever > 0 ? 1.18 : 1);
+  const slowMult = p.overdrive > 0 ? 1.55 : p.poopSlow > 0 ? 0.55 : p.slimeDebuff > 0 ? 0.58 : state.fever > 0 ? 1.18 : 1;
+  const moveSpd = p.speed * slowMult;
   const tx = mag > 0.05 ? (ix / Math.max(1, mag)) * moveSpd : 0;
   const ty = mag > 0.05 ? (iy / Math.max(1, mag)) * moveSpd : 0;
   const accel = Math.min(1, dt * 11);
-  // Emit cute white drift dust puffs when making sharp turns!
-  const turnDelta = Math.hypot(tx - p.vx, ty - p.vy);
-  if (turnDelta > 180 && mag > 0.2 && Math.random() < 0.45) {
+  if (Math.hypot(tx - p.vx, ty - p.vy) > 180 && mag > 0.2 && Math.random() < 0.45) {
     spawnParticles(p.x, p.y + 10, "#e2e8f0", 2, 55, false);
   }
   p.vx += (tx - p.vx) * accel;
   p.vy += (ty - p.vy) * accel;
-
   p.x += p.vx * dt;
   p.y += p.vy * dt;
   clampToRoom(p, p.r);
 
+  // Secret Under-Bed Easter Egg Discovery!
+  const underCover = isUnderHiddenCover(p.x, p.y);
+  if (underCover && underCover.secretEasterEgg && !state.secretBedFound) {
+    state.secretBedFound = true;
+    state.coresEarned += 1;
+    sfx.playBigGold();
+    showJackpotBanner("🐾 发现隐藏彩蛋：主卧床底猫窝！", "+1 稀缺金核 💎 · 快掏床底宝藏！", "✨ 隐藏暗格发现 ✨");
+  }
+
   if (Math.hypot(p.vx, p.vy) > 18) {
     p.facing = Math.atan2(p.vy, p.vx);
     if (p.poopSlow > 0) {
-      // Roomba Poop Nightmare: smears brown trails back onto the floor!
       smearPoopAt(state.dustLayer, p.x, p.y, 20);
       state.cleanTracker.dirtyAt(p.x, p.y, 26);
     } else {
-      const cleanR = p.overdrive > 0 ? 54 : 38;
+      const cleanR = p.overdrive > 0 ? p.cleanRadius * 1.4 : p.cleanRadius;
       cleanDustAt(state.dustLayer, p.x, p.y, cleanR);
-      const newly = state.cleanTracker.markClean(p.x, p.y, cleanR);
+      const newly = state.cleanTracker.markClean(p.x, p.y, cleanR + 8);
       if (newly > 0) {
-        p.charge = Math.min(100, p.charge + newly * 0.7);
+        p.charge = Math.min(100, p.charge + newly * 0.75 * state.chargeMult);
         checkCleanlinessMilestones();
       }
     }
   }
 
-  // Camera
+  // Smooth Camera
   const targetCamX = Math.max(vw / 2, Math.min(ROOM.width - vw / 2, p.x));
   const targetCamY = Math.max(vh / 2, Math.min(ROOM.height - vh / 2, p.y));
   state.cam.x += (targetCamX - state.cam.x) * Math.min(1, dt * 8.5);
   state.cam.y += (targetCamY - state.cam.y) * Math.min(1, dt * 8.5);
 
-  // Interactive Power-Strip Shock Traps!
+  // Shock Strips
   for (const strip of state.shockStrips) {
     strip.cd = Math.max(0, strip.cd - dt);
     if (strip.cd <= 0 && Math.hypot(p.x - strip.x, p.y - strip.y) < 38) {
@@ -1085,7 +1341,7 @@ function update(rawDt) {
       sfx.playOverdriveBlast();
       state.shake = 0.65;
       spawnRing(strip.x, strip.y, 16, 260, "#38f3ff", 10, 0.35);
-      spawnText(strip.x, strip.y - 24, "⚡ 漏电插线板全屏麻痹！", "#38f3ff", 20);
+      spawnText(strip.x, strip.y - 24, "⚡ 漏电全屏麻痹！", "#38f3ff", 20);
       for (let i = state.enemies.length - 1; i >= 0; i--) {
         const e = state.enemies[i];
         if (Math.hypot(e.x - strip.x, e.y - strip.y) < 260) {
@@ -1096,27 +1352,31 @@ function update(rawDt) {
     }
   }
 
-  // Pet Poop Step-On Nightmare Check!
+  // Pet Poop Step-On Check (T2_poop talent grants immunity!)
   for (let i = state.poops.length - 1; i >= 0; i--) {
     const poop = state.poops[i];
     poop.flash = Math.max(0, poop.flash - dt);
     if (Math.hypot(p.x - poop.x, p.y - poop.y) < p.r + 14 && p.overdrive <= 0) {
-      p.poopSlow = 2.4;
-      sfx.playPoopSplat();
-      vibrate(40);
-      state.shake = 0.5;
-      smearPoopAt(state.dustLayer, poop.x, poop.y, 38);
-      state.cleanTracker.dirtyAt(poop.x, poop.y, 44);
-      spawnText(poop.x, poop.y - 24, "💩 踩雷！涂脏地板了！", "#c08457", 19);
-      showToast("💩 扫地机终极噩梦！踩到粑粑减速并弄脏地板！（用武器远程清掉可爆金币）", "pink");
-      state.poops.splice(i, 1);
+      if (state.talents.has("t2_poop")) {
+        damagePoop(i, 999);
+      } else {
+        p.poopSlow = 2.4;
+        state.lastHitSource = "poop";
+        sfx.playPoopSplat();
+        vibrate(40);
+        state.shake = 0.5;
+        smearPoopAt(state.dustLayer, poop.x, poop.y, 38);
+        state.cleanTracker.dirtyAt(poop.x, poop.y, 44);
+        spawnText(poop.x, poop.y - 24, "💩 踩雷！涂脏地板！", "#c08457", 19);
+        state.poops.splice(i, 1);
+      }
     }
   }
 
-  // Native Furniture Search Spots (Sofa cracks, under tables, TV console)
+  // Native Furniture Search Spots
   for (const spot of state.nativeSpots) {
     if (spot.searched) continue;
-    if (Math.hypot(p.x - spot.x, p.y - spot.y) < 62) {
+    if (Math.hypot(p.x - spot.x, p.y - spot.y) < 64) {
       spot.progress += dt / 0.8;
       spot.tickAcc += dt;
       if (spot.tickAcc >= 0.14) {
@@ -1125,14 +1385,14 @@ function update(rawDt) {
       }
       if (spot.progress >= 1) {
         spot.searched = true;
-        grantLootReward(spot.x, spot.y, spot.minVal, `🔍 ${spot.label}出大金！`);
+        grantLootReward(spot.x, spot.y, spot.minVal, `🔍 ${spot.label}掏出大金！`);
       }
     } else {
       spot.progress = Math.max(0, spot.progress - dt * 0.8);
     }
   }
 
-  // Boss/Elite Mystery Crates
+  // Boss Crates
   for (let i = state.crates.length - 1; i >= 0; i--) {
     const cr = state.crates[i];
     if (Math.hypot(p.x - cr.x, p.y - cr.y) < 76) {
@@ -1151,23 +1411,21 @@ function update(rawDt) {
     }
   }
 
-  // Ramming destructible props
   for (let i = state.props.length - 1; i >= 0; i--) {
-    const pr = state.props[i];
-    if (Math.hypot(p.x - pr.x, p.y - pr.y) < p.r + 22) {
-      shatterProp(pr);
+    if (Math.hypot(p.x - state.props[i].x, p.y - state.props[i].y) < p.r + 22) {
+      shatterProp(state.props[i]);
       state.props.splice(i, 1);
     }
   }
 
-  // Periodic Horde Swarm Timer!
+  // Periodic Horde Swarms
   state.hordeTimer -= dt;
   if (state.hordeTimer <= 0) {
     state.hordeTimer = 26;
     triggerHordeSwarm();
   }
 
-  // Charging Dock Extraction Check (unlocked at 35% Cleanliness!)
+  // Charging Dock
   if (state.dock.active) {
     if (Math.hypot(p.x - state.dock.x, p.y - state.dock.y) <= state.dock.radius) {
       state.dock.progress += dt / 3.0;
@@ -1186,45 +1444,67 @@ function update(rawDt) {
     }
   }
 
-  // Ambient enemy spawns
+  // Ambient spawns
   const spawnRate = Math.max(0.24, 0.72 - state.wave * 0.08);
   state.spawnAcc -= dt;
-  if (state.spawnAcc <= 0 && state.enemies.length < 90) {
+  if (state.spawnAcc <= 0 && state.enemies.length < 95) {
     state.spawnAcc = spawnRate;
     spawnEnemy();
   }
 
-  // Real Tabby Cat Paw Slams
-  if (state.time > 16) {
+  // CHASING CAT PAW (Tracks player with varying speed -> locks -> slams! Duck under tables/bed to block!)
+  if (state.time > 14) {
     state.pawAcc -= dt;
     if (state.pawAcc <= 0) {
-      state.pawAcc = Math.max(6.5, 11.5 - state.wave * 1.1);
+      state.pawAcc = Math.max(7.5, 13 - state.wave * 1.1);
       state.catPaws.push({
-        x: p.x + (Math.random() - 0.5) * 110,
-        y: p.y + (Math.random() - 0.5) * 110,
-        radius: 68,
-        phase: "warn",
-        warnDur: 1.25,
-        timer: 1.25,
+        x: p.x + 80,
+        y: p.y - 60,
+        radius: 76,
+        phase: "chase",
+        timer: 1.75,
+        lockDur: 0.65,
       });
+      showToast("🐾 猫主子盯上你了！快钻进茶几/餐桌/大床底下躲猫掌！", "pink");
     }
   }
   for (let i = state.catPaws.length - 1; i >= 0; i--) {
     const paw = state.catPaws[i];
     paw.timer -= dt;
-    if (paw.phase === "warn" && paw.timer <= 0) {
+    if (paw.phase === "chase") {
+      // Tracks player with smooth accelerating pursuit!
+      const chaseSpd = paw.timer < 0.7 ? 245 : 155;
+      const dx = p.x - paw.x;
+      const dy = p.y - paw.y;
+      const d = Math.hypot(dx, dy) || 1;
+      paw.x += (dx / d) * Math.min(d, chaseSpd * dt);
+      paw.y += (dy / d) * Math.min(d, chaseSpd * dt);
+      if (paw.timer <= 0) {
+        paw.phase = "lock";
+        paw.timer = paw.lockDur;
+      }
+    } else if (paw.phase === "lock" && paw.timer <= 0) {
       paw.phase = "slam";
-      paw.timer = 0.55;
-      state.shake = Math.max(state.shake, 0.6);
+      paw.timer = 0.58;
+      state.shake = Math.max(state.shake, 0.65);
       sfx.playCatSlam();
-      spawnRing(paw.x, paw.y, 16, paw.radius * 1.35, "#ff4c76", 7, 0.32);
-      if (Math.hypot(p.x - paw.x, p.y - paw.y) < paw.radius + p.r * 0.55 && p.invuln <= 0) {
-        p.hp -= 20;
-        p.hurtFlash = 0.2;
-        p.invuln = 0.7;
-        sfx.playHurt();
-        vibrate(30);
-        spawnText(p.x, p.y - 26, "-20 🐾", "#ff4c76", 19);
+      spawnRing(paw.x, paw.y, 16, paw.radius * 1.4, "#ff4c76", 7, 0.34);
+
+      if (Math.hypot(p.x - paw.x, p.y - paw.y) < paw.radius + p.r * 0.55) {
+        if (isUnderHiddenCover(p.x, p.y)) {
+          // Safe under table/desk/bed!
+          spawnText(p.x, p.y - 30, "🛡️ 钻桌底完美躲过猫掌！", "#39ff88", 18);
+          sfx.playBigGold();
+        } else if (p.invuln <= 0) {
+          const catDmg = p.skin === "hidden_catgod" ? 12 : 24;
+          p.hp -= catDmg;
+          p.hurtFlash = 0.22;
+          p.invuln = 0.7;
+          state.lastHitSource = "catpaw";
+          sfx.playHurt();
+          vibrate(35);
+          spawnText(p.x, p.y - 26, `-${catDmg} 🐾`, "#ff4c76", 20);
+        }
       }
     } else if (paw.phase === "slam" && paw.timer <= 0) {
       state.catPaws.splice(i, 1);
@@ -1233,7 +1513,7 @@ function update(rawDt) {
 
   updateWeapons(dt);
 
-  // Enemies AI (including Boss 3-Skill Bullet/Charge/Wall-Stun & Sock Poison Projectiles!)
+  // Enemies AI (including Pooper trap-dropper, Milk-Tea Slime puddle-spitter, Boss 3-skill!)
   for (let i = state.enemies.length - 1; i >= 0; i--) {
     const e = state.enemies[i];
     e.flash = Math.max(0, e.flash - dt);
@@ -1247,7 +1527,6 @@ function update(rawDt) {
     const d = Math.hypot(dx, dy) || 1;
 
     if (e.type === "mop") {
-      // Boss 3-Skill State Machine!
       e.aiTimer -= dt;
       if (!e.summonedHalf && e.hp < e.maxHp * 0.55) {
         e.summonedHalf = true;
@@ -1262,16 +1541,13 @@ function update(rawDt) {
         e.y += ((dy / d) * e.speed + e.vy) * dt;
         if (e.aiTimer <= 0) {
           if (Math.random() < 0.52) {
-            // Skill 1: Red-line Telegraph High-Speed Charge!
             e.aiState = "windup";
             e.aiTimer = 0.85;
             e.chargeAng = Math.atan2(dy, dx);
           } else {
-            // Skill 2: 360° Water-Drop Bullet Ring (blockable by sofa/furniture!)
             e.aiTimer = 3.2;
-            const n = 10;
-            for (let k = 0; k < n; k++) {
-              const a = (k / n) * Math.PI * 2 + state.time;
+            for (let k = 0; k < 10; k++) {
+              const a = (k / 10) * Math.PI * 2 + state.time;
               state.enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 210, vy: Math.sin(a) * 210, r: 8, dmg: 12, color: "#38f3ff", life: 3.0 });
             }
             spawnRing(e.x, e.y, 20, 95, "#38f3ff", 5, 0.25);
@@ -1284,11 +1560,10 @@ function update(rawDt) {
           sfx.playZap();
         }
       } else if (e.aiState === "charge") {
-        e.x += Math.cos(e.chargeAng) * 430 * dt;
-        e.y += Math.sin(e.chargeAng) * 430 * dt;
+        e.x += Math.cos(e.chargeAng) * 440 * dt;
+        e.y += Math.sin(e.chargeAng) * 440 * dt;
         const hitWall = clampToRoom(e, e.r);
         if (hitWall) {
-          // Tactical Cover Stun!
           e.aiState = "chase";
           e.aiTimer = 3.2;
           e.stun = 2.2;
@@ -1302,8 +1577,19 @@ function update(rawDt) {
         }
       }
       clampToRoom(e, e.r);
+    } else if (e.type === "pooper") {
+      // Orbits/scurries near player and drops funny poop traps!
+      const orbitAng = Math.atan2(dy, dx) + (d < 160 ? Math.PI * 0.72 : 0.4);
+      e.x += (Math.cos(orbitAng) * e.speed + e.vx) * dt;
+      e.y += (Math.sin(orbitAng) * e.speed + e.vy) * dt;
+      clampToRoom(e, e.r);
+      e.dropCd -= dt;
+      if (e.dropCd <= 0 && state.poops.length < 10) {
+        e.dropCd = 4.8;
+        state.poops.push({ x: e.x, y: e.y, hp: 28, flash: 0 });
+        spawnText(e.x, e.y - 20, "💩 偷偷拉了一坨!", "#c08457", 13);
+      }
     } else {
-      // Standard monsters + Sock ranged poison bubble!
       e.x += ((dx / d) * e.speed + e.vx) * dt;
       e.y += ((dy / d) * e.speed + e.vy) * dt;
       clampToRoom(e, e.r);
@@ -1312,6 +1598,13 @@ function update(rawDt) {
         if (e.shootCd <= 0) {
           e.shootCd = 3.6;
           state.enemyBullets.push({ x: e.x, y: e.y, vx: (dx / d) * 175, vy: (dy / d) * 175, r: 7, dmg: 10, color: "#84cc16", life: 2.4 });
+        }
+      } else if (e.type === "slime" && d < 280) {
+        e.shootCd -= dt;
+        if (e.shootCd <= 0 && state.puddles.length < 8) {
+          e.shootCd = 4.4;
+          state.puddles.push({ x: p.x + (Math.random() - 0.5) * 60, y: p.y + (Math.random() - 0.5) * 60, r: 54, life: 7.5 });
+          spawnText(e.x, e.y - 20, "🧋 泼珍珠奶茶!", "#f5b971", 13);
         }
       }
     }
@@ -1329,6 +1622,7 @@ function update(rawDt) {
         p.hp -= e.dmg;
         p.hurtFlash = 0.18;
         p.invuln = 0.55;
+        state.lastHitSource = e.type === "mop" ? "mop" : "default";
         state.shake = Math.max(state.shake, 0.35);
         sfx.playHurt();
         vibrate(20);
@@ -1337,7 +1631,6 @@ function update(rawDt) {
     }
   }
 
-  // Enemy Projectiles (blocked cleanly by Solid Furniture Obstacles!)
   for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
     const b = state.enemyBullets[i];
     b.x += b.vx * dt;
@@ -1352,6 +1645,7 @@ function update(rawDt) {
       p.hp -= b.dmg;
       p.hurtFlash = 0.18;
       p.invuln = 0.5;
+      state.lastHitSource = "bullet";
       sfx.playHurt();
       spawnText(p.x, p.y - 24, `-${b.dmg}`, "#ff4c76", 17);
       state.enemyBullets.splice(i, 1);
@@ -1364,7 +1658,7 @@ function update(rawDt) {
     return;
   }
 
-  // Gems, Coins & Rare Gold Core suction
+  // Gems, Coins & Rare Gold Cores
   for (let i = state.gems.length - 1; i >= 0; i--) {
     const g = state.gems[i];
     const dx = p.x - g.x;
@@ -1375,7 +1669,7 @@ function update(rawDt) {
       g.y += (dy / (d || 1)) * 560 * dt;
     }
     if (d < p.r + 12) {
-      p.charge = Math.min(100, p.charge + 1.5);
+      p.charge = Math.min(100, p.charge + 1.5 * state.chargeMult);
       if (g.kind === "core") {
         state.coresEarned += g.val;
         sfx.playBigGold();
@@ -1397,7 +1691,6 @@ function update(rawDt) {
     }
   }
 
-  // Friend Ghost Drop Pickup
   for (let i = state.lootDrops.length - 1; i >= 0; i--) {
     const drop = state.lootDrops[i];
     if (Math.hypot(p.x - drop.x, p.y - drop.y) < p.r + 32) {
@@ -1412,7 +1705,6 @@ function update(rawDt) {
     }
   }
 
-  // Ragdolls, VFX, Particles, Texts decay
   for (let i = state.ragdolls.length - 1; i >= 0; i--) {
     const r = state.ragdolls[i];
     r.x += r.vx * dt;
@@ -1452,138 +1744,18 @@ function update(rawDt) {
 
   const cleanEl = document.getElementById("hud-clean");
   const pct = state.cleanTracker.percent;
-  cleanEl.textContent = pct >= 100 ? "🧹 100% 完美!" : pct >= 70 ? `🧹 ${pct}% (冲100%💎)` : pct >= 35 ? `🧹 ${pct}% (可撤离)` : `🧹 ${pct}% (35%开撤)`;
+  cleanEl.textContent = pct >= 100 ? "★★★ 100%!" : pct >= 70 ? `★★ ${pct}%` : pct >= 35 ? `★ ${pct}%` : `🧹 ${pct}% (35%★)`;
   cleanEl.classList.toggle("done", pct >= 35);
 
   document.getElementById("hud-wave").textContent = `第${state.wave}波 · LV${p.lv}`;
-  document.getElementById("hud-combo").textContent = state.fever > 0 ? "🔥FEVER" : state.combo >= 5 ? `${state.combo}连击` : "";
+  document.getElementById("hud-combo").textContent = p.slimeDebuff > 0 ? "🧋减速中" : state.fever > 0 ? "🔥FEVER" : state.combo >= 5 ? `${state.combo}连击` : "";
 
   const ready = p.charge >= 100;
   btnOverdrive.classList.toggle("ready", ready);
   odTxt.textContent = p.overdrive > 0 ? "暴走中!" : ready ? "过载清屏!" : `${Math.floor(p.charge)}%`;
 }
 
-// Workshop & Museum Shop (Dual Currency ready!)
-function renderShop() {
-  document.getElementById("shop-coins").textContent = `¥${Math.round(save.coins).toLocaleString()} · 💎${save.goldCores || 0}`;
-  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === currentShopTab));
-  const box = document.getElementById("shop-content");
-  box.innerHTML = "";
-
-  if (currentShopTab === "skins") {
-    for (const sk of SKINS) {
-      const owned = save.skinsOwned.includes(sk.id);
-      const equipped = save.equippedSkin === sk.id;
-      const needCore = sk.corePrice || 0;
-      const canAfford = save.coins >= sk.price && (save.goldCores || 0) >= needCore;
-      const priceLabel = needCore > 0 ? `¥${sk.price.toLocaleString()}+💎${needCore}` : `¥${sk.price.toLocaleString()}`;
-      const row = document.createElement("div");
-      row.className = "shop-item";
-      row.innerHTML = `
-        <div class="meta">
-          <div class="name">${sk.name}</div>
-          <div class="desc">${sk.desc}</div>
-        </div>
-        <button class="shop-btn ${equipped ? "owned" : ""}">${equipped ? "使用中" : owned ? "装备" : priceLabel}</button>
-      `;
-      const btn = row.querySelector("button");
-      if (!owned && !canAfford) btn.disabled = true;
-      btn.onclick = () => {
-        if (owned) save.equippedSkin = sk.id;
-        else if (canAfford) {
-          save.coins -= sk.price;
-          save.goldCores = (save.goldCores || 0) - needCore;
-          save.skinsOwned.push(sk.id);
-          save.equippedSkin = sk.id;
-          sfx.playBigGold();
-        }
-        writeSave(save);
-        renderShop();
-        updateTitleUI();
-      };
-      box.appendChild(row);
-    }
-  } else if (currentShopTab === "upgrades") {
-    const nextSlot = save.safeBoxSlots + 1;
-    const slotPrice = SAFE_BOX_PRICES[nextSlot];
-    const sbRow = document.createElement("div");
-    sbRow.className = "shop-item";
-    sbRow.innerHTML = `
-      <div class="meta">
-        <div class="name">🔒 尘盒安全箱扩容（当前 ${save.safeBoxSlots}/3 格）</div>
-        <div class="desc">最贵大金自动锁进安全箱，贪心翻车也能保底带走！</div>
-      </div>
-      <button class="shop-btn ${!slotPrice ? "owned" : ""}">${slotPrice ? `¥${slotPrice.toLocaleString()}` : "已满级"}</button>
-    `;
-    const sbBtn = sbRow.querySelector("button");
-    if (!slotPrice || save.coins < slotPrice) sbBtn.disabled = true;
-    sbBtn.onclick = () => {
-      if (slotPrice && save.coins >= slotPrice) {
-        save.coins -= slotPrice;
-        save.safeBoxSlots = nextSlot;
-        writeSave(save);
-        sfx.playBigGold();
-        renderShop();
-        updateTitleUI();
-      }
-    };
-    box.appendChild(sbRow);
-
-    for (const b of BOOSTERS) {
-      const queued = Boolean(save.boosters[b.id]);
-      const row = document.createElement("div");
-      row.className = "shop-item";
-      row.innerHTML = `
-        <div class="meta">
-          <div class="name">${b.icon} ${b.name}（黑市加注券）</div>
-          <div class="desc">${b.desc}</div>
-        </div>
-        <button class="shop-btn ${queued ? "owned" : ""}">${queued ? "下局生效" : `¥${b.price.toLocaleString()}`}</button>
-      `;
-      const btn = row.querySelector("button");
-      if (queued || save.coins < b.price) btn.disabled = true;
-      btn.onclick = () => {
-        if (save.coins >= b.price) {
-          save.coins -= b.price;
-          save.boosters[b.id] = true;
-          writeSave(save);
-          sfx.playLevelUp();
-          renderShop();
-          updateTitleUI();
-        }
-      };
-      box.appendChild(row);
-    }
-  } else {
-    for (const set of MUSEUM_SETS) {
-      const done = set.items.every((id) => (save.museum[id] || 0) > 0);
-      const row = document.createElement("div");
-      row.className = "shop-item";
-      row.innerHTML = `
-        <div class="meta">
-          <div class="name">${done ? "✅" : "🔒"} ${set.name}</div>
-          <div class="desc">${set.buffText}</div>
-        </div>
-        <span style="font-size:11px;font-weight:800;color:${done ? "var(--green)" : "var(--muted)"}">${done ? "已激活" : "未集齐"}</span>
-      `;
-      box.appendChild(row);
-    }
-    for (const item of LOOT_ITEMS) {
-      const count = save.museum[item.id] || 0;
-      const row = document.createElement("div");
-      row.className = "shop-item";
-      row.innerHTML = `
-        <div class="meta">
-          <div class="name" style="color:${count > 0 ? item.color : "var(--muted)"}">${count > 0 ? "💎" : "❓"} ${count > 0 ? item.name : "未发现的沙发底大金"}</div>
-          <div class="desc">基础估值 ¥${item.value.toLocaleString()} · 已带回 ${count} 件</div>
-        </div>
-      `;
-      box.appendChild(row);
-    }
-  }
-}
-
-// Inputs
+// Inputs & Navigation
 window.addEventListener("keydown", (e) => {
   if (state && state.phase === "playing") {
     state.keys.add(e.code);
@@ -1642,36 +1814,35 @@ window.addEventListener("pointercancel", (e) => endPointer(e.pointerId));
 
 document.getElementById("mode-free").onclick = () => {
   selectedMode = "free";
-  updateTitleUI();
+  refreshLobby();
 };
 document.getElementById("mode-daily").onclick = () => {
   selectedMode = "daily";
-  updateTitleUI();
+  refreshLobby();
 };
 document.getElementById("btn-play").onclick = startRun;
 document.getElementById("btn-res-again").onclick = startRun;
-document.getElementById("btn-shop").onclick = () => {
-  renderShop();
-  screenShop.hidden = false;
+document.getElementById("btn-quick-garage").onclick = () => {
+  currentNav = "garage";
+  refreshLobby();
 };
-document.getElementById("btn-res-shop").onclick = () => {
+document.getElementById("btn-res-lobby").onclick = () => {
   screenResult.hidden = true;
-  renderShop();
-  screenShop.hidden = false;
+  hudEl.hidden = true;
+  btnOverdrive.hidden = true;
+  lobbyShell.hidden = false;
+  refreshLobby();
 };
-document.getElementById("btn-shop-close").onclick = () => {
-  screenShop.hidden = true;
-  if (!state || state.phase === "ended") {
-    hudEl.hidden = true;
-    btnOverdrive.hidden = true;
-    updateTitleUI();
-    screenTitle.hidden = false;
-  }
-};
-document.querySelectorAll(".tab-btn").forEach((btn) => {
-  btn.onclick = () => {
-    currentShopTab = btn.dataset.tab;
-    renderShop();
+document.querySelectorAll(".nav-btn").forEach((b) => {
+  b.onclick = () => {
+    currentNav = b.dataset.nav;
+    refreshLobby();
+  };
+});
+document.querySelectorAll(".stab").forEach((b) => {
+  b.onclick = () => {
+    currentCodexTab = b.dataset.ctab;
+    renderCodex();
   };
 });
 document.getElementById("btn-mute").onclick = (e) => {
@@ -1682,15 +1853,12 @@ document.getElementById("btn-mute").onclick = (e) => {
 function loop(ts) {
   const dt = Math.min(0.05, (ts - lastTs) / 1000 || 0.016);
   lastTs = ts;
-  if (state) {
+  if (state && state.phase !== "ended") {
     update(dt);
     renderGame(ctx, state, vw, vh);
-  } else {
-    ctx.fillStyle = "#1b1d36";
-    ctx.fillRect(0, 0, vw, vh);
   }
   requestAnimationFrame(loop);
 }
 
-updateTitleUI();
+refreshLobby();
 requestAnimationFrame(loop);

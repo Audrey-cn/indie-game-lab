@@ -1,42 +1,61 @@
-// Irregular L-Shaped Living Room Layout, Solid Cover Furniture, Semi-Transparent Hidden Zones,
-// Native Furniture Loot Spots, Power-Strip Shock Traps & Exact Cleanliness Percentage Tracker
+// Roomba Raid v0.4.0 — Expanded 2400x2400 Multi-Room Apartment Map (Vampire-Survivors Scale!)
+// Pure visual top-down furniture (NO text labels!), Tactical Cover Obstacles,
+// Duckable Semi-Transparent Under-Furniture Hiding Spots (blocks Cat Paw!),
+// Secret Under-Bed Easter Egg Vault, Native Search Seams & Exact Cleanliness Tracker.
 
 export const ROOM = {
-  width: 1480,
-  height: 1760,
-  // Top-right wall cutout makes a real L-shaped apartment floorplan (living room + hallway wing)
-  cutout: { x: 1020, y: 0, w: 460, h: 560 },
+  width: 2400,
+  height: 2200,
+  // Irregular top-right balcony/wall cutout for authentic apartment geometry
+  cutout: { x: 1760, y: 0, w: 640, h: 520 },
 };
 
-// Solid furniture obstacles: block movement, block Boss bullets, and STUN charging Boss!
+// Solid furniture & partition walls (block movement, block enemy bullets, STUN charging Boss!)
+// Drawn purely as rich recognizable furniture (TV on console, sofa with cushions, bookshelf, kitchen island)
 export const OBSTACLES = [
-  { id: "sofa", label: "主沙发", x: 180, y: 110, w: 440, h: 112, color: "#3d335c", trim: "#62538f" },
-  { id: "tv", label: "电视柜", x: 180, y: 1560, w: 460, h: 98, color: "#2d2a42", trim: "#524c78" },
-  { id: "shelf", label: "客厅立柱书柜", x: 880, y: 880, w: 120, h: 190, color: "#4a3832", trim: "#7d6054" },
-  { id: "cabinet", label: "玄关鞋柜", x: 1310, y: 740, w: 120, h: 310, color: "#3d354f", trim: "#665a85" },
+  // Living Room (Top-Left)
+  { id: "sofa", kind: "sofa", x: 240, y: 150, w: 500, h: 130 },
+  { id: "tv", kind: "tv", x: 240, y: 880, w: 500, h: 105 },
+  { id: "bookshelf", kind: "bookshelf", x: 1120, y: 200, w: 130, h: 280 },
+  // Interior partition walls with wide doorways separating Living Room / Dining / Bedroom
+  { id: "wall_mid_l", kind: "wall", x: 0, y: 1120, w: 460, h: 42 },
+  { id: "wall_mid_r", kind: "wall", x: 860, y: 1120, w: 520, h: 42 },
+  { id: "wall_vert", kind: "wall", x: 1360, y: 520, w: 42, h: 360 },
+  // Dining & Kitchen Wing (Right)
+  { id: "island", kind: "island", x: 1680, y: 760, w: 360, h: 130 },
+  { id: "fridge", kind: "fridge", x: 2210, y: 620, w: 135, h: 200 },
+  // Master Bedroom Wing (Bottom)
+  { id: "wardrobe", kind: "wardrobe", x: 180, y: 1980, w: 460, h: 120 },
+  { id: "cabinet", kind: "cabinet", x: 2220, y: 1460, w: 125, h: 340 },
 ];
 
-// Overhead furniture: opaque from above, smoothly fades to translucent when Roomba ducks underneath!
+// Duckable overhead furniture (opaque from above, smoothly fades translucent when Roomba ducks underneath!)
+// ALSO shields Roomba 100% from the Giant Cat Paw Slam!
 export const HIDDEN_ZONES = [
-  { id: "coffee_table", label: "茶几底暗格", x: 420, y: 690, w: 280, h: 165, color: "#543b2e", trim: "#966b52" },
-  { id: "dining_table", label: "餐桌底秘境", x: 960, y: 1320, w: 320, h: 220, color: "#4e3932", trim: "#8c695a" },
-  { id: "desk", label: "书桌底私房钱窝", x: 78, y: 920, w: 175, h: 260, color: "#363c59", trim: "#5c6896" },
+  { id: "coffee_table", kind: "coffee_table", x: 350, y: 490, w: 300, h: 180 },
+  { id: "desk", kind: "desk", x: 80, y: 540, w: 170, h: 280 },
+  { id: "dining_table", kind: "dining_table", x: 1620, y: 1240, w: 380, h: 250 },
+  { id: "king_bed", kind: "bed", x: 360, y: 1360, w: 460, h: 360, secretEasterEgg: true },
+  { id: "study_table", kind: "desk", x: 1020, y: 1760, w: 280, h: 180 },
 ];
 
-// Native logical search spots baked into living room furniture (replaces spammy random crates!)
+// Native logical search seams integrated into living room, dining & bedroom furniture
 export const NATIVE_SPOT_DEFS = [
-  { id: "sofa_crack", label: "掏沙发缝", x: 400, y: 245, minVal: 8800 },
-  { id: "coffee_under", label: "摸茶几底", x: 560, y: 772, minVal: 12000 },
-  { id: "desk_under", label: "掏书桌底", x: 165, y: 1050, minVal: 18800 },
-  { id: "dining_under", label: "翻餐桌底", x: 1120, y: 1430, minVal: 28000 },
-  { id: "tv_back", label: "搜电视柜角", x: 670, y: 1595, minVal: 12000 },
-  { id: "hall_corner", label: "玄关角落", x: 1265, y: 895, minVal: 18800 },
+  { id: "sofa_crack", label: "沙发缝", x: 490, y: 305, minVal: 8800 },
+  { id: "coffee_under", label: "茶几底", x: 500, y: 580, minVal: 12000 },
+  { id: "desk_under", label: "书桌底", x: 165, y: 680, minVal: 18800 },
+  { id: "tv_back", label: "电视柜后", x: 765, y: 930, minVal: 12000 },
+  { id: "dining_under", label: "餐桌底", x: 1810, y: 1365, minVal: 28000 },
+  { id: "island_seam", label: "吧台暗角", x: 1860, y: 915, minVal: 18800 },
+  { id: "bed_secret", label: "床底猫窝金库", x: 590, y: 1540, minVal: 42000, isSecret: true },
+  { id: "study_under", label: "卧室书桌底", x: 1160, y: 1850, minVal: 28000 },
 ];
 
-// Interactive Power-Strip Shock Traps on the floor (trigger AoE chain stun on enemies!)
+// Interactive Power-Strip Shock Traps scattered across rooms
 export const SHOCK_STRIP_DEFS = [
-  { id: "strip1", x: 760, y: 520 },
-  { id: "strip2", x: 730, y: 1240 },
+  { id: "strip1", x: 940, y: 580 },
+  { id: "strip2", x: 1540, y: 1020 },
+  { id: "strip3", x: 960, y: 1480 },
 ];
 
 export function isInsideCutout(x, y, pad = 0) {
@@ -44,11 +63,19 @@ export function isInsideCutout(x, y, pad = 0) {
   return x > c.x - pad && y < c.y + c.h + pad;
 }
 
+export function isUnderHiddenCover(x, y) {
+  for (const hz of HIDDEN_ZONES) {
+    if (x >= hz.x && x <= hz.x + hz.w && y >= hz.y && y <= hz.y + hz.h) {
+      return hz;
+    }
+  }
+  return null;
+}
+
 export function clampToRoom(ent, r = 20) {
   ent.x = Math.max(r + 14, Math.min(ROOM.width - r - 14, ent.x));
   ent.y = Math.max(r + 14, Math.min(ROOM.height - r - 14, ent.y));
 
-  // Push out of top-right L-cutout wall
   const c = ROOM.cutout;
   if (ent.x + r > c.x && ent.y - r < c.y + c.h) {
     const dx = ent.x + r - c.x;
@@ -57,7 +84,6 @@ export function clampToRoom(ent, r = 20) {
     else ent.y = c.y + c.h + r;
   }
 
-  // Push out of solid furniture obstacles, returning true if hit solid obstacle (used for Boss charge stun!)
   let hitObstacle = false;
   for (const ob of OBSTACLES) {
     const cx = Math.max(ob.x, Math.min(ob.x + ob.w, ent.x));
@@ -72,7 +98,6 @@ export function clampToRoom(ent, r = 20) {
         ent.x = cx + (dx / d) * r;
         ent.y = cy + (dy / d) * r;
       } else {
-        // Center fell inside rect: push out nearest edge
         const left = ent.x - ob.x;
         const right = ob.x + ob.w - ent.x;
         const top = ent.y - ob.y;
@@ -97,9 +122,9 @@ export function pointHitsObstacle(x, y) {
   return false;
 }
 
-// Cleanliness Grid Tracker (56px tiles across walkable L-shaped floor)
+// Cleanliness & Exploration Grid Tracker (68px tiles across the 2400x2200 apartment)
 export function createCleanTracker() {
-  const cell = 56;
+  const cell = 68;
   const cols = Math.ceil(ROOM.width / cell);
   const rows = Math.ceil(ROOM.height / cell);
   const valid = new Uint8Array(cols * rows);
@@ -126,7 +151,7 @@ export function createCleanTracker() {
     totalValid: Math.max(1, totalValid),
     cleanedCount: 0,
     percent: 0,
-    markClean(x, y, radius = 48) {
+    markClean(x, y, radius = 56) {
       const rCells = Math.ceil(radius / cell);
       const cx = Math.floor(x / cell);
       const cy = Math.floor(y / cell);
@@ -140,7 +165,7 @@ export function createCleanTracker() {
           if (valid[idx] && !cleaned[idx]) {
             const wx = gx * cell + cell / 2;
             const wy = gy * cell + cell / 2;
-            if (Math.hypot(wx - x, wy - y) <= radius + cell * 0.45) {
+            if (Math.hypot(wx - x, wy - y) <= radius + cell * 0.48) {
               cleaned[idx] = 1;
               this.cleanedCount++;
               newly++;
@@ -149,14 +174,12 @@ export function createCleanTracker() {
         }
       }
       if (newly > 0) {
-        // Snap >= 94% to 100% so players never suffer pixel-hunting last stray dust!
         const raw = (this.cleanedCount / this.totalValid) * 100;
-        this.percent = raw >= 94 ? 100 : Math.min(99, Math.floor(raw));
+        this.percent = raw >= 92 ? 100 : Math.min(99, Math.floor(raw));
       }
       return newly;
     },
     dirtyAt(x, y, radius = 48) {
-      // Pet Poop nightmare: smears dirt back onto cleaned floor!
       const rCells = Math.ceil(radius / cell);
       const cx = Math.floor(x / cell);
       const cy = Math.floor(y / cell);

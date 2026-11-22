@@ -1,12 +1,14 @@
-// High-Saturation Commercial 2D Canvas Renderer for Roomba Raid v0.3.0
-// L-Shaped Living Room + Solid Cover Furniture + Semi-Transparent Hidden Zones (Under Tables/Desk)
-// + Native Furniture Search Spots + Real Cat Paw Slam & Cartoon Poop + Boss Telegraphs + Shock Traps
+// Roomba Raid v0.4.0 — Pure Visual Multi-Room Apartment Renderer (NO Text on Furniture!)
+// Recognizable top-down TV console, sofa w/ pillows, bookshelf, kitchen island, fridge,
+// duckable coffee table / dining table / desk / master king bed (fade translucent on entry!),
+// sticky milk-tea debuff puddles, chasing Cat Paw, Pooper & Slime enemies, 11 Skin Variants.
 
-import { LOOT_ITEMS } from "./config.mjs";
+import { LOOT_ITEMS, SKINS } from "./config.mjs";
 import { HIDDEN_ZONES, OBSTACLES, ROOM } from "./room-layout.mjs";
 import { SPRITES } from "./sprites.mjs";
 
 const LOOT_MAP = Object.fromEntries(LOOT_ITEMS.map((l) => [l.id, l]));
+const SKIN_MAP = Object.fromEntries(SKINS.map((s) => [s.id, s]));
 
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -19,20 +21,20 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 export function createDustLayer() {
-  const scale = 0.5;
+  const scale = 0.35;
   const c = document.createElement("canvas");
   c.width = Math.round(ROOM.width * scale);
   c.height = Math.round(ROOM.height * scale);
   const g = c.getContext("2d");
 
-  g.fillStyle = "rgba(18, 16, 36, 0.36)";
+  g.fillStyle = "rgba(16, 14, 34, 0.38)";
   g.fillRect(0, 0, c.width, c.height);
 
-  for (let i = 0; i < 820; i++) {
+  for (let i = 0; i < 1100; i++) {
     const x = Math.random() * c.width;
     const y = Math.random() * c.height;
-    const r = 1 + Math.random() * 2.5;
-    g.fillStyle = i % 5 === 0 ? "rgba(245, 200, 125, 0.44)" : "rgba(175, 178, 225, 0.25)";
+    const r = 0.9 + Math.random() * 2.1;
+    g.fillStyle = i % 5 === 0 ? "rgba(245, 200, 125, 0.45)" : "rgba(175, 178, 225, 0.25)";
     g.beginPath();
     g.arc(x, y, r, 0, Math.PI * 2);
     g.fill();
@@ -40,7 +42,7 @@ export function createDustLayer() {
   return { canvas: c, ctx: g, scale };
 }
 
-export function cleanDustAt(dustLayer, x, y, radius = 36) {
+export function cleanDustAt(dustLayer, x, y, radius = 40) {
   if (!dustLayer) return;
   const g = dustLayer.ctx;
   const s = dustLayer.scale;
@@ -114,48 +116,53 @@ export function renderGame(ctx, state, vw, vh) {
   const sy = state.shake > 0 ? (Math.random() - 0.5) * state.shake * 16 : 0;
   ctx.translate(vw / 2 - cam.x + sx, vh / 2 - cam.y + sy);
 
-  // 1. L-Shaped Midnight Living Room Floor + Rug
-  drawLivingRoomFloor(ctx, cam, vw, vh);
+  // 1. Multi-Room Apartment Floorplan
+  drawApartmentFloor(ctx, cam, vw, vh);
 
-  // 2. Interactive Dust-Cleaning Layer
+  // 2. Interactive Dust Layer
   if (state.dustLayer) {
     ctx.drawImage(state.dustLayer.canvas, 0, 0, ROOM.width, ROOM.height);
   }
 
-  // 3. Solid Cover Furniture Obstacles
-  drawSolidFurniture(ctx);
+  // 3. Sticky Milk-Tea Debuff Puddles
+  for (const pd of state.puddles) {
+    drawMilkTeaPuddle(ctx, pd);
+  }
 
-  // 4. Interactive Power-Strip Shock Traps
+  // 4. Pure Visual Solid Cover Furniture (NO text!)
+  drawSolidFurniture(ctx, time);
+
+  // 5. Interactive Power-Strip Shock Traps
   for (const strip of state.shockStrips) {
     drawShockStrip(ctx, strip, time);
   }
 
-  // 5. Charging Dock Extraction Pad
+  // 6. Charging Dock Extraction Pad
   if (state.dock.active) {
     drawChargingDock(ctx, state.dock, time);
   }
 
-  // 6. Native Furniture Search Spots (Sofa cracks, under tables, TV console)
+  // 7. Native Furniture Search Seams
   for (const spot of state.nativeSpots) {
     if (!spot.searched) drawNativeSpot(ctx, spot, time);
   }
 
-  // 7. Destructible Living Room Props
+  // 8. Destructible Living Room Props
   for (const prop of state.props) {
     drawProp(ctx, prop);
   }
 
-  // 8. Pet Poop Hazards (Roomba Nightmare!)
+  // 9. Pet Poop Hazards
   for (const poop of state.poops) {
     drawPoop(ctx, poop, time);
   }
 
-  // 9. Boss/Elite Mystery Gold Crates
+  // 10. Boss/Elite Mystery Gold Crates
   for (const crate of state.crates) {
     drawMysteryCrate(ctx, crate, time);
   }
 
-  // 10. XP Gems & Coins & Rare Gold Cores
+  // 11. XP Gems, Coins & Rare Gold Cores
   for (const g of state.gems) {
     ctx.save();
     ctx.translate(g.x, g.y);
@@ -188,15 +195,15 @@ export function renderGame(ctx, state, vw, vh) {
     ctx.restore();
   }
 
-  // 11. Loose Big Gold / Friend Ghost Drops
+  // 12. Loose Big Gold / Friend Ghost Drops
   for (const drop of state.lootDrops) {
     drawLootDrop(ctx, drop, time);
   }
 
-  // 12. Knocked-Back Flying Ragdolls
+  // 13. Flying Ragdolls
   for (const rag of state.ragdolls) {
     const a = Math.max(0, rag.life / rag.maxLife);
-    const sp = SPRITES[rag.type];
+    const sp = SPRITES[rag.sprite || rag.type];
     ctx.save();
     ctx.globalAlpha = a;
     ctx.translate(rag.x, rag.y);
@@ -206,12 +213,12 @@ export function renderGame(ctx, state, vw, vh) {
     ctx.restore();
   }
 
-  // 13. Enemies (including Boss red charge telegraph line & stun stars!)
+  // 14. Enemies
   for (const e of state.enemies) {
     drawEnemy(ctx, e, time);
   }
 
-  // 14. Enemy Projectiles (Boss water drops & Sock poison bubbles — blocked by furniture!)
+  // 15. Enemy Projectiles
   for (const b of state.enemyBullets) {
     ctx.save();
     ctx.translate(b.x, b.y);
@@ -222,28 +229,24 @@ export function renderGame(ctx, state, vw, vh) {
     ctx.arc(0, 0, b.r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = "rgba(255,255,255,0.6)";
-    ctx.beginPath();
-    ctx.arc(-b.r * 0.3, -b.r * 0.3, b.r * 0.3, 0, Math.PI * 2);
-    ctx.fill();
     ctx.restore();
   }
 
-  // 15. Weapon VFX & Shockwaves
+  // 16. Weapon VFX
   drawWeaponVfx(ctx, state, time);
 
-  // 16. Roomba Protagonist
+  // 17. Roomba Protagonist
   drawPlayer(ctx, player, state, time);
 
-  // 17. Semi-Transparent Overhead Hidden Zones (Tables/Desk — fade when Roomba ducks underneath!)
+  // 18. Pure Visual Overhead Duckable Furniture (Tables, Desks, King Bed — NO text, fade on duck!)
   drawHiddenZoneTops(ctx, state);
 
-  // 18. Giant Tabby Cat Paw Slams (Rendered OVER furniture & player for true overhead impact!)
+  // 19. Chasing Cat Paw Telegraph & Overhead Tabby Paw Slam
   for (const paw of state.catPaws) {
     drawCatPaw(ctx, paw);
   }
 
-  // 19. Star & Spark Particles
+  // 20. Particles
   for (const p of state.particles) {
     const a = Math.max(0, p.life / p.maxLife);
     ctx.save();
@@ -268,7 +271,7 @@ export function renderGame(ctx, state, vw, vh) {
     ctx.restore();
   }
 
-  // 20. Floating Stroked Damage & Loot Texts
+  // 21. Floating Stroked Damage & Loot Texts
   for (const t of state.texts) {
     const a = Math.min(1, (t.life / t.maxLife) * 1.7);
     const pop = t.life > t.maxLife * 0.8 ? 1.22 : 1.0;
@@ -289,14 +292,14 @@ export function renderGame(ctx, state, vw, vh) {
 
   ctx.restore();
 
-  // 21. Screen-space Vignettes (Urgent Extraction / Overdrive / Fever / Poop Slow)
+  // 22. Screen-space Vignettes
   if (state.dock.active || state.player.overdrive > 0 || state.fever > 0) {
     const pulse = 0.5 + 0.5 * Math.sin(time * 9);
     const col = state.player.overdrive > 0
       ? `rgba(56, 243, 255, ${0.18 + pulse * 0.14})`
       : state.fever > 0
         ? `rgba(255, 213, 74, ${0.14 + pulse * 0.14})`
-        : `rgba(255, 56, 108, ${0.14 + pulse * 0.18})`;
+        : `rgba(255, 56, 108, ${0.12 + pulse * 0.15})`;
     const vg = ctx.createRadialGradient(vw / 2, vh / 2, vw * 0.28, vw / 2, vh / 2, vh * 0.72);
     vg.addColorStop(0, "rgba(0,0,0,0)");
     vg.addColorStop(1, col);
@@ -304,10 +307,8 @@ export function renderGame(ctx, state, vw, vh) {
     ctx.fillRect(0, 0, vw, vh);
   }
 
-  // 22. Offscreen Directional Beacons
   drawOffscreenIndicators(ctx, state, vw, vh);
 
-  // 23. Subtle Virtual Joystick
   if (state.joy.active) {
     ctx.save();
     ctx.strokeStyle = "rgba(255,255,255,0.3)";
@@ -329,128 +330,331 @@ export function renderGame(ctx, state, vw, vh) {
   }
 }
 
-function drawLivingRoomFloor(ctx, cam, vw, vh) {
-  // Base midnight hardwood
+function drawApartmentFloor(ctx, cam, vw, vh) {
+  // Base midnight wood floor
   ctx.fillStyle = "#24284a";
   ctx.fillRect(0, 0, ROOM.width, ROOM.height);
 
+  // Dining/Kitchen cool ceramic tile floor on right wing (x >= 1380)
+  ctx.fillStyle = "#1f2a42";
+  ctx.fillRect(1380, 520, ROOM.width - 1380, ROOM.height - 520);
+  ctx.strokeStyle = "rgba(100, 150, 210, 0.1)";
+  ctx.lineWidth = 2;
+  for (let x = 1400; x < ROOM.width; x += 80) {
+    ctx.beginPath();
+    ctx.moveTo(x, 520);
+    ctx.lineTo(x, ROOM.height);
+    ctx.stroke();
+  }
+  for (let y = 520; y < ROOM.height; y += 80) {
+    ctx.beginPath();
+    ctx.moveTo(1380, y);
+    ctx.lineTo(ROOM.width, y);
+    ctx.stroke();
+  }
+
+  // Warm wood planks in Living Room & Master Bedroom (x < 1380)
   const plankH = 56;
   const startY = Math.max(0, Math.floor((cam.y - vh / 2) / plankH) * plankH);
   const endY = Math.min(ROOM.height, cam.y + vh / 2 + plankH);
   for (let y = startY; y < endY; y += plankH) {
     const idx = Math.floor(y / plankH);
-    ctx.fillStyle = idx % 2 === 0 ? "#2a2f57" : "#24284c";
-    ctx.fillRect(0, y, ROOM.width, plankH - 2);
-    ctx.fillStyle = "rgba(130, 175, 255, 0.04)";
-    ctx.fillRect(0, y + 4, ROOM.width, 10);
+    const inBedroom = y >= 1140;
+    ctx.fillStyle = inBedroom
+      ? (idx % 2 === 0 ? "#2e2646" : "#27203d")
+      : (idx % 2 === 0 ? "#2a2f57" : "#24284c");
+    ctx.fillRect(0, y, 1380, plankH - 2);
     ctx.fillStyle = "#161830";
-    ctx.fillRect(0, y + plankH - 2, ROOM.width, 2);
+    ctx.fillRect(0, y + plankH - 2, 1380, 2);
     const offset = (idx % 3) * 140 + 60;
-    for (let x = offset; x < ROOM.width; x += 260) {
-      ctx.fillRect(x, y, 2, plankH);
-    }
+    for (let x = offset; x < 1380; x += 260) ctx.fillRect(x, y, 2, plankH);
   }
 
-  // Cozy Persian Center Rug under Coffee Table
+  // Living Room Persian Rug
   ctx.save();
-  ctx.fillStyle = "rgba(148, 42, 68, 0.54)";
-  roundRect(ctx, 290, 520, 540, 500, 24);
+  ctx.fillStyle = "rgba(148, 42, 68, 0.55)";
+  roundRect(ctx, 250, 350, 540, 440, 24);
   ctx.fill();
   ctx.strokeStyle = "rgba(255, 198, 78, 0.45)";
   ctx.lineWidth = 6;
-  roundRect(ctx, 308, 538, 504, 464, 16);
+  roundRect(ctx, 268, 368, 504, 404, 16);
   ctx.stroke();
-  ctx.restore();
 
-  // Hallway tiled mat in lower-right wing
-  ctx.save();
-  ctx.fillStyle = "rgba(56, 98, 128, 0.35)";
-  roundRect(ctx, 1060, 620, 220, 480, 16);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(120, 200, 255, 0.25)";
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.restore();
-
-  // Irregular L-shaped top-right wall cutout (Blocked kitchen/bathroom partition)
-  const c = ROOM.cutout;
-  ctx.fillStyle = "#0e1022";
-  ctx.fillRect(c.x, c.y, c.w, c.h);
-  ctx.strokeStyle = "#485491";
-  ctx.lineWidth = 10;
+  // Master Bedroom Cozy Round Rug
+  ctx.fillStyle = "rgba(92, 64, 152, 0.45)";
   ctx.beginPath();
-  ctx.moveTo(5, 5);
-  ctx.lineTo(c.x, 5);
+  ctx.ellipse(590, 1560, 330, 250, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(180, 145, 255, 0.32)";
+  ctx.lineWidth = 5;
+  ctx.stroke();
+  ctx.restore();
+
+  // Top-right apartment L-cutout
+  const c = ROOM.cutout;
+  ctx.fillStyle = "#0b0d1b";
+  ctx.fillRect(c.x, c.y, c.w, c.h);
+
+  // Outer perimeter walls
+  ctx.strokeStyle = "#485491";
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  ctx.moveTo(6, 6);
+  ctx.lineTo(c.x, 6);
   ctx.lineTo(c.x, c.h);
-  ctx.lineTo(ROOM.width - 5, c.h);
-  ctx.lineTo(ROOM.width - 5, ROOM.height - 5);
-  ctx.lineTo(5, ROOM.height - 5);
+  ctx.lineTo(ROOM.width - 6, c.h);
+  ctx.lineTo(ROOM.width - 6, ROOM.height - 6);
+  ctx.lineTo(6, ROOM.height - 6);
   ctx.closePath();
   ctx.stroke();
 }
 
-function drawSolidFurniture(ctx) {
+function drawMilkTeaPuddle(ctx, pd) {
+  const a = Math.min(1, pd.life / 1.0);
+  ctx.save();
+  ctx.globalAlpha = a * 0.82;
+  ctx.translate(pd.x, pd.y);
+  ctx.fillStyle = "#c98b55";
+  ctx.strokeStyle = "#5c3618";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, pd.r, pd.r * 0.78, 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Cute dark boba pearls inside milk tea!
+  ctx.fillStyle = "#24130a";
+  for (const [bx, by] of [[-18, -8], [14, -12], [6, 12], [-14, 14], [22, 4]]) {
+    ctx.beginPath();
+    ctx.arc(bx, by, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// PURE VISUAL SOLID FURNITURE — ZERO TEXT LABELS!
+function drawSolidFurniture(ctx, time) {
   for (const ob of OBSTACLES) {
     ctx.save();
-    // Drop shadow
-    ctx.fillStyle = "rgba(0, 0, 0, 0.44)";
-    roundRect(ctx, ob.x + 8, ob.y + 12, ob.w, ob.h, 16);
+    ctx.fillStyle = "rgba(0,0,0,0.44)";
+    roundRect(ctx, ob.x + 8, ob.y + 12, ob.w, ob.h, 12);
     ctx.fill();
 
-    // Main furniture body
-    ctx.fillStyle = ob.color;
     ctx.strokeStyle = "#141126";
     ctx.lineWidth = 4;
-    roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 16);
-    ctx.fill();
-    ctx.stroke();
 
-    // Top bevel & cushions detail
-    ctx.strokeStyle = ob.trim;
-    ctx.lineWidth = 3;
-    roundRect(ctx, ob.x + 8, ob.y + 8, ob.w - 16, ob.h - 16, 10);
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(255,255,255,0.45)";
-    ctx.font = '800 12px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`🧱 ${ob.label}（掩体）`, ob.x + ob.w / 2, ob.y + ob.h / 2);
+    if (ob.kind === "sofa") {
+      // Plush Purple 3-Seater Sofa with Armrests & Throw Pillows
+      ctx.fillStyle = "#583d82";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 20);
+      ctx.fill();
+      ctx.stroke();
+      // Backrest
+      ctx.fillStyle = "#412a66";
+      roundRect(ctx, ob.x + 8, ob.y + 6, ob.w - 16, 36, 12);
+      ctx.fill();
+      ctx.stroke();
+      // 3 Seat cushions
+      ctx.fillStyle = "#6e4ea1";
+      const cw = (ob.w - 64) / 3;
+      for (let i = 0; i < 3; i++) {
+        roundRect(ctx, ob.x + 28 + i * (cw + 4), ob.y + 46, cw, ob.h - 56, 10);
+        ctx.fill();
+        ctx.stroke();
+      }
+      // Colorful throw pillows
+      ctx.fillStyle = "#ff85a2";
+      roundRect(ctx, ob.x + 36, ob.y + 34, 48, 38, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffd54a";
+      roundRect(ctx, ob.x + ob.w - 86, ob.y + 34, 48, 38, 10);
+      ctx.fill();
+      ctx.stroke();
+    } else if (ob.kind === "tv") {
+      // Walnut TV Console + Glowing Flatscreen TV + Stereo Speakers!
+      ctx.fillStyle = "#4d352a";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 12);
+      ctx.fill();
+      ctx.stroke();
+      // Speakers on left & right
+      ctx.fillStyle = "#222638";
+      roundRect(ctx, ob.x + 22, ob.y + 18, 52, 66, 8);
+      ctx.fill();
+      ctx.stroke();
+      roundRect(ctx, ob.x + ob.w - 74, ob.y + 18, 52, 66, 8);
+      ctx.fill();
+      ctx.stroke();
+      // Wide Flatscreen TV Panel
+      ctx.fillStyle = "#16192b";
+      roundRect(ctx, ob.x + 96, ob.y + 20, ob.w - 192, 46, 8);
+      ctx.fill();
+      ctx.stroke();
+      // Glowing TV Screen glow strip!
+      const glow = 0.55 + 0.25 * Math.sin(time * 4);
+      ctx.fillStyle = `rgba(56, 243, 255, ${glow})`;
+      ctx.fillRect(ob.x + 108, ob.y + 52, ob.w - 216, 8);
+    } else if (ob.kind === "bookshelf") {
+      ctx.fillStyle = "#5c3f2e";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 10);
+      ctx.fill();
+      ctx.stroke();
+      // Colorful book spines!
+      const colors = ["#ff5c7c", "#38f3ff", "#ffd54a", "#57f287", "#c084fc"];
+      for (let i = 0; i < 9; i++) {
+        ctx.fillStyle = colors[i % colors.length];
+        roundRect(ctx, ob.x + 14, ob.y + 16 + i * 27, ob.w - 28, 20, 4);
+        ctx.fill();
+        ctx.stroke();
+      }
+    } else if (ob.kind === "island") {
+      // Sleek Marble Kitchen Island with Fruit Bowl & Cutting Board
+      ctx.fillStyle = "#dce6f2";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 14);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#b88450";
+      roundRect(ctx, ob.x + 30, ob.y + 24, 110, 80, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ff6b6b";
+      ctx.beginPath();
+      ctx.arc(ob.x + ob.w - 75, ob.y + 64, 30, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (ob.kind === "fridge") {
+      ctx.fillStyle = "#b8cbe0";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 14);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#dce9f7";
+      roundRect(ctx, ob.x + 10, ob.y + 10, ob.w - 20, ob.h - 20, 8);
+      ctx.fill();
+    } else if (ob.kind === "wall") {
+      ctx.fillStyle = "#2b3259";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#485491";
+      ctx.fillRect(ob.x + 6, ob.y + 6, ob.w - 12, 8);
+    } else {
+      // Wardrobe / Shoe Cabinet
+      ctx.fillStyle = "#4f3a36";
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = "#7a5b54";
+      ctx.lineWidth = 3;
+      roundRect(ctx, ob.x + 10, ob.y + 10, ob.w - 20, ob.h - 20, 8);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
 
+// PURE VISUAL OVERHEAD DUCKABLE FURNITURE — ZERO TEXT! Fades smoothly when Roomba enters!
 function drawHiddenZoneTops(ctx, state) {
   const p = state.player;
   for (const hz of HIDDEN_ZONES) {
     const inside =
       p.x + p.r > hz.x && p.x - p.r < hz.x + hz.w && p.y + p.r > hz.y && p.y - p.r < hz.y + hz.h;
-    const targetAlpha = inside ? 0.24 : 0.92;
-    hz.alpha = (hz.alpha ?? 0.92) + (targetAlpha - (hz.alpha ?? 0.92)) * 0.16;
+    const targetAlpha = inside ? 0.22 : 0.96;
+    hz.alpha = (hz.alpha ?? 0.96) + (targetAlpha - (hz.alpha ?? 0.96)) * 0.18;
 
     ctx.save();
     ctx.globalAlpha = hz.alpha;
-    ctx.fillStyle = "rgba(0,0,0,0.38)";
-    roundRect(ctx, hz.x + 10, hz.y + 14, hz.w, hz.h, 16);
-    ctx.fill();
-
-    ctx.fillStyle = hz.color;
     ctx.strokeStyle = "#141126";
     ctx.lineWidth = 4;
-    roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 16);
+
+    // Soft elevated drop shadow showing there is space underneath!
+    ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+    roundRect(ctx, hz.x + 14, hz.y + 18, hz.w, hz.h, 16);
     ctx.fill();
-    ctx.stroke();
 
-    ctx.strokeStyle = hz.trim;
-    ctx.lineWidth = 3;
-    roundRect(ctx, hz.x + 10, hz.y + 10, hz.w - 20, hz.h - 20, 10);
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(255,235,190,0.85)";
-    ctx.font = '900 13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(inside ? `👁️ ${hz.label}（已钻入）` : `🕳️ ${hz.label}（可钻底探索）`, hz.x + hz.w / 2, hz.y + hz.h / 2);
+    if (hz.kind === "bed") {
+      // Giant Cozy Master Bedroom King Bed (Quilt + 2 Fluffy Pillows!)
+      ctx.fillStyle = "#3f2e2b";
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 18);
+      ctx.fill();
+      ctx.stroke();
+      // White sheet + cozy coral-pink duvet blanket
+      ctx.fillStyle = "#eef2ff";
+      roundRect(ctx, hz.x + 12, hz.y + 12, hz.w - 24, hz.h - 24, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#d95b7a";
+      roundRect(ctx, hz.x + 12, hz.y + 108, hz.w - 24, hz.h - 120, 12);
+      ctx.fill();
+      ctx.stroke();
+      // 2 Fluffy Pillows
+      ctx.fillStyle = "#ffffff";
+      roundRect(ctx, hz.x + 36, hz.y + 28, 170, 68, 18);
+      ctx.fill();
+      ctx.stroke();
+      roundRect(ctx, hz.x + hz.w - 206, hz.y + 28, 170, 68, 18);
+      ctx.fill();
+      ctx.stroke();
+    } else if (hz.kind === "coffee_table") {
+      // Warm Oak Coffee Table + 2 Coffee Mugs + Magazine
+      ctx.fillStyle = "#7a5238";
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 16);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#966748";
+      roundRect(ctx, hz.x + 10, hz.y + 10, hz.w - 20, hz.h - 20, 10);
+      ctx.fill();
+      // Magazine
+      ctx.fillStyle = "#38bdf8";
+      roundRect(ctx, hz.x + 34, hz.y + 42, 74, 92, 6);
+      ctx.fill();
+      ctx.stroke();
+      // 2 Cute Mugs
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(hz.x + hz.w - 66, hz.y + 62, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#6b3e26";
+      ctx.beginPath();
+      ctx.arc(hz.x + hz.w - 66, hz.y + 62, 11, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (hz.kind === "dining_table") {
+      // Dining Table with Runner & 4 Plates
+      ctx.fillStyle = "#6e4b3a";
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 18);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#c94c68";
+      ctx.fillRect(hz.x + 12, hz.y + hz.h / 2 - 22, hz.w - 24, 44);
+      ctx.fillStyle = "#f1f5f9";
+      for (const [px, py] of [
+        [hz.x + 75, hz.y + 52],
+        [hz.x + hz.w - 75, hz.y + 52],
+        [hz.x + 75, hz.y + hz.h - 52],
+        [hz.x + hz.w - 75, hz.y + hz.h - 52],
+      ]) {
+        ctx.beginPath();
+        ctx.arc(px, py, 24, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    } else {
+      // Study Desk with Open Laptop & Warm Lamp
+      ctx.fillStyle = "#52587a";
+      roundRect(ctx, hz.x, hz.y, hz.w, hz.h, 14);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#cbd5e1";
+      roundRect(ctx, hz.x + hz.w / 2 - 42, hz.y + hz.h / 2 - 30, 84, 58, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#38f3ff";
+      ctx.fillRect(hz.x + hz.w / 2 - 34, hz.y + hz.h / 2 - 22, 68, 22);
+      ctx.fillStyle = "#ffd54a";
+      ctx.beginPath();
+      ctx.arc(hz.x + 36, hz.y + 38, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
@@ -466,17 +670,8 @@ function drawShockStrip(ctx, strip, time) {
   roundRect(ctx, -28, -11, 56, 22, 6);
   ctx.fill();
   ctx.stroke();
-
   ctx.fillStyle = ready ? "#0f172a" : "#2e344d";
-  for (const sx of [-14, 0, 14]) {
-    ctx.fillRect(sx - 3, -4, 6, 8);
-  }
-  if (ready) {
-    ctx.font = "900 10px sans-serif";
-    ctx.fillStyle = "#7ef9ff";
-    ctx.textAlign = "center";
-    ctx.fillText("⚡漏电陷阱", 0, -18);
-  }
+  for (const sx of [-14, 0, 14]) ctx.fillRect(sx - 3, -4, 6, 8);
   ctx.restore();
 }
 
@@ -484,20 +679,16 @@ function drawNativeSpot(ctx, spot, time) {
   const pulse = 0.5 + 0.5 * Math.sin(time * 6 + spot.x);
   ctx.save();
   ctx.translate(spot.x, spot.y);
-
-  // Subtle glowing seam ring
-  ctx.strokeStyle = `rgba(255, 213, 74, ${0.42 + pulse * 0.45})`;
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = spot.isSecret ? `rgba(255, 92, 225, ${0.5 + pulse * 0.5})` : `rgba(255, 213, 74, ${0.42 + pulse * 0.45})`;
+  ctx.lineWidth = 2.8;
   ctx.beginPath();
   ctx.arc(0, 0, 26 + pulse * 4, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Twinkling star glint
-  ctx.fillStyle = "#ffe58f";
   ctx.font = "900 18px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("✨", 0, 0);
+  ctx.fillText(spot.isSecret ? "👑" : "✨", 0, 0);
 
   if (spot.progress > 0) {
     ctx.strokeStyle = "#ffffff";
@@ -506,18 +697,6 @@ function drawNativeSpot(ctx, spot, time) {
     ctx.arc(0, 0, 32, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * spot.progress);
     ctx.stroke();
   }
-
-  const label = spot.progress > 0 ? "🔍 正在掏宝..." : `🔍 ${spot.label}`;
-  ctx.font = '900 11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
-  const w = ctx.measureText(label).width + 12;
-  ctx.fillStyle = "rgba(22, 16, 10, 0.88)";
-  ctx.strokeStyle = "#ffd54a";
-  ctx.lineWidth = 1.6;
-  roundRect(ctx, -w / 2, 18, w, 19, 8);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = "#ffe58f";
-  ctx.fillText(label, 0, 28);
   ctx.restore();
 }
 
@@ -525,16 +704,13 @@ function drawPoop(ctx, poop, time) {
   const wobble = Math.sin(time * 5 + poop.x) * 0.06;
   ctx.save();
   ctx.translate(poop.x, poop.y);
-
-  // Danger caution aura
   ctx.strokeStyle = "rgba(180, 120, 50, 0.55)";
   ctx.setLineDash([5, 5]);
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(0, 2, 26, 0, Math.PI * 2);
+  ctx.arc(0, 2, 25, 0, Math.PI * 2);
   ctx.stroke();
   ctx.setLineDash([]);
-
   ctx.scale(1 + wobble, 1 - wobble);
   const sp = SPRITES.poop;
   if (sp && sp.ready) {
@@ -565,7 +741,6 @@ function drawMysteryCrate(ctx, crate, time) {
   const shake = opening ? (Math.random() - 0.5) * (3 + crate.progress * 10) : 0;
   ctx.save();
   ctx.translate(crate.x + shake, crate.y + shake);
-
   const g = ctx.createLinearGradient(0, 0, 0, -130);
   g.addColorStop(0, "rgba(255, 213, 74, 0.8)");
   g.addColorStop(1, "rgba(255, 213, 74, 0)");
@@ -575,7 +750,6 @@ function drawMysteryCrate(ctx, crate, time) {
   const sp = SPRITES.crate;
   const sz = 58 * (opening ? 1 + crate.progress * 0.2 : 1);
   if (sp && sp.ready) ctx.drawImage(sp.img, -sz / 2, -sz / 2, sz, sz);
-
   if (opening) {
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 5;
@@ -583,19 +757,6 @@ function drawMysteryCrate(ctx, crate, time) {
     ctx.arc(0, 0, 38, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * crate.progress);
     ctx.stroke();
   }
-  ctx.font = '900 11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
-  const label = "👑 Boss 超级金箱！";
-  const w = ctx.measureText(label).width + 14;
-  ctx.fillStyle = "rgba(28, 16, 8, 0.92)";
-  ctx.strokeStyle = "#ffd54a";
-  ctx.lineWidth = 2;
-  roundRect(ctx, -w / 2, 26, w, 20, 8);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = "#ffe58f";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, 0, 36);
   ctx.restore();
 }
 
@@ -603,7 +764,6 @@ function drawChargingDock(ctx, dock, time) {
   const pulse = 0.5 + 0.5 * Math.sin(time * 8);
   ctx.save();
   ctx.translate(dock.x, dock.y);
-
   const grad = ctx.createRadialGradient(0, 0, 12, 0, 0, dock.radius * 1.6);
   grad.addColorStop(0, "rgba(57, 255, 136, 0.65)");
   grad.addColorStop(0.65, "rgba(57, 255, 136, 0.2)");
@@ -631,7 +791,7 @@ function drawChargingDock(ctx, dock, time) {
 
   const label = dock.progress > 0
     ? `⚡ 死守撤离 ${(Math.max(0, 3 - dock.progress * 3)).toFixed(1)}s`
-    : "⚡ 充电桩已解锁 (站3秒撤离)";
+    : "⚡ 充电桩撤离 (站3秒)";
   ctx.font = '900 13px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
   const tw = ctx.measureText(label).width + 20;
   ctx.fillStyle = "rgba(8, 24, 20, 0.92)";
@@ -686,7 +846,6 @@ function drawLootDrop(ctx, drop, time) {
 }
 
 function drawEnemy(ctx, e, time) {
-  // Boss Red-Line Charge Telegraph!
   if (e.type === "mop" && e.aiState === "windup") {
     ctx.save();
     ctx.strokeStyle = "rgba(255, 56, 108, 0.85)";
@@ -694,14 +853,15 @@ function drawEnemy(ctx, e, time) {
     ctx.lineWidth = 10;
     ctx.beginPath();
     ctx.moveTo(e.x, e.y);
-    ctx.lineTo(e.x + Math.cos(e.chargeAng) * 420, e.y + Math.sin(e.chargeAng) * 420);
+    ctx.lineTo(e.x + Math.cos(e.chargeAng) * 440, e.y + Math.sin(e.chargeAng) * 440);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
   }
 
   const wobble = e.stun > 0 ? 0 : Math.sin(time * 12 + e.seed) * 0.09;
-  const sp = SPRITES[e.type];
+  const spKey = e.type === "pooper" ? "poop" : e.type === "slime" ? "dust" : e.type;
+  const sp = SPRITES[spKey];
 
   ctx.save();
   ctx.translate(e.x, e.y);
@@ -711,29 +871,22 @@ function drawEnemy(ctx, e, time) {
   ctx.ellipse(0, e.r * 0.8, e.r * 0.9, e.r * 0.36, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if (e.enraged) {
-    ctx.strokeStyle = "rgba(255, 66, 104, 0.65)";
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, e.r * 1.12, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
   ctx.scale((e.vx < -8 ? -1 : 1) * (1 + wobble), 1 - wobble);
+  if (e.type === "slime") ctx.filter = "sepia(1) hue-rotate(-10deg) saturate(2.4) brightness(1.08)";
   const drawSize = e.type === "mop" ? e.r * 2.8 : e.r * 2.55;
   if (sp && sp.ready) {
     const img = e.flash > 0 && sp.white ? sp.white : sp.img;
     ctx.drawImage(img, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
   }
+  ctx.filter = "none";
   ctx.restore();
 
-  // Boss Stunned Stars!
   if (e.stun > 0) {
     ctx.save();
     ctx.fillStyle = "#ffe066";
     ctx.font = "900 14px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("💫 撞晕了！快集火！", e.x, e.y - e.r - 28);
+    ctx.fillText("💫 撞晕了！", e.x, e.y - e.r - 28);
     ctx.restore();
   }
 
@@ -750,41 +903,41 @@ function drawEnemy(ctx, e, time) {
 function drawCatPaw(ctx, paw) {
   ctx.save();
   ctx.translate(paw.x, paw.y);
-  if (paw.phase === "warn") {
-    const t = 1 - paw.timer / paw.warnDur;
-    ctx.fillStyle = `rgba(255, 76, 118, ${0.14 + t * 0.26})`;
-    ctx.strokeStyle = "#ff4c76";
-    ctx.lineWidth = 3.5;
+  if (paw.phase === "chase" || paw.phase === "lock") {
+    const locked = paw.phase === "lock";
+    const t = locked ? 1 - paw.timer / paw.lockDur : 0.35;
+    ctx.fillStyle = locked ? `rgba(255, 42, 92, ${0.28 + t * 0.32})` : "rgba(255, 196, 60, 0.16)";
+    ctx.strokeStyle = locked ? "#ff2a5c" : "#ffd54a";
+    ctx.lineWidth = locked ? 4.5 : 3;
     ctx.beginPath();
     ctx.arc(0, 0, paw.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(255, 224, 102, 0.9)";
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(0, 0, paw.radius * t, 0, Math.PI * 2);
+    ctx.arc(0, 0, paw.radius * (locked ? t : 0.5), 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.fillStyle = "#ffccd7";
+    ctx.fillStyle = locked ? "#ffe2e8" : "#fff2bd";
     ctx.font = "900 13px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("🐾 猫主子落掌！", 0, 4);
+    ctx.fillText(locked ? "🐾 即将拍下！快钻桌底！" : "🐾 猫掌锁定中…快找桌子躲！", 0, 4);
   } else {
-    // Real Studio-Grade Chubby Orange Tabby Cat Paw slamming down from upper-right!
     const sp = SPRITES.catpaw;
-    const slamProg = Math.min(1, (0.55 - paw.timer) / 0.12);
+    const slamProg = Math.min(1, (0.58 - paw.timer) / 0.11);
     const fade = Math.min(1, paw.timer / 0.18);
-    const dropOff = (1 - slamProg) * 180;
+    const dropOff = (1 - slamProg) * 200;
     ctx.globalAlpha = fade;
 
-    // Impact shadow
-    ctx.fillStyle = "rgba(0,0,0,0.42)";
+    ctx.fillStyle = "rgba(0,0,0,0.44)";
     ctx.beginPath();
-    ctx.ellipse(0, 12, paw.radius * 0.95, paw.radius * 0.45, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 14, paw.radius * 0.98, paw.radius * 0.48, 0, 0, Math.PI * 2);
     ctx.fill();
 
     if (sp && sp.ready) {
-      const sz = paw.radius * 2.7;
+      const sz = paw.radius * 2.85;
       ctx.drawImage(sp.img, -sz * 0.36 + dropOff * 0.5, -sz * 0.68 - dropOff, sz, sz);
     }
   }
@@ -876,6 +1029,9 @@ function drawWeaponVfx(ctx, state, time) {
 }
 
 function drawPlayer(ctx, p, state, time) {
+  const skin = SKIN_MAP[p.skin] || SKIN_MAP.classic;
+  const sc = skin.scale || 1.0;
+
   ctx.save();
   ctx.translate(p.x, p.y);
 
@@ -888,7 +1044,7 @@ function drawPlayer(ctx, p, state, time) {
   ctx.fillStyle = vg;
   ctx.beginPath();
   ctx.moveTo(10, 0);
-  ctx.arc(10, 0, 96, -0.52, 0.52);
+  ctx.arc(10, 0, 96 * sc, -0.52, 0.52);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
@@ -903,18 +1059,16 @@ function drawPlayer(ctx, p, state, time) {
 
   ctx.fillStyle = "rgba(0,0,0,0.42)";
   ctx.beginPath();
-  ctx.ellipse(0, 18, 28, 12, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 18 * sc, 28 * sc, 12 * sc, 0, 0, Math.PI * 2);
   ctx.fill();
 
   const bob = Math.sin(time * 14) * 1.5;
   const sp = SPRITES.hero;
-  const sz = 66;
+  const sz = 66 * sc;
   ctx.save();
   ctx.translate(0, bob);
   if (p.poopSlow > 0) ctx.filter = "sepia(0.8) hue-rotate(-15deg) brightness(0.85)";
-  else if (p.skin === "cyber") ctx.filter = "hue-rotate(155deg) saturate(1.8) brightness(1.05)";
-  else if (p.skin === "cat") ctx.filter = "hue-rotate(285deg) saturate(1.45)";
-  else if (p.skin === "gold") ctx.filter = "sepia(0.95) saturate(3.2) hue-rotate(-8deg) brightness(1.08)";
+  else if (skin.filter && skin.filter !== "none") ctx.filter = skin.filter;
 
   if (sp && sp.ready) {
     const img = p.hurtFlash > 0 && sp.white ? sp.white : sp.img;
@@ -922,34 +1076,54 @@ function drawPlayer(ctx, p, state, time) {
   }
   ctx.filter = "none";
 
-  if (p.skin === "gold") {
-    ctx.fillStyle = "#ffe066";
+  // Topper Badges for Distinct Visual Silhouettes!
+  const tp = skin.topper;
+  if (tp === "gold" || tp === "cat_crown" || tp === "diamond") {
+    ctx.fillStyle = tp === "diamond" ? "#7ef9ff" : "#ffe066";
     ctx.strokeStyle = "#141126";
     ctx.lineWidth = 2.4;
     ctx.beginPath();
-    ctx.moveTo(-10, -24);
-    ctx.lineTo(-12, -35);
-    ctx.lineTo(-4, -29);
-    ctx.lineTo(0, -37);
-    ctx.lineTo(4, -29);
-    ctx.lineTo(12, -35);
-    ctx.lineTo(10, -24);
+    ctx.moveTo(-10, -24 * sc);
+    ctx.lineTo(-12, -35 * sc);
+    ctx.lineTo(-4, -29 * sc);
+    ctx.lineTo(0, -38 * sc);
+    ctx.lineTo(4, -29 * sc);
+    ctx.lineTo(12, -35 * sc);
+    ctx.lineTo(10, -24 * sc);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-  } else if (p.skin === "cat") {
-    ctx.fillStyle = "#ff85c0";
+  }
+  if (tp === "cat" || tp === "cat_crown") {
+    ctx.fillStyle = tp === "cat_crown" ? "#ffd54a" : "#ff85c0";
     ctx.strokeStyle = "#141126";
     ctx.lineWidth = 2.6;
     for (const s of [-1, 1]) {
       ctx.beginPath();
-      ctx.moveTo(s * 9, -22);
-      ctx.lineTo(s * 19, -35);
-      ctx.lineTo(s * 22, -16);
+      ctx.moveTo(s * 9, -22 * sc);
+      ctx.lineTo(s * 19, -35 * sc);
+      ctx.lineTo(s * 22, -16 * sc);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
     }
+  } else if (tp === "horns") {
+    ctx.fillStyle = "#ff4255";
+    ctx.strokeStyle = "#141126";
+    ctx.lineWidth = 2.4;
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(s * 8, -22 * sc);
+      ctx.lineTo(s * 22, -36 * sc);
+      ctx.lineTo(s * 18, -16 * sc);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else if (tp === "duck") {
+    ctx.font = "900 18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("🦆", 0, -24 * sc);
   }
   ctx.restore();
   ctx.restore();
@@ -994,7 +1168,7 @@ function drawOffscreenIndicators(ctx, state, vw, vh) {
   }
 }
 
-export function renderReceiptPoster({ extracted, value, cleanPct, wave, kills, lootNames, modeLabel, streak, rescuedGhost }) {
+export function renderReceiptPoster({ extracted, value, cleanPct, stars, wave, kills, lootNames, modeLabel, streak, rescuedGhost }) {
   const c = document.createElement("canvas");
   c.width = 540;
   c.height = 720;
@@ -1014,7 +1188,7 @@ export function renderReceiptPoster({ extracted, value, cleanPct, wave, kills, l
   ctx.font = '900 32px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
   ctx.fillText(extracted ? "✅ 客厅安全撤离 · 摸金小票" : "💥 贪心翻车 · 遗产讣告", 270, 88);
   ctx.font = '700 15px sans-serif';
-  ctx.fillText(`半夜扫地机 ROOMBA RAID · ${modeLabel}`, 270, 122);
+  ctx.fillText(`半夜扫地机 ROOMBA RAID · ${"★".repeat(stars)}${"☆".repeat(3 - stars)} · ${modeLabel}`, 270, 122);
 
   ctx.fillStyle = "#181826";
   ctx.font = '700 18px sans-serif';
@@ -1035,7 +1209,7 @@ export function renderReceiptPoster({ extracted, value, cleanPct, wave, kills, l
   ctx.textAlign = "left";
   ctx.font = '700 19px sans-serif';
   [
-    ["客厅清扫完成度", `${cleanPct}%`],
+    ["全屋探索清扫度", `${cleanPct}% (${stars}星)`],
     ["坚持波次 / 击杀", `第 ${wave} 波 · ${kills} 只`],
     ["连续撤离连胜", `${streak} 连胜`],
   ].forEach(([k, v], i) => {

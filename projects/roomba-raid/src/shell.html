@@ -6,292 +6,431 @@
   <title>半夜扫地机：客厅摸金 · Roomba Raid</title>
   <style>
     :root {
+      --ink: #141126;
       --bg: #0b0d1b;
-      --panel: rgba(18, 22, 42, 0.94);
-      --border: rgba(255, 255, 255, 0.12);
+      --panel: #191f3d;
+      --panel-2: #232b52;
       --cyan: #38f3ff;
       --gold: #ffd54a;
+      --orange: #ff9838;
       --green: #39ff88;
       --pink: #ff4c76;
-      --text: #f4f7ff;
-      --muted: #98a4c7;
+      --text: #ffffff;
+      --muted: #a6b4d9;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; }
     html, body {
       width: 100%; height: 100%; overflow: hidden;
-      background: #070812;
-      color: var(--text);
+      background: #060710; color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
       touch-action: none;
     }
     #app {
-      position: relative;
-      width: 100%; height: 100dvh;
-      max-width: 480px;
-      margin: 0 auto;
-      background: #16182e;
-      overflow: hidden;
-      box-shadow: 0 0 60px rgba(0, 0, 0, 0.75);
+      position: relative; width: 100%; height: 100dvh; max-width: 480px; margin: 0 auto;
+      background: #14172e; overflow: hidden;
+      box-shadow: 0 0 64px rgba(0, 0, 0, 0.85);
     }
     @media (min-width: 560px) {
       #app {
         height: min(94dvh, 880px);
         margin-top: max(0px, calc((100dvh - min(94dvh, 880px)) / 2));
-        border-radius: 26px;
-        border: 2px solid rgba(255,255,255,0.1);
+        border-radius: 28px; border: 3px solid #2b3563;
       }
     }
-    canvas#game-canvas {
-      display: block; width: 100%; height: 100%;
+    canvas#game-canvas { display: block; width: 100%; height: 100%; }
+
+    /* ===== CHUNKY 3D MOBILE GAME BUTTONS ===== */
+    .gbtn {
+      width: 100%; padding: 13px 16px; border-radius: 16px;
+      border: 3px solid var(--ink); font-size: 16px; font-weight: 900;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+      position: relative; overflow: hidden; letter-spacing: 0.02em;
+      transition: transform 0.08s, box-shadow 0.08s;
+      text-shadow: 0 1.5px 0 rgba(0,0,0,0.35);
+    }
+    .gbtn::before {
+      content: ""; position: absolute; top: 2px; left: 8px; right: 8px; height: 38%;
+      border-radius: 12px; background: rgba(255,255,255,0.28); pointer-events: none;
+    }
+    .gbtn:active { transform: translateY(3px); }
+    .gbtn-play {
+      background: linear-gradient(180deg, #5cff9e, #18c964); color: #052612;
+      text-shadow: 0 1px 0 rgba(255,255,255,0.45);
+      box-shadow: 0 5px 0 #0a6e34, 0 10px 26px rgba(24, 201, 100, 0.45);
+      font-size: 19px; padding: 15px 18px;
+    }
+    .gbtn-play:active { box-shadow: 0 2px 0 #0a6e34; }
+    .gbtn-gold {
+      background: linear-gradient(180deg, #ffe26a, #f59e0b); color: #2b1400;
+      text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+      box-shadow: 0 5px 0 #9a5700;
+    }
+    .gbtn-gold:active { box-shadow: 0 2px 0 #9a5700; }
+    .gbtn-pink {
+      background: linear-gradient(180deg, #ff6b98, #e11d58); color: #fff;
+      box-shadow: 0 5px 0 #880d33;
+    }
+    .gbtn-pink:active { box-shadow: 0 2px 0 #880d33; }
+    .gbtn-blue {
+      background: linear-gradient(180deg, #52d9ff, #0284c7); color: #fff;
+      box-shadow: 0 5px 0 #07476e;
+    }
+    .gbtn-dark {
+      background: linear-gradient(180deg, #323c6e, #1f264a); color: #dce7ff;
+      box-shadow: 0 4px 0 #0f1329;
     }
 
-    /* Minimal Commercial Top HUD (Concept Sheet 03) */
+    /* ===== IN-GAME TOP HUD ===== */
     #hud {
       position: absolute; top: 0; left: 0; right: 0;
       padding: max(10px, env(safe-area-inset-top)) 12px 6px;
-      pointer-events: none;
-      z-index: 10;
+      pointer-events: none; z-index: 10;
     }
     #hud[hidden] { display: none; }
-    .hud-row {
-      display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    }
+    .hud-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
     .hp-wrap {
       display: flex; align-items: center; gap: 6px;
-      background: rgba(14, 18, 36, 0.85);
-      border: 2px solid rgba(57, 255, 136, 0.45);
-      border-radius: 12px; padding: 4px 7px;
-      min-width: 108px;
+      background: rgba(14, 18, 36, 0.9); border: 2.5px solid var(--ink);
+      border-radius: 12px; padding: 4px 7px; min-width: 104px;
+      box-shadow: 0 3px 0 rgba(0,0,0,0.4);
     }
     .hp-label { font-size: 11px; font-weight: 900; color: var(--green); }
     .hp-bar { flex: 1; height: 10px; background: #1e243d; border-radius: 6px; overflow: hidden; }
     .hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #22c55e, #4ade80); transition: width 0.12s; }
-
     .val-pill {
       font-size: 19px; font-weight: 900; color: var(--gold);
-      text-shadow: 0 2px 0 #141122, 0 0 12px rgba(255, 213, 74, 0.45);
-      letter-spacing: -0.02em; white-space: nowrap;
-    }
-    .hud-right { display: flex; align-items: center; gap: 6px; }
-    .safe-pill {
-      background: rgba(20, 24, 46, 0.88); border: 2px solid rgba(255, 213, 74, 0.45);
-      border-radius: 10px; padding: 4px 7px; font-size: 12px; font-weight: 800; color: #ffe58f;
+      text-shadow: 0 2.5px 0 var(--ink), 0 0 12px rgba(255, 213, 74, 0.5);
       white-space: nowrap;
     }
-    .timer-pill {
-      background: rgba(20, 24, 46, 0.88); border: 2px solid rgba(56, 243, 255, 0.55);
-      border-radius: 10px; padding: 4px 8px; font-size: 12px; font-weight: 900; color: var(--cyan);
-      font-variant-numeric: tabular-nums; white-space: nowrap;
+    .hud-right { display: flex; align-items: center; gap: 5px; }
+    .safe-pill, .timer-pill {
+      background: rgba(18, 22, 44, 0.9); border: 2.5px solid var(--ink);
+      border-radius: 10px; padding: 3px 7px; font-size: 11px; font-weight: 900; white-space: nowrap;
+      box-shadow: 0 3px 0 rgba(0,0,0,0.4);
     }
-    .timer-pill.urgent { border-color: var(--pink); color: #ff85a2; animation: pulse 0.6s infinite alternate; }
+    .safe-pill { color: #ffe58f; }
+    .timer-pill { color: var(--cyan); font-variant-numeric: tabular-nums; }
+    .timer-pill.urgent { background: #7f1d1d; color: #fecaca; animation: pulse 0.55s infinite alternate; }
     @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.06); } }
 
     .xp-track {
-      margin-top: 6px; height: 6px; background: rgba(12, 16, 30, 0.8);
-      border-radius: 99px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12);
+      margin-top: 6px; height: 7px; background: rgba(12, 16, 30, 0.85);
+      border-radius: 99px; overflow: hidden; border: 2px solid var(--ink);
     }
     .xp-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #38f3ff, #60a5fa); transition: width 0.12s; }
     .hud-sub {
       margin-top: 5px; display: flex; justify-content: space-between; align-items: center; gap: 6px;
-      font-size: 11px; font-weight: 800; color: #cbd5e1;
-      text-shadow: 0 1px 2px #000;
+      font-size: 11px; font-weight: 900; color: #e2e8f0; text-shadow: 0 1.5px 0 var(--ink);
     }
     .clean-pill {
-      background: rgba(16, 28, 42, 0.86); border: 1.5px solid rgba(56, 243, 255, 0.5);
-      border-radius: 999px; padding: 2px 8px; color: #8ef7ff; font-size: 11px; font-weight: 900;
+      background: rgba(16, 28, 46, 0.9); border: 2px solid var(--ink);
+      border-radius: 999px; padding: 2px 9px; color: #8ef7ff; font-size: 11px; font-weight: 900;
     }
-    .clean-pill.done { border-color: var(--green); color: var(--green); }
+    .clean-pill.done { background: #14532d; color: #86efac; }
     .hud-btn {
-      pointer-events: auto; background: rgba(18, 22, 42, 0.78);
-      border: 1px solid rgba(255,255,255,0.2); color: #fff;
-      border-radius: 8px; padding: 3px 8px; font-size: 11px; font-weight: 700; cursor: pointer;
+      pointer-events: auto; background: rgba(18, 22, 42, 0.88); border: 2px solid var(--ink);
+      color: #fff; border-radius: 8px; padding: 2px 7px; font-size: 12px; cursor: pointer;
     }
 
-    /* Mission Start Briefing Banner */
-    #briefing-banner {
-      position: absolute; top: 34%; left: 0; right: 0; z-index: 24;
-      pointer-events: none; text-align: center; padding: 16px 20px;
-      background: linear-gradient(90deg, rgba(10,12,26,0), rgba(16,22,48,0.94) 18%, rgba(16,22,48,0.94) 82%, rgba(10,12,26,0));
-      border-top: 2px solid var(--cyan); border-bottom: 2px solid var(--gold);
-      animation: briefIn 0.35s ease;
-    }
-    #briefing-banner[hidden] { display: none; }
-    #briefing-banner .bf-time { font-size: 11px; font-weight: 900; letter-spacing: 0.16em; color: var(--cyan); }
-    #briefing-banner .bf-title { font-size: 24px; font-weight: 900; color: #fff; margin: 4px 0; text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
-    #briefing-banner .bf-sub { font-size: 12px; font-weight: 800; color: var(--gold); }
-    @keyframes briefIn { from { transform: scaleY(0.4); opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
-
-    /* Non-intrusive Onboarding & Event Toast */
+    /* Toasts, Briefing, Jackpot & Overdrive */
     #toast {
-      position: absolute; top: 82px; left: 50%; transform: translateX(-50%);
+      position: absolute; top: 86px; left: 50%; transform: translateX(-50%);
       max-width: 90%; padding: 8px 14px; border-radius: 999px;
-      background: rgba(16, 22, 46, 0.92); border: 2px solid var(--cyan);
-      color: #fff; font-size: 12px; font-weight: 800; text-align: center;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-      z-index: 15; pointer-events: none; transition: opacity 0.25s;
+      background: rgba(16, 22, 46, 0.94); border: 2.5px solid var(--cyan);
+      color: #fff; font-size: 12px; font-weight: 900; text-align: center;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.5); z-index: 15; pointer-events: none;
     }
     #toast[hidden] { display: none; }
     #toast.gold { border-color: var(--gold); color: #fff4c2; }
     #toast.green { border-color: var(--green); color: #b8ffda; }
     #toast.pink { border-color: var(--pink); color: #ffd0dc; }
 
-    /* Big Gold Jackpot Center Banner */
+    #briefing-banner {
+      position: absolute; top: 34%; left: 0; right: 0; z-index: 24;
+      pointer-events: none; text-align: center; padding: 16px 20px;
+      background: linear-gradient(90deg, rgba(10,12,26,0), rgba(16,22,48,0.95) 15%, rgba(16,22,48,0.95) 85%, rgba(10,12,26,0));
+      border-top: 3px solid var(--cyan); border-bottom: 3px solid var(--gold);
+    }
+    #briefing-banner[hidden] { display: none; }
+    #briefing-banner .bf-time { font-size: 11px; font-weight: 900; letter-spacing: 0.16em; color: var(--cyan); }
+    #briefing-banner .bf-title { font-size: 24px; font-weight: 900; color: #fff; margin: 4px 0; text-shadow: 0 3px 0 var(--ink); }
+    #briefing-banner .bf-sub { font-size: 12px; font-weight: 800; color: var(--gold); }
+
     #jackpot-banner {
-      position: absolute; top: 126px; left: 50%; transform: translateX(-50%);
+      position: absolute; top: 122px; left: 50%; transform: translateX(-50%);
       z-index: 20; pointer-events: none; text-align: center;
-      background: linear-gradient(135deg, rgba(46, 22, 8, 0.94), rgba(28, 12, 36, 0.94));
-      border: 2.5px solid var(--gold); border-radius: 18px;
-      padding: 10px 20px; box-shadow: 0 0 36px rgba(255, 213, 74, 0.55);
-      animation: jackPop 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+      background: linear-gradient(135deg, #421d08, #281038);
+      border: 3px solid var(--gold); border-radius: 18px;
+      padding: 10px 20px; box-shadow: 0 6px 0 #141126, 0 0 34px rgba(255, 213, 74, 0.55);
     }
     #jackpot-banner[hidden] { display: none; }
-    #jackpot-banner .jt-sub { font-size: 11px; font-weight: 900; color: #ffe58f; letter-spacing: 0.1em; }
-    #jackpot-banner .jt-main { font-size: 20px; font-weight: 900; color: #fff; margin-top: 2px; text-shadow: 0 2px 0 #141122; }
+    #jackpot-banner .jt-sub { font-size: 11px; font-weight: 900; color: #ffe58f; }
+    #jackpot-banner .jt-main { font-size: 19px; font-weight: 900; color: #fff; margin-top: 2px; }
     #jackpot-banner .jt-val { font-size: 18px; font-weight: 900; color: var(--gold); }
-    @keyframes jackPop { from { transform: translateX(-50%) scale(0.6); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
 
-    /* Bottom-Right Active Overdrive Burst Button (Space / Thumb Tap) */
     #btn-overdrive {
       position: absolute; right: 16px; bottom: max(22px, env(safe-area-inset-bottom));
       z-index: 16; width: 76px; height: 76px; border-radius: 50%;
-      border: 3px solid rgba(56, 243, 255, 0.45);
-      background: rgba(16, 22, 44, 0.86); color: #94a3b8;
+      border: 3.5px solid var(--ink); background: #1c2448; color: #94a3b8;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      font-weight: 900; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-      transition: transform 0.12s, border-color 0.2s, box-shadow 0.2s;
+      font-weight: 900; cursor: pointer; box-shadow: 0 5px 0 var(--ink);
     }
     #btn-overdrive[hidden] { display: none; }
     #btn-overdrive.ready {
-      border-color: var(--gold); color: #1d1100;
+      color: #241200;
       background: radial-gradient(circle at 35% 30%, #fff4b8, #ffd54a 60%, #ff8c1a);
-      box-shadow: 0 0 28px rgba(255, 213, 74, 0.72);
-      animation: pulse 0.55s infinite alternate;
+      box-shadow: 0 5px 0 #8a4b00, 0 0 28px rgba(255, 213, 74, 0.78);
+      animation: pulse 0.5s infinite alternate;
     }
-    #btn-overdrive:active { transform: scale(0.92); }
     #btn-overdrive .od-ico { font-size: 22px; line-height: 1; }
     #btn-overdrive .od-txt { font-size: 11px; margin-top: 2px; }
 
-    /* Fullscreen Overlays */
+    /* ===== MOBILE GAME LOBBY SHELL (ZERO WEB FEEL!) ===== */
+    #lobby-shell {
+      position: absolute; inset: 0; z-index: 28;
+      display: flex; flex-direction: column;
+      background: #0d1024;
+    }
+    #lobby-shell[hidden] { display: none; }
+
+    /* Top Dual Currency Resource Bar */
+    .top-bar {
+      position: relative; z-index: 5;
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      padding: max(12px, env(safe-area-inset-top)) 12px 10px;
+      background: linear-gradient(180deg, rgba(10,12,26,0.92), rgba(10,12,26,0.55));
+    }
+    .res-pill {
+      display: flex; align-items: center; gap: 5px;
+      background: #1b2245; border: 2.5px solid var(--ink); border-radius: 999px;
+      padding: 4px 10px; font-size: 13px; font-weight: 900;
+      box-shadow: 0 3px 0 var(--ink);
+    }
+    .res-pill.coin { color: var(--gold); }
+    .res-pill.core { color: var(--cyan); }
+    .res-pill.streak { color: #ff9ed0; font-size: 11px; }
+
+    /* Lobby Main Content Area */
+    .lobby-body {
+      flex: 1; position: relative; overflow-y: auto; overflow-x: hidden;
+    }
+    .lobby-page {
+      min-height: 100%; padding: 12px 14px 18px;
+      display: flex; flex-direction: column;
+    }
+    .lobby-page[hidden] { display: none; }
+
+    /* Home Page backed by Full-Bleed Key Art Poster! */
+    #page-home {
+      justify-content: space-between; padding: 14px 16px 18px;
+      background-size: cover; background-position: center 32%;
+      position: relative;
+    }
+    #page-home::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(180deg, rgba(10,12,28,0.72) 0%, rgba(10,12,28,0.12) 34%, rgba(10,12,28,0.2) 60%, rgba(10,12,28,0.94) 88%);
+    }
+    #page-home > * { position: relative; z-index: 2; }
+    .game-logo { text-align: center; margin-top: 6px; }
+    .logo-badge {
+      display: inline-block; background: linear-gradient(90deg, #ff4c76, #ff9838);
+      border: 2.5px solid var(--ink); border-radius: 999px;
+      padding: 3px 12px; font-size: 11px; font-weight: 900; letter-spacing: 0.08em;
+      box-shadow: 0 3px 0 var(--ink); margin-bottom: 6px;
+    }
+    .logo-title {
+      font-size: 32px; font-weight: 900; line-height: 1.1; color: #fff;
+      text-shadow: 0 4px 0 var(--ink), 0 0 24px rgba(56, 243, 255, 0.55);
+    }
+    .logo-sub {
+      font-size: 12px; font-weight: 800; color: #ffe58f; margin-top: 4px;
+      text-shadow: 0 2px 0 var(--ink);
+    }
+    .home-bottom { display: flex; flex-direction: column; gap: 10px; }
+    .equipped-strip {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(18, 22, 46, 0.88); border: 2.5px solid var(--ink);
+      border-radius: 14px; padding: 8px 12px; box-shadow: 0 4px 0 var(--ink);
+    }
+    .equipped-strip .eq-name { font-size: 13px; font-weight: 900; color: var(--gold); }
+    .equipped-strip .eq-skill { font-size: 11px; font-weight: 800; color: var(--cyan); }
+    .mode-pills { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .mpill {
+      padding: 9px; border-radius: 12px; border: 2.5px solid var(--ink);
+      background: rgba(24, 30, 58, 0.9); color: var(--muted);
+      font-size: 12px; font-weight: 900; cursor: pointer; box-shadow: 0 3px 0 var(--ink);
+    }
+    .mpill.active { background: #173a5e; border-color: var(--cyan); color: #fff; }
+    .ghost-banner {
+      background: rgba(120, 20, 96, 0.9); border: 2.5px solid #ff5ce1;
+      border-radius: 12px; padding: 8px 10px; font-size: 12px; font-weight: 900;
+      color: #ffd6f8; text-align: center; box-shadow: 0 4px 0 var(--ink);
+    }
+
+    /* Garage Silhouette Collection Wall */
+    .sec-head { font-size: 16px; font-weight: 900; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .sec-head span { font-size: 11px; color: var(--cyan); }
+    .skin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+    .skin-card {
+      background: var(--panel); border: 2.5px solid var(--ink); border-radius: 16px;
+      padding: 10px 6px 8px; text-align: center; cursor: pointer; position: relative;
+      box-shadow: 0 4px 0 var(--ink); transition: transform 0.1s;
+    }
+    .skin-card:active { transform: translateY(2px); }
+    .skin-card.equipped { border-color: var(--green); background: #143632; }
+    .skin-card.locked { background: #12152a; }
+    .skin-card.hidden-skin { border-color: #c084fc; }
+    .skin-img { width: 58px; height: 58px; object-fit: contain; margin: 0 auto 4px; display: block; }
+    .skin-card.locked .skin-img { filter: brightness(0) opacity(0.55) drop-shadow(0 0 4px rgba(140,160,255,0.4)) !important; }
+    .skin-size {
+      position: absolute; top: 5px; right: 5px; font-size: 9px; font-weight: 900;
+      padding: 2px 5px; border-radius: 6px; background: rgba(0,0,0,0.55); color: var(--cyan);
+    }
+    .skin-name { font-size: 11px; font-weight: 900; line-height: 1.2; }
+    .skin-price { font-size: 10px; font-weight: 900; color: var(--gold); margin-top: 3px; }
+    .skin-detail {
+      margin-top: 10px; background: var(--panel-2); border: 2.5px solid var(--ink);
+      border-radius: 14px; padding: 10px 12px; box-shadow: 0 4px 0 var(--ink);
+    }
+
+    /* Graphical 3-Tier Talent Tree (20 Minutes Till Dawn style!) */
+    .tree-wrap { position: relative; display: flex; flex-direction: column; gap: 16px; padding: 6px 0; }
+    .tree-tier {
+      background: var(--panel); border: 2.5px solid var(--ink); border-radius: 16px;
+      padding: 10px 10px 12px; box-shadow: 0 4px 0 var(--ink); position: relative;
+    }
+    .tier-title { font-size: 11px; font-weight: 900; color: var(--gold); margin-bottom: 10px; text-align: center; }
+    .tier-nodes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .tnode {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      padding: 8px 4px; border-radius: 14px; border: 2.5px solid var(--ink);
+      background: #121730; color: #94a3b8; cursor: pointer; text-align: center;
+      box-shadow: 0 4px 0 var(--ink);
+    }
+    .tnode.unlocked { background: #1e2a52; color: #fff; border-color: #4b61a8; }
+    .tnode.active { background: #143b38; border-color: var(--green); color: #fff; box-shadow: 0 0 16px rgba(57,255,136,0.35), 0 4px 0 #0a2920; }
+    .tnode-orb {
+      width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: 22px; background: rgba(0,0,0,0.4); border: 2px solid rgba(255,255,255,0.16);
+    }
+    .tnode.active .tnode-orb { border-color: var(--green); background: rgba(57,255,136,0.2); }
+    .tnode-name { font-size: 11px; font-weight: 900; }
+    .tnode-stat { font-size: 9.5px; font-weight: 800; color: var(--cyan); }
+    .tnode-cost { font-size: 9.5px; font-weight: 900; color: var(--gold); }
+
+    /* Compendium & Black Market Sub-Tabs */
+    .sub-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+    .stab {
+      padding: 8px 4px; border-radius: 10px; border: 2px solid var(--ink);
+      background: var(--panel); color: var(--muted); font-size: 11px; font-weight: 900; cursor: pointer;
+    }
+    .stab.active { background: var(--gold); color: #241200; }
+    .codex-list { display: flex; flex-direction: column; gap: 8px; }
+    .codex-row {
+      display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+      background: var(--panel); border: 2.5px solid var(--ink); border-radius: 14px;
+      box-shadow: 0 3px 0 var(--ink);
+    }
+    .codex-ico { width: 42px; height: 42px; object-fit: contain; flex-shrink: 0; }
+    .codex-meta { flex: 1; }
+    .codex-name { font-size: 13px; font-weight: 900; }
+    .codex-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .mini-buy {
+      padding: 6px 10px; border-radius: 10px; border: 2px solid var(--ink);
+      background: var(--gold); color: #241200; font-size: 11px; font-weight: 900; cursor: pointer;
+      white-space: nowrap;
+    }
+    .mini-buy.owned { background: #14532d; color: #86efac; }
+    .mini-buy:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Mobile Game 4-Tab Bottom Navigation Bar */
+    .nav-bar {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+      padding: 8px 10px max(10px, env(safe-area-inset-bottom));
+      background: #121630; border-top: 3px solid var(--ink);
+    }
+    .nav-btn {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      padding: 7px 4px; border-radius: 12px; border: 2px solid transparent;
+      background: transparent; color: var(--muted); font-size: 11px; font-weight: 900; cursor: pointer;
+    }
+    .nav-btn .ni { font-size: 19px; line-height: 1; }
+    .nav-btn.active {
+      background: #232c5c; border-color: var(--cyan); color: #fff;
+      box-shadow: 0 3px 0 var(--ink);
+    }
+
+    /* ===== MODALS (Level Up & Poster Settlement) ===== */
     .overlay {
-      position: absolute; inset: 0; z-index: 30;
+      position: absolute; inset: 0; z-index: 35;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 20px; background: rgba(9, 11, 24, 0.82); backdrop-filter: blur(8px);
+      padding: 16px; background: rgba(8, 10, 22, 0.86); backdrop-filter: blur(8px);
     }
     .overlay[hidden] { display: none; }
-    .card {
-      width: 100%; max-width: 390px; max-height: 88dvh; overflow-y: auto;
-      background: var(--panel); border: 2px solid rgba(255,255,255,0.14);
-      border-radius: 22px; padding: 20px; text-align: center;
-      box-shadow: 0 18px 48px rgba(0,0,0,0.6);
+    .game-modal {
+      width: 100%; max-width: 400px; max-height: 90dvh; overflow-y: auto;
+      background: var(--panel); border: 3.5px solid var(--ink);
+      border-radius: 22px; overflow-x: hidden;
+      box-shadow: 0 8px 0 var(--ink), 0 22px 54px rgba(0,0,0,0.75);
     }
-    .eyebrow {
-      font-size: 11px; font-weight: 900; letter-spacing: 0.14em; color: var(--cyan);
-      text-transform: uppercase; margin-bottom: 6px;
+    .modal-poster {
+      width: 100%; height: 185px; object-fit: cover; display: block;
+      border-bottom: 3.5px solid var(--ink);
     }
-    h1 { font-size: 28px; font-weight: 900; line-height: 1.15; margin-bottom: 8px; }
-    h2 { font-size: 21px; font-weight: 900; margin-bottom: 8px; }
-    .sub { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 14px; }
+    .modal-body { padding: 16px; text-align: center; }
+    .death-quip {
+      display: inline-block; margin-bottom: 8px; padding: 4px 12px; border-radius: 999px;
+      background: rgba(255, 76, 118, 0.2); border: 1.5px solid var(--pink);
+      font-size: 12px; font-weight: 900; color: #ffd0dc;
+    }
+    .death-quip.win { background: rgba(57, 255, 136, 0.2); border-color: var(--green); color: #bbf7d0; }
+    .star-row {
+      display: flex; justify-content: center; gap: 10px; margin: 8px 0 6px; font-size: 28px;
+    }
+    .star-row span { filter: drop-shadow(0 3px 0 var(--ink)); }
+    .star-row span.off { opacity: 0.22; filter: grayscale(1); }
 
-    .stat-strip {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px;
+    /* Interactive Click-to-Pop Star Reward Chests! */
+    .chest-row { display: flex; justify-content: center; gap: 10px; margin: 8px 0 12px; }
+    .reward-chest {
+      padding: 8px 12px; border-radius: 14px; border: 2.5px solid var(--ink);
+      background: linear-gradient(180deg, #ffe26a, #e68a00); color: #241200;
+      font-size: 12px; font-weight: 900; cursor: pointer; box-shadow: 0 4px 0 #7a4200;
+      animation: pulse 0.65s infinite alternate;
     }
-    .stat-box {
-      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
-      border-radius: 12px; padding: 8px 6px;
-    }
-    .stat-box .k { font-size: 10px; color: var(--muted); font-weight: 700; }
-    .stat-box .v { font-size: 15px; font-weight: 900; color: var(--gold); margin-top: 2px; }
-
-    .mode-switch {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;
-    }
-    .mode-btn {
-      padding: 10px 8px; border-radius: 12px; border: 2px solid var(--border);
-      background: rgba(255,255,255,0.04); color: var(--muted);
-      font-size: 12px; font-weight: 800; cursor: pointer;
-    }
-    .mode-btn.active {
-      border-color: var(--cyan); background: rgba(56, 243, 255, 0.14); color: #fff;
+    .reward-chest.opened {
+      background: #143b30; color: #86efac; border-color: var(--green);
+      box-shadow: none; animation: none; cursor: default;
     }
 
-    .btn {
-      width: 100%; padding: 13px 16px; border-radius: 14px; border: none;
-      font-size: 15px; font-weight: 900; cursor: pointer;
-      display: flex; align-items: center; justify-content: center; gap: 8px;
-      transition: transform 0.12s;
-    }
-    .btn:active { transform: scale(0.97); }
-    .btn-primary {
-      background: linear-gradient(135deg, #38f3ff, #39ff88); color: #06181c;
-      box-shadow: 0 6px 20px rgba(56, 243, 255, 0.32);
-    }
-    .btn-gold {
-      background: linear-gradient(135deg, #ffd54a, #ff9f1c); color: #241300;
-    }
-    .btn-pink {
-      background: linear-gradient(135deg, #ff5c8a, #ff3366); color: #fff;
-    }
-    .btn-ghost {
-      background: rgba(255,255,255,0.08); color: var(--text); border: 1px solid var(--border);
-    }
-    .btn-stack { display: flex; flex-direction: column; gap: 9px; margin-top: 10px; }
+    .stat-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 12px; }
+    .stat-box { background: #121730; border: 2px solid var(--ink); border-radius: 12px; padding: 7px 4px; }
+    .stat-box .k { font-size: 10px; color: var(--muted); font-weight: 800; }
+    .stat-box .v { font-size: 14px; font-weight: 900; color: var(--gold); margin-top: 2px; }
+    .btn-stack { display: flex; flex-direction: column; gap: 8px; }
 
-    /* 3-Card Level Up */
     .choice-list { display: flex; flex-direction: column; gap: 9px; margin: 12px 0; text-align: left; }
     .choice-card {
-      display: flex; align-items: center; gap: 12px; padding: 12px;
-      border-radius: 14px; background: rgba(255,255,255,0.06);
-      border: 2px solid rgba(255,255,255,0.12); cursor: pointer; color: #fff; text-align: left;
+      display: flex; align-items: center; gap: 12px; padding: 11px;
+      border-radius: 14px; background: #232b52; border: 2.5px solid var(--ink);
+      box-shadow: 0 4px 0 var(--ink); cursor: pointer; color: #fff; text-align: left;
     }
-    .choice-card:hover { border-color: var(--cyan); background: rgba(56, 243, 255, 0.12); }
     .choice-icon {
       width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0;
       display: flex; align-items: center; justify-content: center; font-size: 22px;
-      background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.14);
+      background: #121730; border: 2px solid var(--ink);
     }
     .choice-title { font-size: 14px; font-weight: 900; }
-    .choice-tag { font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(56,243,255,0.18); color: var(--cyan); margin-left: 6px; }
-    .choice-desc { font-size: 12px; color: var(--muted); margin-top: 3px; }
-
-    /* Shop Tabs */
-    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
-    .tab-btn {
-      padding: 8px 4px; border-radius: 10px; border: 1px solid var(--border);
-      background: rgba(255,255,255,0.05); color: var(--muted); font-size: 12px; font-weight: 800; cursor: pointer;
-    }
-    .tab-btn.active { background: rgba(255,213,74,0.18); border-color: var(--gold); color: #fff; }
-    .shop-grid { display: flex; flex-direction: column; gap: 8px; text-align: left; margin-bottom: 12px; }
-    .shop-item {
-      display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.05);
-      border: 1px solid var(--border);
-    }
-    .shop-item .meta { flex: 1; }
-    .shop-item .name { font-size: 13px; font-weight: 800; }
-    .shop-item .desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
-    .shop-btn {
-      padding: 7px 11px; border-radius: 10px; border: none; font-size: 12px; font-weight: 900;
-      cursor: pointer; white-space: nowrap; background: var(--gold); color: #241300;
-    }
-    .shop-btn.owned { background: rgba(57, 255, 136, 0.2); color: var(--green); border: 1px solid var(--green); }
-    .shop-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-    .ghost-banner {
-      background: rgba(255, 92, 225, 0.16); border: 1.5px solid #ff5ce1;
-      border-radius: 12px; padding: 8px 10px; font-size: 12px; font-weight: 800;
-      color: #ffc2f4; margin-bottom: 12px;
-    }
-    #receipt-img {
-      width: 100%; border-radius: 12px; border: 2px solid rgba(255,255,255,0.18);
-      margin-top: 10px; display: none;
-    }
+    .choice-tag { font-size: 10px; padding: 2px 6px; border-radius: 6px; background: #143b52; color: var(--cyan); margin-left: 6px; }
+    .choice-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    #receipt-img { width: 100%; border-radius: 12px; border: 2.5px solid var(--ink); margin-top: 10px; display: none; }
   </style>
 </head>
 <body>
   <div id="app">
     <canvas id="game-canvas"></canvas>
 
-    <!-- Minimal Top HUD -->
+    <!-- In-Game Minimal HUD -->
     <div id="hud" hidden>
       <div class="hud-row">
         <div class="hp-wrap">
@@ -301,27 +440,27 @@
         <div class="val-pill" id="hud-val">¥0</div>
         <div class="hud-right">
           <div class="safe-pill" id="hud-safe">🔒0/1</div>
-          <div class="timer-pill" id="hud-timer">00:35</div>
+          <div class="timer-pill" id="hud-timer">潮:26s</div>
         </div>
       </div>
       <div class="xp-track"><div class="xp-fill" id="hud-xp"></div></div>
       <div class="hud-sub">
-        <span class="clean-pill" id="hud-clean">🧹 0% (35%开撤)</span>
-        <span id="hud-wave">第 1 波 · LV 1</span>
+        <span class="clean-pill" id="hud-clean">🧹 0% (35%★)</span>
+        <span id="hud-wave">第1波 · LV1</span>
         <span id="hud-combo" style="color:var(--gold)"></span>
         <button class="hud-btn" id="btn-mute">🔊</button>
       </div>
     </div>
 
     <div id="briefing-banner" hidden>
-      <div class="bf-time">02:00 AM · MISSION START</div>
-      <div class="bf-title" id="bf-title">客厅大作战 · 开始清扫！</div>
-      <div class="bf-sub" id="bf-sub">清扫 35% 激活充电桩 · 70% 唤醒拖把王 · 100% 拿稀缺金核 💎</div>
+      <div class="bf-time">02:00 AM · 豪宅摸金行动</div>
+      <div class="bf-title">全屋大扫除 · 启动！</div>
+      <div class="bf-sub">探索客厅/餐厨/卧室床底 · 猫掌来袭快钻桌底躲避！</div>
     </div>
 
     <div id="toast" hidden></div>
     <div id="jackpot-banner" hidden>
-      <div class="jt-sub">✨ 沙发底爆出大金 ✨</div>
+      <div class="jt-sub">✨ 发现大金 ✨</div>
       <div class="jt-main" id="jt-name">24K 纯金猫罐头</div>
       <div class="jt-val" id="jt-val">+¥28,000</div>
     </div>
@@ -330,89 +469,124 @@
       <span class="od-txt" id="od-txt">0%</span>
     </button>
 
-    <!-- Title Screen -->
-    <div class="overlay" id="screen-title">
-      <div class="card">
-        <div class="eyebrow">ROOMBA RAID · 零带入轻度搜打撤</div>
-        <h1>半夜扫地机：客厅摸金</h1>
-        <p class="sub">人类睡着了！单指操控大眼扫地机狂吸沙发底大金，赶在电量耗尽前冲回充电桩撤离！</p>
+    <!-- ===== MOBILE GAME LOBBY SHELL (4-Tab Home Hub) ===== -->
+    <div id="lobby-shell">
+      <div class="top-bar">
+        <div class="res-pill coin" id="top-coins">💰 ¥0</div>
+        <div class="res-pill core" id="top-cores">💎 0</div>
+        <div class="res-pill streak" id="top-streak">🔥 0连撤</div>
+      </div>
 
-        <div id="title-ghost-banner" class="ghost-banner" hidden></div>
+      <div class="lobby-body">
+        <!-- Tab 1: Home / Play -->
+        <div class="lobby-page" id="page-home">
+          <div class="game-logo">
+            <div class="logo-badge">ROOMBA RAID · 零带入搜打撤</div>
+            <div class="logo-title">半夜扫地机</div>
+            <div class="logo-sub">全屋探索 · 钻桌躲猫掌 · 3星狂开箱</div>
+          </div>
 
-        <div class="stat-strip">
-          <div class="stat-box"><div class="k">客厅金币</div><div class="v" id="st-coins">¥0</div></div>
-          <div class="stat-box"><div class="k">稀缺金核</div><div class="v" id="st-cores" style="color:#38f3ff">💎0</div></div>
-          <div class="stat-box"><div class="k">连撤连胜</div><div class="v" id="st-streak">0连</div></div>
+          <div class="home-bottom">
+            <div id="title-ghost-banner" class="ghost-banner" hidden></div>
+
+            <div class="equipped-strip">
+              <div>
+                <div class="eq-name" id="home-eq-name">🤖 经典暴富号</div>
+                <div class="eq-skill" id="home-eq-skill">专属技：过载双雷环</div>
+              </div>
+              <button class="mini-buy" id="btn-quick-garage">换机身</button>
+            </div>
+
+            <div class="mode-pills">
+              <button class="mpill active" id="mode-free">🎲 豪宅自由摸金</button>
+              <button class="mpill" id="mode-daily">📅 今日同图榜</button>
+            </div>
+
+            <button class="gbtn gbtn-play" id="btn-play">⚡ 开始清扫 · 1秒开吸！</button>
+          </div>
         </div>
 
-        <div class="mode-switch">
-          <button class="mode-btn active" id="mode-free">🎲 自由客厅摸金</button>
-          <button class="mode-btn" id="mode-daily">📅 今日同图榜</button>
+        <!-- Tab 2: Garage Silhouette Collection Wall -->
+        <div class="lobby-page" id="page-garage" hidden>
+          <div class="sec-head">🔧 剪影收集车库 <span id="garage-count">1 / 11</span></div>
+          <div class="skin-grid" id="skin-grid"></div>
+          <div class="skin-detail" id="skin-detail"></div>
         </div>
 
-        <div class="btn-stack">
-          <button class="btn btn-primary" id="btn-play">⚡ 1 秒开吸 · 进入第 1 关</button>
-          <button class="btn btn-ghost" id="btn-shop">🔧 机身工坊 / 安全箱 / 藏宝展柜</button>
+        <!-- Tab 3: Graphical Talent Branch Tree -->
+        <div class="lobby-page" id="page-talents" hidden>
+          <div class="sec-head">⚡ 配件天赋分支树 <span>同级任选 1 项激活</span></div>
+          <div class="tree-wrap" id="talent-tree"></div>
         </div>
+
+        <!-- Tab 4: Compendium & Black Market -->
+        <div class="lobby-page" id="page-codex" hidden>
+          <div class="sub-tabs">
+            <button class="stab active" data-ctab="enemies">👾 怪物图鉴</button>
+            <button class="stab" data-ctab="museum">🏆 大金展柜</button>
+            <button class="stab" data-ctab="market">🛒 黑市/安全箱</button>
+          </div>
+          <div class="codex-list" id="codex-list"></div>
+        </div>
+      </div>
+
+      <div class="nav-bar">
+        <button class="nav-btn active" data-nav="home"><span class="ni">🏠</span>大厅</button>
+        <button class="nav-btn" data-nav="garage"><span class="ni">🔧</span>车库</button>
+        <button class="nav-btn" data-nav="talents"><span class="ni">⚡</span>天赋</button>
+        <button class="nav-btn" data-nav="codex"><span class="ni">📖</span>图鉴</button>
       </div>
     </div>
 
-    <!-- 3-Card Level Up -->
+    <!-- 3-Card Level Up Modal -->
     <div class="overlay" id="screen-levelup" hidden>
-      <div class="card">
-        <div class="eyebrow">LEVEL UP · 战术外挂三选一</div>
-        <h2>挑一件离谱装备焊头上！</h2>
-        <div class="choice-list" id="choice-list"></div>
-        <button class="btn btn-gold" id="btn-take-all">📺 我全都要（模拟激励视频 IAA）</button>
+      <div class="game-modal">
+        <div class="modal-body">
+          <div style="font-size:11px;font-weight:900;color:var(--cyan);letter-spacing:0.12em">LEVEL UP · 战术外挂三选一</div>
+          <h2 style="font-size:21px;font-weight:900;margin:4px 0 8px">挑一件离谱装备焊头上！</h2>
+          <div class="choice-list" id="choice-list"></div>
+          <button class="gbtn gbtn-gold" id="btn-take-all">📺 我全都要（模拟激励视频）</button>
+        </div>
       </div>
     </div>
 
-    <!-- Result & Shareable Receipt -->
+    <!-- Poster Settlement Modal (with 3 Stars + Clickable Reward Chests!) -->
     <div class="overlay" id="screen-result" hidden>
-      <div class="card">
-        <div class="eyebrow" id="res-eyebrow">RAID COMPLETE</div>
-        <h2 id="res-title">✅ 安全撤离！</h2>
-        <p class="sub" id="res-sub"></p>
+      <div class="game-modal">
+        <img id="res-poster" class="modal-poster" alt="结算海报">
+        <div class="modal-body">
+          <div id="res-quip" class="death-quip">被猫主子一巴掌拍成二维扫地饼！</div>
+          <h2 id="res-title" style="font-size:22px;font-weight:900">✅ 满载冲回充电桩！</h2>
+          <div class="star-row" id="res-stars"><span>★</span><span>★</span><span>★</span></div>
+          <div class="chest-row" id="res-chests"></div>
 
-        <div class="stat-strip">
-          <div class="stat-box"><div class="k" id="res-k1">带出估值</div><div class="v" id="res-v1">¥0</div></div>
-          <div class="stat-box"><div class="k">波次 / 击杀</div><div class="v" id="res-v2">1 / 0</div></div>
-          <div class="stat-box"><div class="k">安全箱保底</div><div class="v" id="res-v3">¥0</div></div>
-        </div>
+          <div class="stat-strip">
+            <div class="stat-box"><div class="k" id="res-k1">带出估值</div><div class="v" id="res-v1">¥0</div></div>
+            <div class="stat-box"><div class="k">探索 / 击杀</div><div class="v" id="res-v2">0% / 0杀</div></div>
+            <div class="stat-box"><div class="k">安全箱保底</div><div class="v" id="res-v3">¥0</div></div>
+          </div>
 
-        <div class="btn-stack">
-          <button class="btn btn-gold" id="btn-res-ad" hidden>📺 看广告翻倍 / 急救复活</button>
-          <button class="btn btn-primary" id="btn-res-again">⚡ 再吸一局</button>
-          <button class="btn btn-pink" id="btn-res-share">🔗 复制翻车/摸金挑战链接（群友可来舔包）</button>
-          <button class="btn btn-ghost" id="btn-res-receipt">🧾 生成摸金小票海报</button>
-          <button class="btn btn-ghost" id="btn-res-shop">🔧 去工坊花钱改装</button>
+          <div class="btn-stack">
+            <button class="gbtn gbtn-gold" id="btn-res-ad" hidden>📺 看广告复活 / 翻倍</button>
+            <button class="gbtn gbtn-play" id="btn-res-again">⚡ 再吸一局</button>
+            <button class="gbtn gbtn-pink" id="btn-res-share">🔗 复制翻车/摸金挑战链接</button>
+            <button class="gbtn gbtn-blue" id="btn-res-receipt">🧾 生成摸金小票海报</button>
+            <button class="gbtn gbtn-dark" id="btn-res-lobby">🏠 返回大厅车库 / 点天赋</button>
+          </div>
+          <img id="receipt-img" alt="摸金小票海报">
         </div>
-        <img id="receipt-img" alt="摸金小票海报">
       </div>
     </div>
 
-    <!-- Workshop & Museum Shop -->
-    <div class="overlay" id="screen-shop" hidden>
-      <div class="card">
-        <div class="eyebrow">WORKSHOP &amp; MUSEUM</div>
-        <h2>🔧 扫地机工坊 · <span id="shop-coins" style="color:var(--gold)">¥0</span></h2>
-        <div class="tabs">
-          <button class="tab-btn active" data-tab="skins">🎨 机身皮肤</button>
-          <button class="tab-btn" data-tab="upgrades">🔒 安全箱/黑市</button>
-          <button class="tab-btn" data-tab="museum">🏆 藏宝展柜</button>
+    <!-- Simulated IAA Modal -->
+    <div class="overlay" id="ad-sim-overlay" hidden style="z-index:55">
+      <div class="game-modal">
+        <div class="modal-body">
+          <div style="font-size:11px;font-weight:900;color:var(--gold)">IAA REWARDED AD SLOT</div>
+          <h2 id="ad-sim-title" style="margin:6px 0">📺 模拟激励视频</h2>
+          <p id="ad-sim-timer" style="font-size:13px;color:var(--muted);margin-bottom:14px">加载中...</p>
+          <button class="gbtn gbtn-gold" id="ad-sim-done" disabled>等待中</button>
         </div>
-        <div class="shop-grid" id="shop-content"></div>
-        <button class="btn btn-primary" id="btn-shop-close">返回客厅</button>
-      </div>
-    </div>
-
-    <!-- Simulated IAA Rewarded Ad Modal -->
-    <div class="overlay" id="ad-sim-overlay" hidden style="z-index:50">
-      <div class="card">
-        <div class="eyebrow">IAA REWARDED AD SLOT</div>
-        <h2 id="ad-sim-title">📺 模拟激励视频</h2>
-        <p class="sub" id="ad-sim-timer">加载中...</p>
-        <button class="btn btn-gold" id="ad-sim-done" disabled>等待中</button>
       </div>
     </div>
   </div>
