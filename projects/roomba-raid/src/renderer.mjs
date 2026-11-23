@@ -72,8 +72,7 @@ export function smearPoopAt(dustLayer, x, y, radius = 26) {
 }
 
 export function drawLootSprite(ctx, id, x, y, size = 44) {
-  const spriteKey = id === "catcan" || id === "duck" ? "catcan" : id === "cash" ? "cash" : id === "ring" ? "ring" : null;
-  const sp = spriteKey ? SPRITES[spriteKey] : null;
+  const sp = SPRITES[id] || null;
   if (sp && sp.ready) {
     ctx.drawImage(sp.img, x - size / 2, y - size / 2, size, size);
     return;

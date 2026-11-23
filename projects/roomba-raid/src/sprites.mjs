@@ -1,4 +1,4 @@
-// Embedded Transparent WebP Sprites (11) & Game Posters (3)
+// Embedded Transparent WebP Sprites (15) & Hand-Painted Game Posters (8)
 import heroUrl from "./sprites/hero.webp";
 import dustUrl from "./sprites/enemy-dust.webp";
 import sockUrl from "./sprites/enemy-sock.webp";
@@ -8,15 +8,27 @@ import crateUrl from "./sprites/crate.webp";
 import catcanUrl from "./sprites/loot-catcan.webp";
 import cashUrl from "./sprites/loot-cash.webp";
 import ringUrl from "./sprites/loot-ring.webp";
+import duckUrl from "./sprites/loot-duck.webp";
+import earbudUrl from "./sprites/loot-earbud.webp";
+import remoteUrl from "./sprites/loot-remote.webp";
+import coreUrl from "./sprites/loot-core.webp";
 import catpawUrl from "./sprites/catpaw.webp";
 import poopUrl from "./sprites/poop.webp";
 import posterLobbyUrl from "./sprites/poster-lobby.webp";
+import posterKitchenUrl from "./sprites/poster-map-kitchen.webp";
+import posterStudyUrl from "./sprites/poster-map-study.webp";
+import posterCatPalaceUrl from "./sprites/poster-map-catpalace.webp";
+import posterRooftopUrl from "./sprites/poster-map-rooftop.webp";
 import posterVictoryUrl from "./sprites/poster-victory.webp";
 import posterWin3StarUrl from "./sprites/poster-win-3star.webp";
 import posterDefeatUrl from "./sprites/poster-defeat.webp";
 
 export const POSTERS = {
   lobby: posterLobbyUrl,
+  kitchen: posterKitchenUrl,
+  study: posterStudyUrl,
+  cat_palace: posterCatPalaceUrl,
+  rooftop: posterRooftopUrl,
   victory: posterVictoryUrl,
   win3star: posterWin3StarUrl,
   defeat: posterDefeatUrl,
@@ -32,6 +44,10 @@ export const SPRITE_URLS = {
   catcan: catcanUrl,
   cash: cashUrl,
   ring: ringUrl,
+  duck: duckUrl,
+  earbud: earbudUrl,
+  remote: remoteUrl,
+  core: coreUrl,
   catpaw: catpawUrl,
   poop: poopUrl,
 };
@@ -66,6 +82,10 @@ export const SPRITES = {
   catcan: loadSprite(catcanUrl, false),
   cash: loadSprite(cashUrl, false),
   ring: loadSprite(ringUrl, false),
+  duck: loadSprite(duckUrl, false),
+  earbud: loadSprite(earbudUrl, false),
+  remote: loadSprite(remoteUrl, false),
+  core: loadSprite(coreUrl, false),
   catpaw: loadSprite(catpawUrl, false),
   poop: loadSprite(poopUrl, true),
 };
