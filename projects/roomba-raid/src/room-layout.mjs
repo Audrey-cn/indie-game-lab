@@ -32,8 +32,6 @@ export function generateRoomLayout(mapId, rng) {
       { id: "fridge1", kind: "fridge", x: 140, y: jy(740, 80), w: 140, h: 220 },
       { id: "fridge2", kind: "fridge", x: 2160, y: jy(740, 80), w: 140, h: 220 },
       { id: "cabinet_k", kind: "cabinet", x: jx(940, 100), y: 1760, w: 440, h: 120 },
-      { id: "wall_k1", kind: "wall", x: 0, y: 1180, w: 420, h: 42 },
-      { id: "wall_k2", kind: "wall", x: 1020, y: 1180, w: 380, h: 42 },
     ];
     hiddenZones = [
       { id: "k_table1", kind: "dining_table", x: jx(420, 70), y: jy(1420, 60), w: 380, h: 240, secretEasterEgg: true },
@@ -132,8 +130,6 @@ export function generateRoomLayout(mapId, rng) {
       { id: "sofa", kind: "sofa", x: jx(620, 120), y: 160, w: 480, h: 130 },
       { id: "tv", kind: "tv", x: jx(560, 120), y: 900, w: 480, h: 105 },
       { id: "bookshelf", kind: "bookshelf", x: jx(1220, 80), y: 240, w: 130, h: 260 },
-      { id: "wall_mid_l", kind: "wall", x: 0, y: 1140, w: 440, h: 42 },
-      { id: "wall_mid_r", kind: "wall", x: 860, y: 1140, w: 500, h: 42 },
       { id: "island", kind: "island", x: jx(1660, 90), y: 760, w: 340, h: 130 },
       { id: "fridge", kind: "fridge", x: 2200, y: 640, w: 135, h: 200 },
       { id: "wardrobe", kind: "wardrobe", x: jx(260, 90), y: 1960, w: 440, h: 120 },
@@ -165,15 +161,19 @@ export function generateRoomLayout(mapId, rng) {
   obstacles = obstacles.filter((ob) => !(ob.x + ob.w > cutout.x && ob.y < cutout.y + cutout.h));
   hiddenZones = hiddenZones.filter((hz) => !(hz.x + hz.w > cutout.x && hz.y < cutout.y + cutout.h));
 
-  // Generate Native Furniture Search Seams dynamically anchored to the placed hiddenZones & obstacles!
+  // Generate 3-Tier Risk-Reward Search Spots (Blue 1.0s / Gold 2.2s / Red 3.6s High-Risk Vault!)
   hiddenZones.forEach((hz, idx) => {
+    const isRed = Boolean(hz.secretEasterEgg);
     nativeSpots.push({
       id: `hz_spot_${idx}`,
-      label: hz.secretEasterEgg ? "隐藏金库" : "家具底暗格",
+      label: isRed ? "🔴 顶级秘宝暗格" : "🟡 家具底金库",
+      tier: isRed ? "red" : "gold",
+      openTime: isRed ? 3.6 : 2.2,
       x: hz.x + hz.w / 2,
       y: hz.y + hz.h / 2,
-      minVal: hz.secretEasterEgg ? 42000 : 12000 + idx * 4000,
-      isSecret: Boolean(hz.secretEasterEgg),
+      minVal: isRed ? 42000 : 18800,
+      isSecret: isRed,
+      alarmed: false,
       progress: 0,
       tickAcc: 0,
       searched: false,
@@ -183,11 +183,14 @@ export function generateRoomLayout(mapId, rng) {
     if (ob.kind === "wall") return;
     nativeSpots.push({
       id: `ob_spot_${idx}`,
-      label: "家具缝隙",
+      label: "🔵 家具缝隙",
+      tier: "blue",
+      openTime: 1.0,
       x: ob.x + ob.w / 2,
       y: Math.min(ROOM.height - 90, ob.y + ob.h + 26),
-      minVal: 8800 + idx * 4000,
+      minVal: 8800 + idx * 3200,
       isSecret: false,
+      alarmed: false,
       progress: 0,
       tickAcc: 0,
       searched: false,
@@ -199,6 +202,21 @@ export function generateRoomLayout(mapId, rng) {
     { id: "s2", x: jx(1520, 120), y: jy(1040, 90), cd: 0 },
     { id: "s3", x: jx(960, 120), y: jy(1480, 90), cd: 0 },
   ];
+
+  // Interactive Arena Toys: High-Speed Carpet Boost Pads + Explosive Soda/Spray Canisters!
+  const boostPads = [
+    { id: "bp1", x: jx(720, 80), y: jy(760, 60), angle: 0, cd: 0 },
+    { id: "bp2", x: jx(1460, 80), y: jy(660, 60), angle: Math.PI / 2, cd: 0 },
+    { id: "bp3", x: jx(1340, 80), y: jy(1480, 60), angle: Math.PI, cd: 0 },
+    { id: "bp4", x: jx(560, 80), y: jy(1320, 60), angle: -Math.PI / 2, cd: 0 },
+  ].filter((bp) => !(bp.x > cutout.x - 40 && bp.y < cutout.y + cutout.h + 40));
+
+  const barrelCandidates = [
+    [980, 520], [1340, 860], [640, 1120], [1560, 1240], [920, 1620], [1780, 920],
+  ];
+  const barrels = barrelCandidates
+    .map(([bx, by], idx) => ({ id: `bar_${idx}`, x: jx(bx, 110), y: jy(by, 90), hp: 1, flash: 0 }))
+    .filter((b) => !(b.x > cutout.x - 40 && b.y < cutout.y + cutout.h + 40));
 
   return {
     mapId,
@@ -212,6 +230,8 @@ export function generateRoomLayout(mapId, rng) {
     windZones,
     lockedFacilities,
     shockStrips,
+    boostPads,
+    barrels,
     startPos,
     dockPos,
   };

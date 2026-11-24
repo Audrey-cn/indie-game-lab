@@ -645,7 +645,9 @@ function startRun() {
     time: 0,
     slowMo: 0,
     wave: 1,
+    wavePhase: "combat",
     hordeTimer: 26,
+    breatherTimer: 0,
     highRisk,
     dmgMult: 1 + tLv("th_dmg") * 0.1,
     rangeMult: 1 + tLv("th_range") * 0.08,
@@ -687,6 +689,7 @@ function startRun() {
       invuln: 0,
       poopSlow: 0,
       slimeDebuff: 0,
+      boostTimer: 0,
       skin: skin.id,
       acc: save.equippedAcc || "none",
       charge: 35,
@@ -698,7 +701,7 @@ function startRun() {
       weapons: { swatter: 1, laser: Math.min(5, tLv("th_start")), spatula: 0, hairdryer: 0, tesla: 0 },
       passives: { magnet: 0, turbo: 0, battery: 0 },
       evolutions: {},
-      cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6, evoStorm: 0.8 },
+      cooldowns: { swatter: 0.15, laser: 0.3, hairdryer: 0.5, tesla: 0.6, brushSpark: 0.65 },
     },
     cam: { x: layout.startPos.x, y: layout.startPos.y },
     bagLoot: [],
@@ -707,6 +710,7 @@ function startRun() {
     keyTarget: null,
     clones: [],
     enemies: [],
+    playerBullets: [],
     enemyBullets: [],
     puddles: [],
     ragdolls: [],
@@ -714,6 +718,8 @@ function startRun() {
     poops: [],
     nativeSpots: layout.nativeSpots,
     shockStrips: layout.shockStrips,
+    boostPads: layout.boostPads,
+    barrels: layout.barrels,
     crates: [],
     gems: [],
     lootDrops: [],
@@ -980,7 +986,7 @@ function triggerOverdrive() {
   for (const g of state.gems) g.forcePull = true;
 }
 
-function spawnEnemy(forcedType = null, forcedPos = null) {
+function spawnEnemy(forcedType = null, forcedPos = null, forceElite = false) {
   const p = state.player;
   let x = 0;
   let y = 0;
@@ -1008,6 +1014,7 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
     type = waveSpec.pool[Math.floor(Math.random() * waveSpec.pool.length)];
   }
 
+  const isElite = type !== "mop" && (forceElite || (state.wave >= 2 && Math.random() < 0.14));
   const mapHpMult = state.mapDef?.hpMult || 1;
   const hpScale = waveSpec.hp * mapHpMult * (state.highRisk ? 1.3 : 1);
   const spdScale = waveSpec.spd;
@@ -1021,19 +1028,24 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
     mop: { r: 36, hp: 460 * hpScale, speed: 95 * spdScale, dmg: Math.round(20 * dmgScale), xp: 34 },
   };
   const sp = specs[type];
+  const r = isElite ? Math.round(sp.r * 1.42) : sp.r;
+  const hp = isElite ? sp.hp * 4.5 : sp.hp;
   state.enemies.push({
     type,
+    elite: isElite,
     x,
     y,
-    r: sp.r,
-    hp: sp.hp,
-    maxHp: sp.hp,
-    speed: sp.speed,
-    dmg: sp.dmg,
-    xp: sp.xp,
+    r,
+    hp,
+    maxHp: hp,
+    speed: isElite ? sp.speed * 1.08 : sp.speed,
+    dmg: isElite ? Math.round(sp.dmg * 1.3) : sp.dmg,
+    xp: isElite ? sp.xp * 5 : sp.xp,
     vx: 0,
     vy: 0,
     flash: 0,
+    squash: 0,
+    stagger: 0,
     stun: 0,
     aiState: "chase",
     aiTimer: 3.5,
@@ -1048,27 +1060,59 @@ function spawnEnemy(forcedType = null, forcedPos = null) {
 
 function triggerHordeSwarm() {
   state.wave += 1;
+  state.wavePhase = "combat";
+  state.hordeTimer = 26;
   const waveSpec = getCurrentWaveSpec();
   sfx.playHordeHorn();
   state.shake = 0.5;
-  showToast(`🌊 第 ${state.wave} 波：${waveSpec.name}！`, "pink");
+  const eliteCount = Math.min(4, 2 + Math.floor(state.wave / 2));
+  showToast(`🌊 第 ${state.wave} 波：${waveSpec.name}（含 ${eliteCount} 只光环精英）！`, "pink");
   const count = Math.min(18, 8 + state.wave * 2);
   for (let i = 0; i < count; i++) {
-    spawnEnemy(waveSpec.pool[i % waveSpec.pool.length]);
+    spawnEnemy(waveSpec.pool[i % waveSpec.pool.length], null, i < eliteCount);
   }
   if (waveSpec.boss) {
     spawnEnemy("mop");
   }
 }
 
-function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
+function detonateBarrel(b) {
+  sfx.playOverdriveBlast();
+  state.shake = Math.max(state.shake, 0.85);
+  state.hitstop = Math.max(state.hitstop, 0.032);
+  vibrate(45);
+  spawnRing(b.x, b.y, 18, 210, "#ff6b22", 14, 0.36);
+  spawnRing(b.x, b.y, 10, 140, "#ffd54a", 8, 0.28);
+  spawnParticles(b.x, b.y, "#ff6b22", 32, 280, true);
+  spawnText(b.x, b.y - 26, "💥 罐体爆破清场！", "#ffd54a", 22);
+  const blastDmg = 155 + state.wave * 45;
+  for (let i = state.enemies.length - 1; i >= 0; i--) {
+    const e = state.enemies[i];
+    const dx = e.x - b.x;
+    const dy = e.y - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < 205 + e.r) {
+      e.stun = Math.max(e.stun, 1.3);
+      if (damageEnemy(e, blastDmg, (dx / d) * 380, (dy / d) * 380, true, 0.3)) {
+        state.enemies.splice(i, 1);
+      }
+    }
+  }
+}
+
+function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false, staggerDur = 0) {
   const bonusDmg = e.stun > 0 ? dmg * 1.5 : dmg;
   e.hp -= bonusDmg;
   e.flash = 0.09;
-  e.vx += kbX;
-  e.vy += kbY;
+  e.squash = isCrit ? 0.38 : 0.22;
+  if (staggerDur > 0 && e.type !== "mop") {
+    e.stagger = Math.max(e.stagger || 0, e.elite ? staggerDur * 0.55 : staggerDur);
+  }
+  const kbMult = e.type === "mop" ? 0.22 : e.elite ? 0.52 : 1.0;
+  e.vx += kbX * kbMult;
+  e.vy += kbY * kbMult;
   sfx.playHit(isCrit);
-  if (isCrit) state.hitstop = Math.max(state.hitstop, 0.016);
+  if (isCrit) state.hitstop = Math.max(state.hitstop, e.elite || e.type === "mop" ? 0.028 : 0.014);
 
   spawnText(
     e.x + (Math.random() - 0.5) * 18,
@@ -1087,7 +1131,7 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
       sfx.setFever(true);
       showToast("🔥 狂热连击 FEVER！5秒攻速吸力暴涨！", "gold");
     }
-    state.player.charge = Math.min(100, state.player.charge + (e.type === "mop" ? 40 : 4.2) * state.chargeMult);
+    state.player.charge = Math.min(100, state.player.charge + (e.type === "mop" ? 40 : e.elite ? 16 : 4.2) * state.chargeMult);
     sfx.playKill();
 
     const ang = Math.atan2(kbY || (e.y - state.player.y), kbX || (e.x - state.player.x));
@@ -1104,11 +1148,29 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
       life: 0.28,
       maxLife: 0.28,
     });
-    spawnRing(e.x, e.y, 8, e.r * 2.2, isCrit ? "#ffd54a" : "#38f3ff", 4, 0.2);
-    spawnParticles(e.x, e.y, isCrit ? "#ffd54a" : "#38f3ff", e.type === "mop" ? 28 : 10, 190, true);
+    spawnRing(e.x, e.y, 8, e.r * 2.4, e.elite ? "#e879f9" : isCrit ? "#ffd54a" : "#38f3ff", e.elite ? 6 : 4, 0.24);
+    spawnParticles(e.x, e.y, e.elite ? "#ffd54a" : isCrit ? "#ffd54a" : "#38f3ff", e.type === "mop" ? 28 : e.elite ? 20 : 10, 200, true);
 
     state.gems.push({ x: e.x, y: e.y, kind: "xp", val: e.xp, forcePull: false });
-    if (Math.random() < 0.5) {
+    if (e.elite) {
+      // High-value Aura Elite Reward: Coin Shower + 45% Full-Map XP Magnet or Gold Crate!
+      for (let k = 0; k < 5; k++) {
+        state.gems.push({
+          x: e.x + (Math.random() - 0.5) * 46,
+          y: e.y + (Math.random() - 0.5) * 46,
+          kind: "coin",
+          val: Math.round((780 + state.wave * 240) * state.lootMult),
+          forcePull: false,
+        });
+      }
+      if (Math.random() < 0.45) {
+        for (const gm of state.gems) gm.forcePull = true;
+        spawnText(e.x, e.y - 30, "🧲 精英掉落：全图磁吸吸尘！", "#38f3ff", 19);
+      } else {
+        state.crates.push({ x: e.x, y: e.y, tier: "gold", openTime: 2.2, minVal: 18800, progress: 0, tickAcc: 0 });
+        spawnText(e.x, e.y - 30, "👑 精英掉落超级金箱！", "#ffd54a", 19);
+      }
+    } else if (Math.random() < 0.5) {
       state.gems.push({
         x: e.x + (Math.random() - 0.5) * 22,
         y: e.y + (Math.random() - 0.5) * 22,
@@ -1119,7 +1181,7 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false) {
     }
     if (e.type === "mop") {
       state.shake = 0.9;
-      state.crates.push({ x: e.x, y: e.y, minVal: 28000, progress: 0, tickAcc: 0 });
+      state.crates.push({ x: e.x, y: e.y, tier: "red", openTime: 3.4, minVal: 28000, progress: 0, tickAcc: 0 });
       if (state.rng() < 0.7) state.gems.push({ x: e.x + 28, y: e.y, kind: "core", val: 1, forcePull: false });
       // Boss drops Mysterious Key to unlock Fridge / TV Secret Vault!
       if (!state.hasKey) {
@@ -1178,7 +1240,13 @@ function updateWeapons(dt) {
         if (d <= range + e.r) {
           hitAny = true;
           const crit = Math.random() < 0.28 + state.critBonus;
-          if (damageEnemy(e, crit ? dmg * 1.85 : dmg, (dx / (d || 1)) * 200, (dy / (d || 1)) * 200, crit)) state.enemies.splice(i, 1);
+          if (damageEnemy(e, crit ? dmg * 1.85 : dmg, (dx / (d || 1)) * 240, (dy / (d || 1)) * 240, crit, 0.28)) state.enemies.splice(i, 1);
+        }
+      }
+      for (let i = state.barrels.length - 1; i >= 0; i--) {
+        if (Math.hypot(state.barrels[i].x - p.x, state.barrels[i].y - p.y) <= range + 22) {
+          const b = state.barrels.splice(i, 1)[0];
+          detonateBarrel(b);
         }
       }
       for (let i = state.props.length - 1; i >= 0; i--) {
@@ -1210,22 +1278,40 @@ function updateWeapons(dt) {
         const target = sorted[s];
         if (!target || Math.hypot(target.x - p.x, target.y - p.y) > 440) continue;
         const col = isPrism ? prismCols[s % prismCols.length] : "#ff2e6d";
-        state.vfx.push({ type: isPrism ? "prism_beam" : "laser", color: col, x1: p.x, y1: p.y, x2: target.x, y2: target.y, life: 0.22, maxLife: 0.22 });
+        // Piercing LiDAR Beam: extends 440px along ray & pierces all enemies in line!
+        const ang = Math.atan2(target.y - p.y, target.x - p.x);
+        const beamLen = isPrism ? 480 : 380;
+        const bx2 = p.x + Math.cos(ang) * beamLen;
+        const by2 = p.y + Math.sin(ang) * beamLen;
+        state.vfx.push({ type: isPrism ? "prism_beam" : "laser", color: col, x1: p.x, y1: p.y, x2: bx2, y2: by2, life: 0.22, maxLife: 0.22 });
         const crit = Math.random() < (isPrism ? 0.72 : 0.45) + state.critBonus;
-        const idx = state.enemies.indexOf(target);
-        if (idx >= 0 && damageEnemy(target, crit ? dmg * 2.0 : dmg, 0, 0, crit)) state.enemies.splice(idx, 1);
-        // Prism Railgun Evolution: Ricochet beam to 2 nearby enemies!
-        if (isPrism) {
+        let pierced = 0;
+        const maxPierce = isPrism ? 8 : 2 + Math.floor(lv / 2);
+        for (let ei = state.enemies.length - 1; ei >= 0 && pierced < maxPierce; ei--) {
+          const en = state.enemies[ei];
+          const ex = en.x - p.x;
+          const ey = en.y - p.y;
+          const proj = ex * Math.cos(ang) + ey * Math.sin(ang);
+          if (proj < 0 || proj > beamLen) continue;
+          const perp = Math.abs(ex * Math.sin(ang) - ey * Math.cos(ang));
+          if (perp <= en.r + (isPrism ? 16 : 11)) {
+            pierced++;
+            if (damageEnemy(en, crit ? dmg * 1.9 : dmg, Math.cos(ang) * 90, Math.sin(ang) * 90, crit, 0.14)) state.enemies.splice(ei, 1);
+          }
+        }
+        // Ricochet at Lv.3+ or Prism Railgun Evolution!
+        const bounces = isPrism ? 3 : lv >= 3 ? 1 : 0;
+        if (bounces > 0) {
           let prevX = target.x;
           let prevY = target.y;
           const used = new Set([target]);
-          for (let b = 0; b < 2; b++) {
-            const next = state.enemies.find((e) => !used.has(e) && Math.hypot(e.x - prevX, e.y - prevY) < 230);
+          for (let b = 0; b < bounces; b++) {
+            const next = state.enemies.find((e) => !used.has(e) && Math.hypot(e.x - prevX, e.y - prevY) < 250);
             if (!next) break;
             used.add(next);
-            state.vfx.push({ type: "prism_beam", color: prismCols[(s + b + 1) % prismCols.length], x1: prevX, y1: prevY, x2: next.x, y2: next.y, life: 0.22, maxLife: 0.22 });
+            state.vfx.push({ type: isPrism ? "prism_beam" : "laser", color: isPrism ? prismCols[(s + b + 1) % prismCols.length] : "#ff7eb6", x1: prevX, y1: prevY, x2: next.x, y2: next.y, life: 0.22, maxLife: 0.22 });
             const ni = state.enemies.indexOf(next);
-            if (ni >= 0 && damageEnemy(next, dmg * 1.15, 0, 0, true)) state.enemies.splice(ni, 1);
+            if (ni >= 0 && damageEnemy(next, dmg * 1.15, 0, 0, true, 0.16)) state.enemies.splice(ni, 1);
             prevX = next.x;
             prevY = next.y;
           }
@@ -1273,6 +1359,31 @@ function updateWeapons(dt) {
         }
       }
     }
+    // Overclocked Side-Brush Spark Scatter (Lv.3+ or Flame Tornado flings piercing sparks!)
+    if (lv >= 3 || isFlame) {
+      p.cooldowns.brushSpark = (p.cooldowns.brushSpark ?? 0.65) - dt;
+      if (p.cooldowns.brushSpark <= 0) {
+        p.cooldowns.brushSpark = isFlame ? 0.48 : 0.85;
+        const shots = isFlame ? 6 : 3;
+        for (let s = 0; s < shots; s++) {
+          const sa = state.time * rotSpd + (s / shots) * Math.PI * 2;
+          state.playerBullets.push({
+            x: p.x + Math.cos(sa) * rad,
+            y: p.y + Math.sin(sa) * rad,
+            vx: Math.cos(sa + 0.35) * 430,
+            vy: Math.sin(sa + 0.35) * 430,
+            r: isFlame ? 9 : 7,
+            dmg: dmg * 0.9,
+            kb: 190,
+            pierce: isFlame ? 3 : 2,
+            bounces: 1,
+            color: isFlame ? "#ff7a33" : "#ffd54a",
+            life: 0.95,
+            hitSet: new Set(),
+          });
+        }
+      }
+    }
   }
 
   if (p.weapons.hairdryer > 0) {
@@ -1286,6 +1397,26 @@ function updateWeapons(dt) {
       const dirs = isFlame ? [p.facing, p.facing + Math.PI] : [p.facing];
       for (const ang of dirs) {
         state.vfx.push({ type: isFlame ? "flame_wave" : "hairdryer", x: p.x, y: p.y, r: range, angle: ang, life: 0.28, maxLife: 0.28 });
+        // Fan Spread Pressurized Air / Flame Blades (Pierce + Wall Ricochet + Heavy Knockback!)
+        const pellets = Math.min(7, 2 + lv + (isFlame ? 2 : 0));
+        const arc = 0.78;
+        for (let k = 0; k < pellets; k++) {
+          const pa = ang + (pellets === 1 ? 0 : -arc / 2 + (k / (pellets - 1)) * arc);
+          state.playerBullets.push({
+            x: p.x + Math.cos(pa) * 24,
+            y: p.y + Math.sin(pa) * 24,
+            vx: Math.cos(pa) * 460,
+            vy: Math.sin(pa) * 460,
+            r: isFlame ? 10 : 8,
+            dmg: dmg * 0.85,
+            kb: 380,
+            pierce: isFlame ? 3 : 2,
+            bounces: 1,
+            color: isFlame ? "#ff5c28" : "#ffbe76",
+            life: 0.75,
+            hitSet: new Set(),
+          });
+        }
         for (let i = state.enemies.length - 1; i >= 0; i--) {
           const e = state.enemies[i];
           const dx = e.x - p.x;
@@ -1296,7 +1427,7 @@ function updateWeapons(dt) {
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
           if (Math.abs(diff) <= 0.74) {
-            if (damageEnemy(e, dmg, (dx / (d || 1)) * 340, (dy / (d || 1)) * 340, isFlame)) state.enemies.splice(i, 1);
+            if (damageEnemy(e, dmg, (dx / (d || 1)) * 390, (dy / (d || 1)) * 390, isFlame, 0.2)) state.enemies.splice(i, 1);
           }
         }
       }
@@ -1873,6 +2004,81 @@ function update(rawDt) {
     }
   }
 
+  // Interactive Carpet Boost Pads (1.75x Speed Burst!)
+  p.boostTimer = Math.max(0, (p.boostTimer || 0) - dt);
+  if (p.boostTimer > 0) {
+    p.x += Math.cos(p.facing) * 185 * dt;
+    p.y += Math.sin(p.facing) * 185 * dt;
+    clampToRoom(state.layout, p, p.r);
+  }
+  for (const bp of state.boostPads) {
+    bp.cd = Math.max(0, bp.cd - dt);
+    if (bp.cd <= 0 && Math.hypot(p.x - bp.x, p.y - bp.y) < 42) {
+      bp.cd = 5.5;
+      p.boostTimer = 1.45;
+      sfx.playLaser();
+      spawnRing(bp.x, bp.y, 12, 95, "#38f3ff", 6, 0.25);
+      spawnText(bp.x, bp.y - 22, "🚀 弹射加速！", "#38f3ff", 18);
+    }
+  }
+
+  // Player Piercing / Bouncing / Spreading Projectiles!
+  for (let i = state.playerBullets.length - 1; i >= 0; i--) {
+    const b = state.playerBullets[i];
+    b.life -= dt;
+    if (b.life <= 0) {
+      state.playerBullets.splice(i, 1);
+      continue;
+    }
+    const nx = b.x + b.vx * dt;
+    const ny = b.y + b.vy * dt;
+    if (pointHitsObstacle(state.layout, nx, ny)) {
+      if (b.bounces > 0) {
+        b.bounces--;
+        if (pointHitsObstacle(state.layout, nx, b.y)) b.vx = -b.vx;
+        else b.vy = -b.vy;
+        spawnParticles(b.x, b.y, b.color, 4, 90, false);
+      } else {
+        state.playerBullets.splice(i, 1);
+        continue;
+      }
+    } else {
+      b.x = nx;
+      b.y = ny;
+    }
+    // Check Explosive Soda/Spray Canisters!
+    let popped = false;
+    for (let bi = state.barrels.length - 1; bi >= 0; bi--) {
+      if (Math.hypot(state.barrels[bi].x - b.x, state.barrels[bi].y - b.y) < 28 + b.r) {
+        const bar = state.barrels.splice(bi, 1)[0];
+        detonateBarrel(bar);
+        popped = true;
+        break;
+      }
+    }
+    if (popped) {
+      state.playerBullets.splice(i, 1);
+      continue;
+    }
+    // Pierce Enemies!
+    for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+      const e = state.enemies[ei];
+      if (b.hitSet.has(e)) continue;
+      if (Math.hypot(e.x - b.x, e.y - b.y) < e.r + b.r) {
+        b.hitSet.add(e);
+        const spd = Math.hypot(b.vx, b.vy) || 1;
+        if (damageEnemy(e, b.dmg, (b.vx / spd) * b.kb, (b.vy / spd) * b.kb, false, 0.16)) {
+          state.enemies.splice(ei, 1);
+        }
+        b.pierce--;
+        if (b.pierce <= 0) {
+          state.playerBullets.splice(i, 1);
+          break;
+        }
+      }
+    }
+  }
+
   // Pet Poop = Pure Indestructible Timed Trap (auto-dries after 14s!)
   for (let i = state.poops.length - 1; i >= 0; i--) {
     const poop = state.poops[i];
@@ -1907,41 +2113,55 @@ function update(rawDt) {
     }
   }
 
-  // Native Furniture Search Spots
+  // 3-Tier Risk-Reward Search Spots (Blue 1.0s / Gold 2.2s / Red 3.6s + Slow Decay + Red Alarm!)
   for (const spot of state.nativeSpots) {
     if (spot.searched) continue;
-    if (Math.hypot(p.x - spot.x, p.y - spot.y) < 64) {
-      spot.progress += dt / 0.8;
+    const dur = spot.openTime || 1.2;
+    if (Math.hypot(p.x - spot.x, p.y - spot.y) < 66) {
+      if (spot.tier === "red" && !spot.alarmed) {
+        spot.alarmed = true;
+        sfx.playHordeHorn();
+        spawnRing(spot.x, spot.y, 20, 220, "#ff4268", 8, 0.4);
+        showToast("🚨 正在硬开【顶级红箱】！警报已吸引怪潮，死守 3.6 秒！", "pink");
+        for (let k = 0; k < 4; k++) spawnEnemy();
+      }
+      spot.progress += dt / dur;
       spot.tickAcc += dt;
-      if (spot.tickAcc >= 0.14) {
+      if (spot.tickAcc >= 0.16) {
         spot.tickAcc = 0;
         sfx.playCrateTick(spot.progress);
       }
       if (spot.progress >= 1) {
         spot.searched = true;
-        grantLootReward(spot.x, spot.y, spot.minVal, `🔍 ${spot.label}掏出大金！`);
+        grantLootReward(spot.x, spot.y, spot.minVal, `🔍 ${spot.label}出货！`);
       }
     } else {
-      spot.progress = Math.max(0, spot.progress - dt * 0.8);
+      spot.progress = Math.max(0, spot.progress - dt * 0.22); // Gentle decay so dodging doesn't wipe progress!
     }
   }
 
-  // Boss Crates
+  // Boss & Elite Tiered Crates (Gold 2.2s / Red 3.4s + Slow Decay!)
   for (let i = state.crates.length - 1; i >= 0; i--) {
     const cr = state.crates[i];
+    const dur = cr.openTime || 2.2;
     if (Math.hypot(p.x - cr.x, p.y - cr.y) < 76) {
-      cr.progress += dt / 0.85;
+      if (cr.tier === "red" && !cr.alarmed) {
+        cr.alarmed = true;
+        spawnRing(cr.x, cr.y, 20, 190, "#ff4268", 7, 0.35);
+        showToast("🚨 正在强拆红金宝箱！顶住怪潮别出圈！", "pink");
+      }
+      cr.progress += dt / dur;
       cr.tickAcc += dt;
-      if (cr.tickAcc >= 0.14) {
+      if (cr.tickAcc >= 0.16) {
         cr.tickAcc = 0;
         sfx.playCrateTick(cr.progress);
       }
       if (cr.progress >= 1) {
-        grantLootReward(cr.x, cr.y, cr.minVal, "👑 Boss 超级金箱出货！");
+        grantLootReward(cr.x, cr.y, cr.minVal, cr.tier === "red" ? "🔴 顶级红金箱爆出重宝！" : "👑 超级金箱出货！");
         state.crates.splice(i, 1);
       }
     } else {
-      cr.progress = Math.max(0, cr.progress - dt * 0.8);
+      cr.progress = Math.max(0, cr.progress - dt * 0.22);
     }
   }
 
@@ -1952,11 +2172,20 @@ function update(rawDt) {
     }
   }
 
-  // Periodic Horde Swarms
-  state.hordeTimer -= dt;
-  if (state.hordeTimer <= 0) {
-    state.hordeTimer = 26;
-    triggerHordeSwarm();
+  // Wave Rhythm: 26s Combat Wave -> 5s Golden Breathing Window -> Next Themed Wave + Elites!
+  if (state.wavePhase === "combat") {
+    state.hordeTimer -= dt;
+    if (state.hordeTimer <= 0) {
+      state.wavePhase = "breather";
+      state.breatherTimer = 5.0;
+      sfx.playLevelUp();
+      showToast(`✨ 第 ${state.wave} 波击退！5 秒黄金喘息：快开红箱 / 冲充电桩！`, "green");
+    }
+  } else {
+    state.breatherTimer -= dt;
+    if (state.breatherTimer <= 0) {
+      triggerHordeSwarm();
+    }
   }
 
   // Charging Dock
@@ -1978,12 +2207,14 @@ function update(rawDt) {
     }
   }
 
-  // Ambient spawns paced strictly by the current map's themed wave script!
-  const spawnRate = getCurrentWaveSpec().rate;
-  state.spawnAcc -= dt;
-  if (state.spawnAcc <= 0 && state.enemies.length < 95) {
-    state.spawnAcc = spawnRate;
-    spawnEnemy();
+  // Ambient spawns pause during the 5s Golden Breathing Window!
+  if (state.wavePhase === "combat") {
+    const spawnRate = getCurrentWaveSpec().rate;
+    state.spawnAcc -= dt;
+    if (state.spawnAcc <= 0 && state.enemies.length < 95) {
+      state.spawnAcc = spawnRate;
+      spawnEnemy();
+    }
   }
 
   // CHASING CAT PAW (Tracks player with varying speed -> locks -> slams! Duck under tables/bed to block!)
@@ -2051,8 +2282,28 @@ function update(rawDt) {
   for (let i = state.enemies.length - 1; i >= 0; i--) {
     const e = state.enemies[i];
     e.flash = Math.max(0, e.flash - dt);
+    e.squash = Math.max(0, (e.squash || 0) - dt * 2.8);
     if (e.stun > 0) {
       e.stun -= dt;
+      continue;
+    }
+    if (e.stagger > 0) {
+      e.stagger -= dt;
+      e.x += e.vx * dt;
+      e.y += e.vy * dt;
+      const slam = clampToRoom(state.layout, e, e.r);
+      if (slam && Math.hypot(e.vx, e.vy) > 135) {
+        e.stun = 1.1;
+        e.vx = 0;
+        e.vy = 0;
+        spawnText(e.x, e.y - e.r - 12, "💥 撞墙晕眩!", "#ffd54a", 16);
+        if (damageEnemy(e, 38 + state.wave * 10, 0, 0, true)) {
+          state.enemies.splice(i, 1);
+          continue;
+        }
+      }
+      e.vx *= Math.pow(0.05, dt);
+      e.vy *= Math.pow(0.05, dt);
       continue;
     }
 
@@ -2279,9 +2530,16 @@ function update(rawDt) {
   const lockedCount = Math.min(save.safeBoxSlots, state.bagLoot.length);
   document.getElementById("hud-safe").textContent = `🔒${lockedCount}/${save.safeBoxSlots}`;
   const timerEl = document.getElementById("hud-timer");
-  const sec = Math.max(0, Math.ceil(state.hordeTimer));
-  timerEl.textContent = `潮:${sec}s`;
-  timerEl.classList.toggle("urgent", sec <= 5);
+  if (state.wavePhase === "breather") {
+    timerEl.textContent = `✨喘息:${Math.max(1, Math.ceil(state.breatherTimer))}s`;
+    timerEl.classList.remove("urgent");
+    timerEl.style.color = "#39ff88";
+  } else {
+    const sec = Math.max(0, Math.ceil(state.hordeTimer));
+    timerEl.textContent = `潮:${sec}s`;
+    timerEl.classList.toggle("urgent", sec <= 5);
+    timerEl.style.color = "";
+  }
   document.getElementById("hud-xp").style.width = `${Math.min(100, (p.xp / p.xpNext) * 100)}%`;
 
   const cleanEl = document.getElementById("hud-clean");

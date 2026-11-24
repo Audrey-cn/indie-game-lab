@@ -164,7 +164,57 @@ export function renderGame(ctx, state, vw, vh) {
     drawPoop(ctx, poop, time);
   }
 
-  // 10. Boss/Elite Mystery Gold Crates
+  // 10. Interactive Boost Pads, Explosive Canisters & Tiered Mystery Crates
+  if (state.boostPads) {
+    for (const bp of state.boostPads) {
+      const ready = bp.cd <= 0;
+      const pulse = 0.5 + 0.5 * Math.sin(time * 8);
+      ctx.save();
+      ctx.translate(bp.x, bp.y);
+      ctx.fillStyle = ready ? "rgba(56, 243, 255, 0.22)" : "rgba(100, 116, 139, 0.16)";
+      ctx.strokeStyle = ready ? "#38f3ff" : "#475569";
+      ctx.lineWidth = ready ? 3 + pulse : 2;
+      roundRect(ctx, -32, -20, 64, 40, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = ready ? "#7ef9ff" : "#64748b";
+      ctx.font = "900 18px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("» »", 0, 1);
+      ctx.restore();
+    }
+  }
+  if (state.barrels) {
+    for (const b of state.barrels) {
+      const pulse = 0.5 + 0.5 * Math.sin(time * 6 + b.x);
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.beginPath();
+      ctx.ellipse(0, 16, 20, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#e11d48";
+      ctx.strokeStyle = "#141126";
+      ctx.lineWidth = 3;
+      roundRect(ctx, -15, -20, 30, 36, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffd54a";
+      ctx.fillRect(-13, -6, 26, 10);
+      ctx.fillStyle = "#141126";
+      ctx.font = "900 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("💥", 0, -1);
+      ctx.strokeStyle = `rgba(255, 107, 34, ${0.35 + pulse * 0.45})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 26 + pulse * 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
   for (const crate of state.crates) {
     drawMysteryCrate(ctx, crate, time);
   }
@@ -225,7 +275,25 @@ export function renderGame(ctx, state, vw, vh) {
     drawEnemy(ctx, e, time);
   }
 
-  // 15. Enemy Projectiles
+  // 15. Player Piercing/Spreading Projectiles & Enemy Projectiles
+  if (state.playerBullets) {
+    for (const b of state.playerBullets) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.translate(b.x, b.y);
+      const ang = Math.atan2(b.vy, b.vx);
+      ctx.rotate(ang);
+      ctx.fillStyle = b.color;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, b.r * 1.9, b.r * 0.85, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.ellipse(2, 0, b.r * 1.0, b.r * 0.42, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
   for (const b of state.enemyBullets) {
     ctx.save();
     ctx.translate(b.x, b.y);
@@ -1007,10 +1075,20 @@ function drawShockStrip(ctx, strip, time) {
 
 function drawNativeSpot(ctx, spot, time) {
   const pulse = 0.5 + 0.5 * Math.sin(time * 6 + spot.x);
+  const col = spot.tier === "red" ? "#ff4268" : spot.tier === "gold" ? "#ffd54a" : "#38f3ff";
   ctx.save();
   ctx.translate(spot.x, spot.y);
-  ctx.strokeStyle = spot.isSecret ? `rgba(255, 92, 225, ${0.5 + pulse * 0.5})` : `rgba(255, 213, 74, ${0.42 + pulse * 0.45})`;
-  ctx.lineWidth = 2.8;
+  // Subtle vertical light beam for Red/Gold high-stakes spots!
+  if (spot.tier === "red" || spot.tier === "gold") {
+    const bh = spot.tier === "red" ? 130 : 85;
+    const g = ctx.createLinearGradient(0, 0, 0, -bh);
+    g.addColorStop(0, spot.tier === "red" ? "rgba(255,66,104,0.55)" : "rgba(255,213,74,0.42)");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(-16, -bh, 32, bh);
+  }
+  ctx.strokeStyle = col;
+  ctx.lineWidth = spot.tier === "red" ? 3.5 : 2.6;
   ctx.beginPath();
   ctx.arc(0, 0, 26 + pulse * 4, 0, Math.PI * 2);
   ctx.stroke();
@@ -1018,14 +1096,18 @@ function drawNativeSpot(ctx, spot, time) {
   ctx.font = "900 18px sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(spot.isSecret ? "👑" : "✨", 0, 0);
+  ctx.fillText(spot.tier === "red" ? "👑" : spot.tier === "gold" ? "💰" : "✨", 0, 0);
 
   if (spot.progress > 0) {
     ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 5;
+    ctx.lineWidth = 5.5;
     ctx.beginPath();
-    ctx.arc(0, 0, 32, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * spot.progress);
+    ctx.arc(0, 0, 34, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * spot.progress);
     ctx.stroke();
+    const rem = Math.max(0, (1 - spot.progress) * (spot.openTime || 1.2)).toFixed(1);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 12px sans-serif";
+    ctx.fillText(`${rem}s`, 0, -42);
   }
   ctx.restore();
 }
@@ -1068,24 +1150,30 @@ function drawProp(ctx, prop) {
 
 function drawMysteryCrate(ctx, crate, time) {
   const opening = crate.progress > 0;
+  const isRed = crate.tier === "red";
   const shake = opening ? (Math.random() - 0.5) * (3 + crate.progress * 10) : 0;
   ctx.save();
   ctx.translate(crate.x + shake, crate.y + shake);
-  const g = ctx.createLinearGradient(0, 0, 0, -130);
-  g.addColorStop(0, "rgba(255, 213, 74, 0.8)");
+  const g = ctx.createLinearGradient(0, 0, 0, isRed ? -180 : -135);
+  g.addColorStop(0, isRed ? "rgba(255, 66, 104, 0.88)" : "rgba(255, 213, 74, 0.8)");
   g.addColorStop(1, "rgba(255, 213, 74, 0)");
   ctx.fillStyle = g;
-  ctx.fillRect(-22, -130, 44, 130);
+  ctx.fillRect(-24, isRed ? -180 : -135, 48, isRed ? 180 : 135);
 
   const sp = SPRITES.crate;
-  const sz = 58 * (opening ? 1 + crate.progress * 0.2 : 1);
+  const sz = (isRed ? 64 : 58) * (opening ? 1 + crate.progress * 0.2 : 1);
   if (sp && sp.ready) ctx.drawImage(sp.img, -sz / 2, -sz / 2, sz, sz);
   if (opening) {
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 5;
+    ctx.strokeStyle = isRed ? "#ff4268" : "#ffffff";
+    ctx.lineWidth = 6;
     ctx.beginPath();
-    ctx.arc(0, 0, 38, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * crate.progress);
+    ctx.arc(0, 0, 40, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * crate.progress);
     ctx.stroke();
+    const rem = Math.max(0, (1 - crate.progress) * (crate.openTime || 2.2)).toFixed(1);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 13px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`${rem}s`, 0, -48);
   }
   ctx.restore();
 }
@@ -1190,19 +1278,39 @@ function drawEnemy(ctx, e, time) {
   }
 
   const wobble = e.stun > 0 ? 0 : Math.sin(time * 12 + e.seed) * 0.09;
+  const sq = e.squash || 0;
   const spKey = e.type === "pooper" ? "poop" : e.type === "slime" ? "dust" : e.type;
   const sp = SPRITES[spKey];
 
   ctx.save();
   ctx.translate(e.x, e.y);
 
+  // Glowing Purple-Gold Aura Ring beneath Elites!
+  if (e.elite) {
+    const ep = 0.5 + 0.5 * Math.sin(time * 8 + e.seed);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = "#e879f9";
+    ctx.lineWidth = 3.5 + ep * 2;
+    ctx.beginPath();
+    ctx.ellipse(0, e.r * 0.55, e.r * 1.25, e.r * 0.6, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "#ffd54a";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, e.r * 0.55, e.r * 1.42, e.r * 0.7, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.fillStyle = "rgba(0,0,0,0.38)";
   ctx.beginPath();
   ctx.ellipse(0, e.r * 0.8, e.r * 0.9, e.r * 0.36, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.scale((e.vx < -8 ? -1 : 1) * (1 + wobble), 1 - wobble);
+  ctx.scale((e.vx < -8 ? -1 : 1) * (1 + wobble + sq), Math.max(0.55, 1 - wobble - sq * 0.8));
   if (e.type === "slime") ctx.filter = "sepia(1) hue-rotate(-10deg) saturate(2.4) brightness(1.08)";
+  else if (e.elite) ctx.filter = "contrast(1.12) saturate(1.35) drop-shadow(0 0 8px rgba(232,121,249,0.75))";
   const drawSize = e.type === "mop" ? e.r * 2.8 : e.r * 2.55;
   if (sp && sp.ready) {
     const img = e.flash > 0 && sp.white ? sp.white : sp.img;
@@ -1220,12 +1328,12 @@ function drawEnemy(ctx, e, time) {
     ctx.restore();
   }
 
-  if (e.type === "mop" || e.hp < e.maxHp) {
-    const bw = e.type === "mop" ? 68 : 28;
-    const bh = e.type === "mop" ? 8 : 4;
+  if (e.type === "mop" || e.elite || e.hp < e.maxHp) {
+    const bw = e.type === "mop" ? 68 : e.elite ? 48 : 28;
+    const bh = e.type === "mop" ? 8 : e.elite ? 6 : 4;
     ctx.fillStyle = "#141122";
     ctx.fillRect(e.x - bw / 2, e.y - e.r - 18, bw, bh);
-    ctx.fillStyle = e.type === "mop" ? "#ff477e" : "#ff6b6b";
+    ctx.fillStyle = e.type === "mop" ? "#ff477e" : e.elite ? "#e879f9" : "#ff6b6b";
     ctx.fillRect(e.x - bw / 2 + 1, e.y - e.r - 17, Math.max(0, (bw - 2) * (e.hp / e.maxHp)), bh - 2);
   }
 }
@@ -1317,7 +1425,7 @@ function drawWeaponVfx(ctx, state, time) {
     ctx.restore();
   }
 
-  // Orbiting Spatula Blades (with Motion Trail + Flame Tornado / Golden Evolution!)
+  // Overclocked High-RPM Roomba Side-Brush Discs (Replaces jarring floating knives!)
   if (player.weapons.spatula > 0) {
     const isFlame = !!evos.flame_tornado;
     const isGold = !!evos.golden_vortex;
@@ -1329,8 +1437,8 @@ function drawWeaponVfx(ctx, state, time) {
     ctx.globalCompositeOperation = "lighter";
     for (let i = 0; i < count; i++) {
       const a = time * rotSpd + (i / count) * Math.PI * 2;
-      ctx.strokeStyle = isFlame ? "rgba(255, 110, 35, 0.65)" : isGold ? "rgba(255, 213, 74, 0.55)" : "rgba(180, 230, 255, 0.35)";
-      ctx.lineWidth = isFlame ? 14 : 8;
+      ctx.strokeStyle = isFlame ? "rgba(255, 110, 35, 0.65)" : isGold ? "rgba(255, 213, 74, 0.55)" : "rgba(56, 243, 255, 0.4)";
+      ctx.lineWidth = isFlame ? 14 : 9;
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.arc(player.x, player.y, rad, a - 0.68, a);
@@ -1344,20 +1452,37 @@ function drawWeaponVfx(ctx, state, time) {
       const sy = player.y + Math.sin(a) * rad;
       ctx.save();
       ctx.translate(sx, sy);
-      ctx.rotate(a + Math.PI / 2);
+      // High-RPM self-spinning 3-arm Roomba Side-Brush Disc!
+      const selfSpin = time * (isFlame ? 28 : 20) + i;
       if (isFlame) {
         const fl = getGlowSprite("#ff6b22");
-        ctx.drawImage(fl, -26, -26, 52, 52);
+        ctx.drawImage(fl, -28, -28, 56, 56);
       }
-      ctx.fillStyle = isFlame ? "#ff9f43" : isGold ? "#ffe066" : "#e2ecfc";
-      ctx.strokeStyle = "#161426";
-      ctx.lineWidth = 2.6;
-      roundRect(ctx, -7, -20, 14, 24, 3);
+      // Translucent bristle motion-blur disc
+      ctx.fillStyle = isFlame ? "rgba(255, 120, 40, 0.34)" : isGold ? "rgba(255, 213, 74, 0.3)" : "rgba(56, 243, 255, 0.25)";
+      ctx.beginPath();
+      ctx.arc(0, 0, 21, 0, Math.PI * 2);
+      ctx.fill();
+      // 3 Sweeping Bristle Arms
+      ctx.rotate(selfSpin);
+      ctx.strokeStyle = isFlame ? "#ffe066" : isGold ? "#ffd54a" : "#7ef9ff";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      for (let b = 0; b < 3; b++) {
+        const ba = (b / 3) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(Math.cos(ba + 0.35) * 12, Math.sin(ba + 0.35) * 12, Math.cos(ba) * 20, Math.sin(ba) * 20);
+        ctx.stroke();
+      }
+      // Mechanical Center Rotor Cap
+      ctx.fillStyle = isFlame ? "#ff3b30" : isGold ? "#f59e0b" : "#1e293b";
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 6.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = isFlame ? "#ff3b30" : "#ffd64f";
-      ctx.fillRect(-3.5, 4, 7, 13);
-      ctx.strokeRect(-3.5, 4, 7, 13);
       ctx.restore();
     }
   }
