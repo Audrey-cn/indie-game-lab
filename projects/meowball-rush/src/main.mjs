@@ -192,6 +192,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
       surfaceKind: "grass",
       dizzyTimer: 0,
       popTimer: 0,
+      hammerHitCd: 0,
       facing: 0,
       pawCycle: 0,
       boostFlash: 0,
@@ -369,13 +370,17 @@ function updatePhysics(dt) {
     g.mesh.rotation.y += g.def.omega * dt;
   }
   for (const hm of dynamicMeshes.hammers) {
-    const ang = Math.sin(state.elapsed * hm.def.speed + hm.def.phase) * hm.def.amp;
+    const tArg = state.elapsed * hm.def.speed + hm.def.phase;
+    const ang = Math.sin(tArg) * hm.def.amp;
+    const angVel = Math.cos(tArg) * hm.def.amp * hm.def.speed;
     hm.pivot.rotation.z = ang;
     hm.worldHead.set(
       hm.def.x + Math.sin(ang) * hm.def.len,
       hm.def.y - Math.cos(ang) * hm.def.len,
       hm.def.z
     );
+    hm.velX = Math.cos(ang) * angVel * hm.def.len;
+    hm.velY = Math.sin(ang) * angVel * hm.def.len;
   }
 
   // Handle Comical Popped Furball Respawn Timer (Clock keeps ticking — pure Hamsterball tension!)
@@ -495,12 +500,41 @@ function updatePhysics(dt) {
     return;
   }
 
-  // Swinging Wooden Hammers Collision!
-  for (const hm of dynamicMeshes.hammers) {
-    const d = Math.hypot(b.x - hm.worldHead.x, b.y - hm.worldHead.y, b.z - hm.worldHead.z);
-    if (d < b.r + 0.92) {
-      triggerBubblePop("🔨 被雕花大木锤砸成毛球啦！");
-      return;
+  // Swinging Wooden Hammers — Pure Physical Momentum Knockback (No instant-kill!)
+  b.hammerHitCd = Math.max(0, (b.hammerHitCd || 0) - dt);
+  if (b.hammerHitCd <= 0) {
+    for (const hm of dynamicMeshes.hammers) {
+      const dx = b.x - hm.worldHead.x;
+      const dy = b.y - hm.worldHead.y;
+      const dz = b.z - hm.worldHead.z;
+      const d = Math.hypot(dx, dy, dz);
+      const hitDist = b.r + 0.92;
+      if (d < hitDist) {
+        const inv = 1 / (d || 0.001);
+        const nx = dx * inv;
+        const ny = dy * inv;
+        const nz = dz * inv;
+        // Separate ball out of hammer head
+        b.x = hm.worldHead.x + nx * (hitDist + 0.08);
+        b.y = hm.worldHead.y + ny * (hitDist + 0.08);
+        b.z = hm.worldHead.z + nz * (hitDist + 0.08);
+
+        // Real physical impulse from hammer's instantaneous tangential swing velocity!
+        const swingSpd = Math.hypot(hm.velX || 0, hm.velY || 0);
+        const heavyMult = state.cat.id === "ginger_scarf" ? 0.78 : 1.0; // Chubby ginger cat resists knockback better!
+        const pushForce = (4.5 + swingSpd * 1.45) * heavyMult;
+        b.vx = (hm.velX || 0) * 1.35 * heavyMult + nx * pushForce;
+        b.vz = b.vz * 0.5 + nz * pushForce;
+        b.vy = Math.max(3.2, Math.min(8.5, 3.6 + swingSpd * 0.42));
+        b.grounded = false;
+        b.hammerHitCd = 0.28;
+        if (swingSpd > 4.5) {
+          b.dizzyTimer = Math.max(b.dizzyTimer, 0.85 / state.cat.stats.dizzyResist);
+        }
+        sfx.playHammerBonk(swingSpd / 6);
+        showToast(swingSpd > 5.5 ? "🔨 咚！被大木锤狠狠锤飞！" : "🔨 咚！擦到木锤弹开了！");
+        break;
+      }
     }
   }
 

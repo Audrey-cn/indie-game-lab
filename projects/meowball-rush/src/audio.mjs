@@ -156,6 +156,14 @@ class MeowAudio {
     this.bell(880, 0.24, 0.08, 0.06);
   }
 
+  playHammerBonk(strength = 1) {
+    // Warm hollow wood-bonk + elastic spring kick scaled by real impact velocity!
+    const v = Math.min(1.4, Math.max(0.5, strength));
+    this.tone(160 * v, 52, 0.16, "sine", 0.28 * Math.min(1, v));
+    this.tone(310, 145, 0.12, "triangle", 0.16 * Math.min(1, v));
+    this.bell(620, 0.18, 0.07, 0.02);
+  }
+
   playDizzy() {
     this.tone(420, 180, 0.16, "triangle", 0.18);
     [780, 620, 820, 580].forEach((f, i) => this.bell(f, 0.18, 0.075, i * 0.07));
