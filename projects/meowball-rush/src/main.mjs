@@ -44,16 +44,28 @@ function showToast(msg) {
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 220);
 
-// Warm WitchSpring Lighting (Bright sunlit hemisphere + soft directional rim)
-const hemiLight = new THREE.HemisphereLight(0xfff9f0, 0x8b74bd, 1.05);
+// Warm WitchSpring Lighting + Soft Real-Time Sunlight Shadows!
+const hemiLight = new THREE.HemisphereLight(0xfffaf2, 0x8b74bd, 1.05);
 scene.add(hemiLight);
 const sunLight = new THREE.DirectionalLight(0xfff5d6, 1.35);
-sunLight.position.set(16, 32, 18);
+sunLight.position.set(18, 36, 16);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(1024, 1024);
+sunLight.shadow.camera.near = 4;
+sunLight.shadow.camera.far = 110;
+sunLight.shadow.camera.left = -28;
+sunLight.shadow.camera.right = 28;
+sunLight.shadow.camera.top = 28;
+sunLight.shadow.camera.bottom = -28;
+sunLight.shadow.bias = -0.0012;
 scene.add(sunLight);
+scene.add(sunLight.target);
 
 function resize() {
   const w = window.innerWidth;
@@ -675,6 +687,13 @@ function updateVisuals(dt) {
   for (const cl of dynamicMeshes.clouds) {
     cl.mesh.position.x = cl.baseX + Math.sin(state.elapsed * 0.3 + cl.seed) * 1.4;
   }
+  if (dynamicMeshes.petals) {
+    dynamicMeshes.petals.rotation.y = Math.sin(state.elapsed * 0.15) * 0.08;
+    dynamicMeshes.petals.position.y = Math.sin(state.elapsed * 0.9) * 0.45;
+  }
+  // Keep sunlight shadow frustum centered around the rolling kitty ball!
+  sunLight.position.set(b.x + 16, b.y + 26, b.z + 14);
+  sunLight.target.position.set(b.x, b.y, b.z - 6);
 
   // Wide Tapered Pastel Rainbow Ribbon Trail!
   trailPoints.unshift(new THREE.Vector3(b.x, b.y - 0.14, b.z));
