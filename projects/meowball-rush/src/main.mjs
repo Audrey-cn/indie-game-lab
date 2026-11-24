@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { CATS, DEFAULT_SAVE, TRACKS } from "./config.mjs";
 import { sfx } from "./audio.mjs";
-import { buildTrackScene, createKittyBall } from "./cel-builder.mjs";
+import { buildTrackScene, createKittyBall, createRainbowRibbon } from "./cel-builder.mjs";
 import coverUrl from "./assets/cover.webp";
 
 const SAVE_KEY = "meowball_rush_save_v1";
@@ -154,15 +154,10 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   scene.add(kittyRig.root);
   scene.add(kittyRig.shadow);
 
-  // Rainbow/Magic Speed Trail Ribbon
+  // Lush Pastel Rainbow Speed Ribbon Trail!
   trailPoints.length = 0;
-  const tGeo = new THREE.BufferGeometry();
-  const tPos = new Float32Array(26 * 3);
-  tGeo.setAttribute("position", new THREE.BufferAttribute(tPos, 3));
-  trailMesh = new THREE.Line(
-    tGeo,
-    new THREE.LineBasicMaterial({ color: cat.trailColor, transparent: true, opacity: 0.72 })
-  );
+  const rib = createRainbowRibbon(24);
+  trailMesh = rib.mesh;
   scene.add(trailMesh);
 
   const startTime = mode === "tourney" ? (trackIndex === 0 ? track.bonusTime : carryTime + track.bonusTime) : track.bonusTime + 10;
@@ -459,27 +454,40 @@ function updatePhysics(dt) {
   b.y += b.vy * dt;
   b.z += b.vz * dt;
 
-  // Surface Collision & Slope Acceleration
+  // Surface Collision & Smooth, Controllable Slope Physics
   const surf = sampleTrackSurface(b.x, b.y, b.z, b.r);
-  if (surf && b.vy <= 0.5) {
+  if (surf && b.vy <= 1.2) {
     const impactVy = -b.vy;
+    const wasRamp = b.surfaceKind === "ramp" || b.surfaceKind === "ice_ramp";
     b.y = surf.y + b.r;
-    if (!b.grounded && impactVy > 13.5) {
+    if (!b.grounded && !wasRamp && impactVy > 15.0) {
       triggerBubblePop("💥 摔太狠啦！魔法泡泡碎了！");
       return;
-    } else if (!b.grounded && impactVy > 8.2) {
-      b.dizzyTimer = 1.45 / catStats.dizzyResist;
+    } else if (!b.grounded && !wasRamp && impactVy > 9.6) {
+      b.dizzyTimer = 1.35 / catStats.dizzyResist;
       sfx.playDizzy();
       showToast("💫 摔晕啦！小猫头顶冒金星！");
-      b.vy = impactVy * 0.25;
+      b.vy = impactVy * 0.22;
     } else {
       b.vy = 0;
     }
     b.grounded = true;
     b.surfaceKind = surf.kind;
-    // Slope gravity push (makes downhill ramps exhilarating!)
-    b.vx -= surf.slopeX * 28 * dt;
-    b.vz += surf.slopeZ * 28 * dt;
+    // Realistic, controllable slope gravity (g * sin(theta) scaled for crisp arcade counter-steering!)
+    const isIceSlope = surf.kind === "ice_ramp";
+    const slopeGain = isIceSlope ? 14.5 : 11.2;
+    b.vx -= surf.slopeX * slopeGain * dt;
+    b.vz += surf.slopeZ * slopeGain * dt;
+    // Soft downhill speed cap so steep ramps feel fast without launching uncontrollably
+    if (surf.slopeX !== 0 || surf.slopeZ !== 0) {
+      const rampCap = (isIceSlope ? 13.8 : 11.8) * catStats.topSpeed;
+      const curSpd = Math.hypot(b.vx, b.vz);
+      if (curSpd > rampCap) {
+        const blend = rampCap + (curSpd - rampCap) * Math.pow(0.15, dt);
+        b.vx = (b.vx / curSpd) * blend;
+        b.vz = (b.vz / curSpd) * blend;
+      }
+    }
     // Rotating Gear tangential carry!
     if (surf.gearVx || surf.gearVz) {
       b.x += surf.gearVx * dt;
@@ -551,12 +559,12 @@ function updatePhysics(dt) {
     }
   }
 
-  // Rainbow Speed Boost Strips!
+  // Rainbow Speed Boost Strips (Snappy & Controllable!)
   b.boostFlash = Math.max(0, b.boostFlash - dt);
   for (const bs of state.track.boosts) {
     if (Math.abs(b.x - bs.x) < bs.w * 0.5 + b.r && Math.abs(b.z - bs.z) < bs.d * 0.5 + b.r && Math.abs(b.y - bs.y) < 1.2) {
-      b.vx += bs.fx * dt * 2.5;
-      b.vz += bs.fz * dt * 2.5;
+      b.vx += bs.fx * dt * 1.45;
+      b.vz += bs.fz * dt * 1.45;
       if (b.boostFlash <= 0) {
         b.boostFlash = 0.6;
         sfx.playBoost();
@@ -658,17 +666,31 @@ function updateVisuals(dt) {
     }
   }
   if (dynamicMeshes.portal) dynamicMeshes.portal.rotation.z += 2.0 * dt;
+  for (const bs of dynamicMeshes.boosts) {
+    if (bs.tex) bs.tex.offset.y -= dt * 1.8;
+  }
+  for (const fl of dynamicMeshes.floaters || []) {
+    fl.mesh.position.y = fl.baseY + Math.sin(state.elapsed * 0.8 + fl.seed) * 0.45;
+  }
   for (const cl of dynamicMeshes.clouds) {
     cl.mesh.position.x = cl.baseX + Math.sin(state.elapsed * 0.3 + cl.seed) * 1.4;
   }
 
-  // Speed Trail
-  trailPoints.unshift(new THREE.Vector3(b.x, b.y - 0.12, b.z));
-  if (trailPoints.length > 26) trailPoints.pop();
+  // Wide Tapered Pastel Rainbow Ribbon Trail!
+  trailPoints.unshift(new THREE.Vector3(b.x, b.y - 0.14, b.z));
+  if (trailPoints.length > 24) trailPoints.pop();
   const attr = trailMesh.geometry.attributes.position;
-  for (let i = 0; i < 26; i++) {
+  for (let i = 0; i < 24; i++) {
     const pt = trailPoints[Math.min(i, trailPoints.length - 1)] || new THREE.Vector3(b.x, b.y, b.z);
-    attr.setXYZ(i, pt.x, pt.y, pt.z);
+    const nextPt = trailPoints[Math.min(i + 1, trailPoints.length - 1)] || pt;
+    const dx = pt.x - nextPt.x;
+    const dz = pt.z - nextPt.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const px = -dz / len;
+    const pz = dx / len;
+    const halfW = (1 - i / 23) * (spd > 2 ? 0.44 : 0.18);
+    attr.setXYZ(i * 2, pt.x - px * halfW, pt.y, pt.z - pz * halfW);
+    attr.setXYZ(i * 2 + 1, pt.x + px * halfW, pt.y, pt.z + pz * halfW);
   }
   attr.needsUpdate = true;
 
