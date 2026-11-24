@@ -14,6 +14,10 @@ import remoteUrl from "./sprites/loot-remote.webp";
 import coreUrl from "./sprites/loot-core.webp";
 import catpawUrl from "./sprites/catpaw.webp";
 import poopUrl from "./sprites/poop.webp";
+import vfxSlashUrl from "./sprites/vfx-slash.webp";
+import vfxBurstUrl from "./sprites/vfx-burst.webp";
+import vfxFlameUrl from "./sprites/vfx-flame.webp";
+import vfxBrushUrl from "./sprites/vfx-brush.webp";
 import posterLobbyUrl from "./sprites/poster-lobby.webp";
 import posterKitchenUrl from "./sprites/poster-map-kitchen.webp";
 import posterStudyUrl from "./sprites/poster-map-study.webp";
@@ -88,4 +92,8 @@ export const SPRITES = {
   core: loadSprite(coreUrl, false),
   catpaw: loadSprite(catpawUrl, false),
   poop: loadSprite(poopUrl, true),
+  vfxSlash: loadSprite(vfxSlashUrl, false),
+  vfxBurst: loadSprite(vfxBurstUrl, false),
+  vfxFlame: loadSprite(vfxFlameUrl, false),
+  vfxBrush: loadSprite(vfxBrushUrl, false),
 };

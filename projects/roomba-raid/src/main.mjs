@@ -1062,6 +1062,7 @@ function triggerHordeSwarm() {
   state.wave += 1;
   state.wavePhase = "combat";
   state.hordeTimer = 26;
+  sfx.setBreather(false);
   const waveSpec = getCurrentWaveSpec();
   sfx.playHordeHorn();
   state.shake = 0.5;
@@ -1082,7 +1083,7 @@ function detonateBarrel(b) {
   state.hitstop = Math.max(state.hitstop, 0.032);
   vibrate(45);
   spawnRing(b.x, b.y, 18, 210, "#ff6b22", 14, 0.36);
-  spawnRing(b.x, b.y, 10, 140, "#ffd54a", 8, 0.28);
+  state.vfx.push({ type: "burst", x: b.x, y: b.y, size: 220, rot: Math.random() * 6, life: 0.34, maxLife: 0.34 });
   spawnParticles(b.x, b.y, "#ff6b22", 32, 280, true);
   spawnText(b.x, b.y - 26, "💥 罐体爆破清场！", "#ffd54a", 22);
   const blastDmg = 155 + state.wave * 45;
@@ -1112,7 +1113,10 @@ function damageEnemy(e, dmg, kbX = 0, kbY = 0, isCrit = false, staggerDur = 0) {
   e.vx += kbX * kbMult;
   e.vy += kbY * kbMult;
   sfx.playHit(isCrit);
-  if (isCrit) state.hitstop = Math.max(state.hitstop, e.elite || e.type === "mop" ? 0.028 : 0.014);
+  if (isCrit) {
+    state.hitstop = Math.max(state.hitstop, e.elite || e.type === "mop" ? 0.028 : 0.014);
+    state.vfx.push({ type: "burst", x: e.x, y: e.y, size: e.elite || e.type === "mop" ? 96 : 64, rot: Math.random() * 6, life: 0.22, maxLife: 0.22 });
+  }
 
   spawnText(
     e.x + (Math.random() - 0.5) * 18,
@@ -1639,6 +1643,7 @@ function finishRun(extracted) {
   state.phase = "ended";
   sfx.setUrgent(false);
   sfx.setFever(false);
+  sfx.setBreather(false);
   sfx.stopBgm();
   activeBar.hidden = true;
   hudEl.hidden = true;
@@ -2178,6 +2183,7 @@ function update(rawDt) {
     if (state.hordeTimer <= 0) {
       state.wavePhase = "breather";
       state.breatherTimer = 5.0;
+      sfx.setBreather(true);
       sfx.playLevelUp();
       showToast(`✨ 第 ${state.wave} 波击退！5 秒黄金喘息：快开红箱 / 冲充电桩！`, "green");
     }

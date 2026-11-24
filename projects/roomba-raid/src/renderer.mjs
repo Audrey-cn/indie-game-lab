@@ -1452,37 +1452,20 @@ function drawWeaponVfx(ctx, state, time) {
       const sy = player.y + Math.sin(a) * rad;
       ctx.save();
       ctx.translate(sx, sy);
-      // High-RPM self-spinning 3-arm Roomba Side-Brush Disc!
-      const selfSpin = time * (isFlame ? 28 : 20) + i;
+      const selfSpin = time * (isFlame ? 22 : 15) + i;
       if (isFlame) {
         const fl = getGlowSprite("#ff6b22");
-        ctx.drawImage(fl, -28, -28, 56, 56);
+        ctx.drawImage(fl, -30, -30, 60, 60);
       }
-      // Translucent bristle motion-blur disc
-      ctx.fillStyle = isFlame ? "rgba(255, 120, 40, 0.34)" : isGold ? "rgba(255, 213, 74, 0.3)" : "rgba(56, 243, 255, 0.25)";
-      ctx.beginPath();
-      ctx.arc(0, 0, 21, 0, Math.PI * 2);
-      ctx.fill();
-      // 3 Sweeping Bristle Arms
       ctx.rotate(selfSpin);
-      ctx.strokeStyle = isFlame ? "#ffe066" : isGold ? "#ffd54a" : "#7ef9ff";
-      ctx.lineWidth = 4;
-      ctx.lineCap = "round";
-      for (let b = 0; b < 3; b++) {
-        const ba = (b / 3) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(Math.cos(ba + 0.35) * 12, Math.sin(ba + 0.35) * 12, Math.cos(ba) * 20, Math.sin(ba) * 20);
-        ctx.stroke();
+      const bsp = SPRITES.vfxBrush;
+      if (bsp && bsp.ready) {
+        if (isFlame) ctx.filter = "hue-rotate(-145deg) saturate(1.9) brightness(1.1)";
+        else if (isGold) ctx.filter = "sepia(0.8) saturate(2.5) brightness(1.12)";
+        const sz = isFlame ? 52 : 44;
+        ctx.drawImage(bsp.img, -sz / 2, -sz / 2, sz, sz);
+        ctx.filter = "none";
       }
-      // Mechanical Center Rotor Cap
-      ctx.fillStyle = isFlame ? "#ff3b30" : isGold ? "#f59e0b" : "#1e293b";
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, 6.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
       ctx.restore();
     }
   }
@@ -1491,7 +1474,17 @@ function drawWeaponVfx(ctx, state, time) {
     const a = Math.max(0, fx.life / fx.maxLife);
     ctx.save();
     ctx.globalAlpha = a;
-    if (fx.type === "ring") {
+    if (fx.type === "burst") {
+      // Hand-Painted Comic Starburst Explosion Sprite!
+      const bsp = SPRITES.vfxBurst;
+      const pop = 0.55 + (1 - a) * 0.72;
+      const sz = (fx.size || 76) * pop;
+      ctx.translate(fx.x, fx.y);
+      ctx.rotate((fx.rot || 0) + (1 - a) * 0.45);
+      if (bsp && bsp.ready) {
+        ctx.drawImage(bsp.img, -sz / 2, -sz / 2, sz, sz);
+      }
+    } else if (fx.type === "ring") {
       ctx.globalCompositeOperation = "lighter";
       const r = fx.r0 + (fx.r1 - fx.r0) * (1 - a);
       ctx.strokeStyle = fx.color;
@@ -1505,27 +1498,16 @@ function drawWeaponVfx(ctx, state, time) {
       ctx.lineWidth = Math.max(1.6, (fx.width || 6) * 0.6 * a);
       ctx.stroke();
     } else if (fx.type === "swatter") {
-      ctx.globalCompositeOperation = "lighter";
-      ctx.lineCap = "round";
-      ctx.strokeStyle = "#38f3ff";
-      ctx.lineWidth = 22 * a;
-      ctx.globalAlpha = a * 0.3;
-      ctx.beginPath();
-      ctx.arc(fx.x, fx.y, fx.r, fx.startA, fx.endA);
-      ctx.stroke();
-      ctx.globalAlpha = a * 0.9;
-      ctx.strokeStyle = "#7ef9ff";
-      ctx.lineWidth = 9 * a;
-      ctx.stroke();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 3 * a;
-      ctx.beginPath();
-      ctx.arc(fx.x, fx.y, fx.r + 3, fx.startA + 0.12, fx.endA - 0.12);
-      ctx.stroke();
-      const tipX = fx.x + Math.cos(fx.endA) * fx.r;
-      const tipY = fx.y + Math.sin(fx.endA) * fx.r;
-      const flare = getGlowSprite("#38f3ff");
-      ctx.drawImage(flare, tipX - 28 * a, tipY - 28 * a, 56 * a, 56 * a);
+      // Hand-Painted Comic Electric Crescent Slash Sprite!
+      const ssp = SPRITES.vfxSlash;
+      const midA = (fx.startA + fx.endA) * 0.5;
+      const sweep = (1 - a) * 0.42 - 0.16;
+      const sz = fx.r * 2.25 * (0.85 + (1 - a) * 0.25);
+      ctx.translate(fx.x, fx.y);
+      ctx.rotate(midA + sweep);
+      if (ssp && ssp.ready) {
+        ctx.drawImage(ssp.img, -sz * 0.38, -sz * 0.5, sz, sz);
+      }
     } else if (fx.type === "laser" || fx.type === "prism_beam") {
       ctx.globalCompositeOperation = "lighter";
       ctx.lineCap = "round";
@@ -1548,25 +1530,17 @@ function drawWeaponVfx(ctx, state, time) {
       const fs = (fx.type === "prism_beam" ? 68 : 48) * a;
       ctx.drawImage(flare, fx.x2 - fs / 2, fx.y2 - fs / 2, fs, fs);
     } else if (fx.type === "hairdryer" || fx.type === "flame_wave") {
-      ctx.globalCompositeOperation = "lighter";
+      // Hand-Painted Sweeping Comic Flame / Hot-Air Gust Sprite!
+      const fsp = SPRITES.vfxFlame;
       const isFlame = fx.type === "flame_wave";
-      const rg = ctx.createRadialGradient(fx.x, fx.y, 14, fx.x, fx.y, fx.r);
-      rg.addColorStop(0, isFlame ? "rgba(255, 240, 150, 0.72)" : "rgba(255, 224, 150, 0.55)");
-      rg.addColorStop(0.55, isFlame ? "rgba(255, 90, 30, 0.45)" : "rgba(255, 148, 56, 0.32)");
-      rg.addColorStop(1, "rgba(255, 80, 20, 0)");
-      ctx.fillStyle = rg;
-      ctx.beginPath();
-      ctx.moveTo(fx.x, fx.y);
-      ctx.arc(fx.x, fx.y, fx.r, fx.angle - 0.62, fx.angle + 0.62);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = isFlame ? "#ffd54a" : "#ffbe76";
-      ctx.lineWidth = 3.5 * a;
-      for (let k = 0; k < 3; k++) {
-        const rr = fx.r * (0.38 + k * 0.24 + (1 - a) * 0.18);
-        ctx.beginPath();
-        ctx.arc(fx.x, fx.y, rr, fx.angle - 0.46, fx.angle + 0.46);
-        ctx.stroke();
+      const pop = 0.65 + (1 - a) * 0.52;
+      const sz = fx.r * 1.15 * pop;
+      ctx.translate(fx.x, fx.y);
+      ctx.rotate(fx.angle);
+      if (fsp && fsp.ready) {
+        if (!isFlame) ctx.filter = "hue-rotate(15deg) brightness(1.12)";
+        ctx.drawImage(fsp.img, 8, -sz * 0.48, sz, sz * 0.96);
+        ctx.filter = "none";
       }
     } else if (fx.type === "tesla" || fx.type === "thunder_storm") {
       ctx.globalCompositeOperation = "lighter";
