@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>魔女猫球 · Meowball Rush</title>
+  <style>
+    :root {
+      --ink: #2b1e3a;
+      --cream: #fff9ef;
+      --violet: #8b5cf6;
+      --pink: #ff6fb5;
+      --gold: #ffcf40;
+      --cyan: #38e8ff;
+      --mint: #34d399;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #1b122b; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif;
+    }
+    #app { position: relative; width: 100%; height: 100%; overflow: hidden; }
+    #gl-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+    /* ===== CLEAN ARCADE HUD ===== */
+    #hud {
+      position: absolute; inset: 0; pointer-events: none; z-index: 10;
+      display: flex; flex-direction: column; justify-content: space-between;
+      padding: max(14px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    }
+    #hud[hidden] { display: none; }
+    .hud-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .hud-pill {
+      pointer-events: auto;
+      background: rgba(43, 30, 58, 0.82); border: 2.5px solid #fff;
+      border-radius: 999px; padding: 6px 14px; font-weight: 900; font-size: 13px;
+      box-shadow: 0 4px 0 rgba(43, 30, 58, 0.7); backdrop-filter: blur(6px);
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .timer-box {
+      background: linear-gradient(180deg, #fff9ef, #fde6ba); color: var(--ink);
+      border: 3px solid var(--ink); border-radius: 20px; padding: 6px 20px;
+      text-align: center; box-shadow: 0 5px 0 var(--ink);
+    }
+    .timer-box.urgent { background: linear-gradient(180deg, #ff7a99, #ff3868); color: #fff; animation: pulse 0.45s infinite alternate; }
+    .timer-lbl { font-size: 10px; font-weight: 900; opacity: 0.75; letter-spacing: 0.08em; }
+    .timer-val { font-size: 28px; font-weight: 900; line-height: 1.05; font-variant-numeric: tabular-nums; }
+    @keyframes pulse { to { transform: scale(1.06); } }
+
+    .hud-btn {
+      pointer-events: auto; cursor: pointer;
+      background: rgba(43, 30, 58, 0.85); color: #fff; border: 2.5px solid #fff;
+      border-radius: 14px; padding: 7px 12px; font-size: 13px; font-weight: 900;
+      box-shadow: 0 4px 0 rgba(43, 30, 58, 0.7);
+    }
+    .hud-bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+    .speed-card {
+      background: rgba(43, 30, 58, 0.82); border: 2.5px solid rgba(255,255,255,0.6);
+      border-radius: 16px; padding: 8px 14px; min-width: 124px;
+    }
+    .speed-val { font-size: 20px; font-weight: 900; color: var(--cyan); }
+    .speed-sub { font-size: 10px; font-weight: 800; color: #e2d9f3; }
+    .ctrl-hint {
+      background: rgba(43, 30, 58, 0.75); border: 2px solid rgba(255,255,255,0.35);
+      border-radius: 999px; padding: 6px 14px; font-size: 11.5px; font-weight: 800; color: #fef3c7;
+    }
+
+    #toast {
+      position: absolute; top: 94px; left: 50%; transform: translateX(-50%);
+      z-index: 25; pointer-events: none;
+      background: linear-gradient(90deg, #ff6fb5, #8b5cf6); color: #fff;
+      border: 3px solid var(--ink); border-radius: 999px; padding: 8px 20px;
+      font-size: 14px; font-weight: 900; box-shadow: 0 5px 0 var(--ink);
+      white-space: nowrap;
+    }
+    #toast[hidden] { display: none; }
+
+    /* ===== WITCHSPRING STORYBOOK LOBBY OVERLAY ===== */
+    .overlay {
+      position: absolute; inset: 0; z-index: 30;
+      display: flex; align-items: center; justify-content: center; padding: 18px;
+      background-size: cover; background-position: center;
+    }
+    .overlay[hidden] { display: none; }
+    #lobby-screen::before {
+      content: ""; position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(27,18,43,0.45) 0%, rgba(27,18,43,0.25) 40%, rgba(27,18,43,0.88) 100%);
+    }
+    .lobby-card {
+      position: relative; z-index: 2; width: min(460px, 100%);
+      background: rgba(255, 249, 239, 0.94); color: var(--ink);
+      border: 3.5px solid var(--ink); border-radius: 26px; padding: 18px 18px 20px;
+      box-shadow: 0 10px 0 var(--ink), 0 24px 50px rgba(0,0,0,0.45);
+      max-height: 92vh; overflow-y: auto;
+    }
+    .badge-tag {
+      display: inline-block; background: linear-gradient(90deg, #ff6fb5, #8b5cf6); color: #fff;
+      border: 2px solid var(--ink); border-radius: 999px; padding: 3px 12px;
+      font-size: 11px; font-weight: 900; letter-spacing: 0.06em;
+    }
+    .lobby-title { font-size: 30px; font-weight: 900; margin-top: 6px; letter-spacing: -0.02em; }
+    .lobby-sub { font-size: 12.5px; font-weight: 800; color: #6b5582; margin-top: 2px; }
+
+    .sec-lbl { font-size: 12px; font-weight: 900; color: #6b5582; margin: 14px 0 7px; display: flex; justify-content: space-between; }
+    .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .cat-btn {
+      background: #fff; border: 2.5px solid #d9cbe8; border-radius: 16px;
+      padding: 8px 6px; cursor: pointer; text-align: center; color: var(--ink);
+      transition: transform 0.1s, border-color 0.15s;
+    }
+    .cat-btn:active { transform: scale(0.96); }
+    .cat-btn.active { border-color: var(--violet); background: #f3e8ff; box-shadow: 0 4px 0 var(--violet); }
+    .cat-btn.locked { opacity: 0.55; background: #ede7f3; }
+    .cat-dot {
+      width: 34px; height: 34px; border-radius: 50%; margin: 0 auto 5px;
+      border: 2.5px solid var(--ink); display: flex; align-items: center; justify-content: center;
+      font-size: 18px; box-shadow: inset -4px -4px 8px rgba(0,0,0,0.18);
+    }
+    .cat-name { font-size: 11.5px; font-weight: 900; }
+    .cat-desc-box {
+      margin-top: 8px; background: #f6effc; border: 2px solid #d9cbe8;
+      border-radius: 12px; padding: 8px 10px; font-size: 12px; font-weight: 800; color: #4c3566;
+    }
+
+    .track-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    .trk-btn {
+      background: #fff; border: 2.5px solid #d9cbe8; border-radius: 14px;
+      padding: 8px 5px; cursor: pointer; font-size: 11px; font-weight: 900; color: var(--ink);
+    }
+    .trk-btn.active { border-color: var(--pink); background: #fff0f7; box-shadow: 0 3px 0 var(--pink); }
+
+    .cta-row { display: flex; gap: 8px; margin-top: 14px; }
+    .gbtn {
+      flex: 1; border: 3px solid var(--ink); border-radius: 18px; padding: 13px 14px;
+      font-size: 16px; font-weight: 900; cursor: pointer;
+      box-shadow: 0 5px 0 var(--ink); transition: transform 0.1s;
+    }
+    .gbtn:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--ink); }
+    .gbtn-play { background: linear-gradient(180deg, #6ef2a9, #10b981); color: #072b1f; }
+    .gbtn-gold { background: linear-gradient(180deg, #ffe26a, #f59e0b); color: #2b1800; }
+    .gbtn-dark { background: #2b1e3a; color: #fff; }
+
+    .result-box {
+      background: rgba(255, 249, 239, 0.96); color: var(--ink);
+      border: 3.5px solid var(--ink); border-radius: 26px; padding: 22px 20px;
+      width: min(390px, 100%); text-align: center;
+      box-shadow: 0 10px 0 var(--ink), 0 24px 60px rgba(0,0,0,0.5);
+    }
+    .res-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0 16px; }
+    .res-stat { background: #f3e8ff; border: 2px solid #d9cbe8; border-radius: 14px; padding: 10px; }
+    .res-stat .k { font-size: 11px; font-weight: 800; color: #6b5582; }
+    .res-stat .v { font-size: 20px; font-weight: 900; color: var(--ink); margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="gl-canvas"></canvas>
+
+    <!-- Minimal Arcade HUD -->
+    <div id="hud" hidden>
+      <div class="hud-top">
+        <div class="hud-pill" id="hud-track">🌸 01 · 魔女空中花园</div>
+        <div class="timer-box" id="timer-box">
+          <div class="timer-lbl">TIME LEFT</div>
+          <div class="timer-val" id="hud-time">48.0</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <div class="hud-pill" id="hud-stars">⭐ 0</div>
+          <button class="hud-btn" id="btn-mute">🔊</button>
+          <button class="hud-btn" id="btn-back">🏠</button>
+        </div>
+      </div>
+
+      <div class="hud-bottom">
+        <div class="speed-card">
+          <div class="speed-val" id="hud-speed">0 km/h</div>
+          <div class="speed-sub" id="hud-status">🐾 全速滚动中</div>
+        </div>
+        <div class="ctrl-hint" id="ctrl-hint">🖱️ 点击画面锁定鼠标推球 · WASD / 触屏滑动</div>
+      </div>
+    </div>
+
+    <div id="toast" hidden>✨ 发现隐藏云朵捷径！</div>
+
+    <!-- WitchSpring Storybook Lobby -->
+    <div class="overlay" id="lobby-screen">
+      <div class="lobby-card">
+        <span class="badge-tag">MEOWBALL RUSH · 3D 赛璐璐仓鼠球</span>
+        <h1 class="lobby-title">魔女猫球</h1>
+        <p class="lobby-sub">滑鼠推球惯性漂移 · 剩余时间结转锦标赛 · 躲锤走窄桥！</p>
+
+        <div class="sec-lbl">
+          <span>🐱 选择魔法猫球</span>
+          <span id="lobby-stars">⭐ 累计星糖：0</span>
+        </div>
+        <div class="cat-grid" id="cat-grid"></div>
+        <div class="cat-desc-box" id="cat-desc">见习小黑猫 · 均衡全能</div>
+
+        <div class="sec-lbl">
+          <span>🗺️ 模式 / 单关练习</span>
+          <span id="lobby-best">最佳结转：--</span>
+        </div>
+        <div class="track-row" id="track-row"></div>
+
+        <div class="cta-row">
+          <button class="gbtn gbtn-play" id="btn-tourney">🏆 3关锦标赛（时间结转）</button>
+        </div>
+        <div class="cta-row" style="margin-top:8px">
+          <button class="gbtn gbtn-gold" id="btn-practice" style="font-size:14px;padding:10px">🎯 单关冲刺练习</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage Clear / Tournament Victory / Time Up Result Modal -->
+    <div class="overlay" id="result-screen" hidden style="background:rgba(20,12,34,0.68);backdrop-filter:blur(6px)">
+      <div class="result-box">
+        <div class="badge-tag" id="res-tag">STAGE CLEAR</div>
+        <h2 id="res-title" style="font-size:26px;font-weight:900;margin-top:8px">🎉 冲过魔法传送门！</h2>
+        <p id="res-sub" style="font-size:13px;font-weight:800;color:#6b5582;margin-top:4px">剩余时间已全额结转至下一关！</p>
+        <div class="res-stats">
+          <div class="res-stat"><div class="k">剩余时间</div><div class="v" id="res-time">32.4s</div></div>
+          <div class="res-stat"><div class="k">本局星糖 / 破球</div><div class="v" id="res-stars">⭐ 4 / 💥 0</div></div>
+        </div>
+        <div class="cta-row">
+          <button class="gbtn gbtn-play" id="btn-res-next">下一关 →</button>
+          <button class="gbtn gbtn-dark" id="btn-res-lobby" style="flex:0.65">大厅</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- GAME_BUNDLE -->
+</body>
+</html>
