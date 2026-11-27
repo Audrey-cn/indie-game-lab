@@ -37,7 +37,7 @@ const result = await esbuild.build({
   format: "iife",
   platform: "browser",
   target: "es2020",
-  loader: { ".webp": "dataurl", ".glb": "dataurl", ".mp3": "dataurl", ".ogg": "dataurl" },
+  loader: { ".webp": "dataurl", ".glb": "dataurl", ".mp3": "dataurl", ".ogg": "dataurl", ".m4a": "dataurl" },
 });
 
 const [{ text: bundle }] = result.outputFiles;

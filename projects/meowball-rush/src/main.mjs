@@ -398,6 +398,16 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
     input: { ix: 0, iz: 0, mouseAccX: 0, mouseAccZ: 0, keys: new Set(), touchActive: false, lx: 0, ly: 0 },
     urgentLastSec: 10,
     camPos: new THREE.Vector3(track.start.x + 8.5, track.start.y + 10.5, track.start.z + 11.5),
+    camLook: new THREE.Vector3(track.start.x, track.start.y - 0.3, track.start.z - 2.0),
+    camFov: window.innerHeight > window.innerWidth * 1.05 ? 54 : 42,
+    camRoll: 0,
+    camSpringY: 0,
+    camSpringVy: 0,
+    lastVy: 0,
+    lastGrounded: true,
+    turnSmooth: 0,
+    squash: 0,
+    squashVel: 0,
   };
 
   kittyRig.root.position.set(state.ball.x, state.ball.y, state.ball.z);
@@ -837,7 +847,8 @@ function updateVisuals(dt) {
   kittyRig.root.position.set(b.x, b.y, b.z);
   kittyRig.bubbleMat.uniforms.uTime.value = state.elapsed;
 
-  // Physical rolling rotation of the outer magic bubble!
+  // Physical rolling rotation + expressive steering lean!
+  let turnDelta = 0;
   if (spd > 0.05) {
     const rollAxis = new THREE.Vector3(b.vz, 0, -b.vx).normalize();
     kittyRig.bubbleMesh.rotateOnWorldAxis(rollAxis, (spd * dt) / b.r);
@@ -845,20 +856,48 @@ function updateVisuals(dt) {
     let diff = targetFace - b.facing;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
+    turnDelta = Math.max(-1, Math.min(1, diff * 1.8));
     b.facing += diff * Math.min(1, dt * 10);
     kittyRig.kitty.rotation.y = b.facing;
   }
+  state.turnSmooth += (turnDelta - state.turnSmooth) * Math.min(1, dt * 8);
 
-  // Adorable frantic paw cycling (AnimationMixer if rigged GLB, or lively squash-and-hop for static GLB!)
-  b.pawCycle += (2.5 + spd * 2.4) * dt;
+  // Detect landing impact & jump impulse for elastic jelly squash-and-stretch + camera spring dip!
+  if (!state.lastGrounded && b.grounded && state.lastVy < -2.2) {
+    const impact = Math.min(1.0, Math.abs(state.lastVy) / 11);
+    state.squashVel -= 7.5 * impact;
+    state.camSpringVy -= 5.2 * impact;
+  } else if (state.lastGrounded && !b.grounded && b.vy > 3.5) {
+    state.squashVel += 5.5;
+  }
+  state.lastGrounded = b.grounded;
+  state.lastVy = b.vy;
+  // Damped harmonic spring for jelly squash & camera landing dip
+  state.squashVel += (-95 * state.squash - 11 * state.squashVel) * dt;
+  state.squash = Math.max(-0.85, Math.min(0.85, state.squash + state.squashVel * dt));
+  state.camSpringVy += (-48 * state.camSpringY - 8.5 * state.camSpringVy) * dt;
+  state.camSpringY = Math.max(-1.6, Math.min(1.4, state.camSpringY + state.camSpringVy * dt));
+
+  // Adorable frantic paw cycling (AnimationMixer if rigged GLB, or Per-Limb Vertex Shader Running for static Hunyuan GLBs!)
+  const spdNorm = Math.min(1.25, spd / 11.5);
+  b.pawCycle += (3.0 + spd * 2.8) * dt;
+  sfx.updateSpeed(Math.min(1, spd / 16));
   if (kittyRig.mixer) {
     kittyRig.mixer.update(dt * (0.4 + spd * 0.25));
   } else if (kittyRig.isExternal && kittyRig.isExternal()) {
-    const hop = Math.abs(Math.sin(b.pawCycle * 0.7));
-    kittyRig.kitty.position.y = hop * Math.min(0.11, 0.02 + spd * 0.01);
-    kittyRig.kitty.rotation.x = Math.sin(b.pawCycle * 0.7) * Math.min(0.18, spd * 0.018);
-    const sq = 1 + (hop - 0.5) * Math.min(0.14, spd * 0.014);
-    kittyRig.kitty.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
+    const u = kittyRig.animUniforms;
+    if (u) {
+      u.uPhase.value = b.pawCycle;
+      u.uSpeed.value = Math.min(1.15, spd / 8.5);
+      u.uTurn.value = state.turnSmooth;
+      u.uSquash.value = state.squash + (b.boostFlash > 0 ? 0.18 : 0);
+      u.uTime.value = state.elapsed;
+    }
+    const hop = Math.abs(Math.sin(b.pawCycle * 0.85));
+    kittyRig.kitty.position.y = hop * Math.min(0.12, 0.015 + spd * 0.012);
+    // Forward lean into sprint + lateral banking into turns!
+    kittyRig.kitty.rotation.x = Math.min(0.28, spd * 0.022) + Math.sin(b.pawCycle * 1.7) * Math.min(0.08, spd * 0.008);
+    kittyRig.kitty.scale.set(1, 1, 1);
   } else {
     kittyRig.paws.forEach((p, i) => {
       const phase = b.pawCycle + (i % 2 === 0 ? 0 : Math.PI);
@@ -868,13 +907,13 @@ function updateVisuals(dt) {
     kittyRig.tail.rotation.z = Math.sin(state.elapsed * 9) * 0.35;
   }
 
-  // Dizzy Halo!
+  // Dizzy Halo or Dynamic Turn Banking!
   kittyRig.dizzyHalo.visible = b.dizzyTimer > 0 && b.popTimer <= 0;
   if (kittyRig.dizzyHalo.visible) {
     kittyRig.dizzyHalo.rotation.y += 5.5 * dt;
     kittyRig.kitty.rotation.z = Math.sin(state.elapsed * 16) * 0.25;
   } else {
-    kittyRig.kitty.rotation.z = 0;
+    kittyRig.kitty.rotation.z = -state.turnSmooth * Math.min(0.32, 0.08 + spd * 0.02);
   }
 
   // Ground Contact Shadow
@@ -947,13 +986,45 @@ function updateVisuals(dt) {
   }
   attr.needsUpdate = true;
 
-  // Smooth Isometric Follow Camera — automatically pulls back cleanly on portrait phones!
+  // Dynamic Hamsterball Camera — vertical undulation on slopes/jumps, velocity look-ahead, landing spring dip & corner banking!
   const isPortrait = window.innerHeight > window.innerWidth * 1.05;
-  const distScale = isPortrait ? 1.24 : 1.0;
-  const desired = new THREE.Vector3(b.x + 7.2 * distScale, Math.max(b.y + 9.4 * distScale, 4.5), b.z + 10.6 * distScale);
-  state.camPos.lerp(desired, Math.min(1, dt * 6.5));
+  const distScale = isPortrait ? 1.22 : 1.0;
+  const slopeZ = surf ? surf.slopeZ : 0;
+  const airHeight = !b.grounded ? Math.max(0, b.y - (surf ? surf.y : b.y - 2.2)) : 0;
+  const speedPull = Math.min(2.4, spdNorm * 2.1);
+  // Downhill (slopeZ < 0) lifts camera to reveal drop ahead; uphill lowers slightly for dramatic climb; airborne lifts dynamically!
+  const dynHeight = (8.8 - slopeZ * 4.2 + airHeight * 0.65 + speedPull * 0.55) * distScale + state.camSpringY;
+  const dynBack = (10.2 + speedPull * 1.15 + airHeight * 0.45) * distScale;
+  const dynSide = (6.4 + Math.max(-2.6, Math.min(2.6, -b.vx * 0.22))) * distScale;
+
+  const desired = new THREE.Vector3(
+    b.x + dynSide,
+    Math.max(b.y + dynHeight, 3.6),
+    b.z + dynBack
+  );
+  state.camPos.lerp(desired, Math.min(1, dt * 5.2));
   camera.position.copy(state.camPos);
-  camera.lookAt(b.x, b.y - 0.4, b.z - 1.5);
+
+  // Velocity Look-Ahead focus so the camera breathes & previews upcoming turns/drops!
+  const lookTarget = new THREE.Vector3(
+    b.x + Math.max(-3.2, Math.min(3.2, b.vx * 0.26)),
+    b.y - 0.35 + Math.max(-1.6, Math.min(1.6, b.vy * 0.12)) + state.camSpringY * 0.35,
+    b.z - 1.9 + Math.max(-3.6, Math.min(2.2, b.vz * 0.26))
+  );
+  state.camLook.lerp(lookTarget, Math.min(1, dt * 7.5));
+  camera.lookAt(state.camLook);
+
+  // Dynamic FOV widening on sprint & jumps + subtle playful roll on turns!
+  const baseFov = isPortrait ? 53 : 42;
+  const targetFov = baseFov + Math.min(8.5, spdNorm * 6.2 + airHeight * 1.2 + (b.boostFlash > 0 ? 3.5 : 0));
+  state.camFov += (targetFov - state.camFov) * Math.min(1, dt * 5.0);
+  if (Math.abs(camera.fov - state.camFov) > 0.05) {
+    camera.fov = state.camFov;
+    camera.updateProjectionMatrix();
+  }
+  const targetRoll = Math.max(-0.045, Math.min(0.045, -b.vx * 0.0032));
+  state.camRoll += (targetRoll - state.camRoll) * Math.min(1, dt * 5.5);
+  camera.rotation.z += state.camRoll;
 }
 
 function syncHud() {
@@ -1010,7 +1081,7 @@ window.addEventListener("pointerup", () => {
 function openPause() {
   if (!state || state.phase !== "playing") return;
   state.phase = "paused";
-  sfx.stopBgm();
+  sfx.setPaused(true);
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   document.getElementById("sens-slider").value = String(save.mouseSens || 1.0);
   document.getElementById("sens-val").textContent = `${(save.mouseSens || 1.0).toFixed(1)}×`;
@@ -1020,7 +1091,7 @@ function closePause() {
   if (!state || state.phase !== "paused") return;
   pauseScreen.hidden = true;
   state.phase = "playing";
-  sfx.startBgm(state.trackIndex);
+  sfx.setPaused(false);
 }
 
 window.addEventListener("keydown", (e) => {
