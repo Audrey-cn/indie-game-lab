@@ -525,21 +525,21 @@ export function createKittyBall(catDef) {
   );
   shadow.rotation.x = -Math.PI / 2;
 
-  // Ready-to-use External GLB Model Mount Hook (pass any loaded gltf.scene to replace procedural cat!)
+  // Ready-to-use External GLB Model Mount Hook (perfectly bounded inside the 0.62-radius glass bubble!)
   let hasExternal = false;
-  function mountExternalModel(gltfScene, scale = 0.84) {
+  function mountExternalModel(gltfScene, scale = 0.72) {
     kitty.clear();
     hasExternal = true;
     gltfScene.scale.setScalar(scale);
-    gltfScene.rotation.y = Math.PI; // Face forward (-Z) along track direction
+    gltfScene.position.y = -0.04; // Snugly centered inside bubble so hat & tail NEVER clip through glass!
+    gltfScene.rotation.y = Math.PI;
     gltfScene.traverse((obj) => {
       if (obj.isMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
         if (obj.material && obj.material.isMeshStandardMaterial) {
-          // Brighten PBR slightly for sunny WitchSpring storybook look!
-          obj.material.roughness = 0.72;
-          obj.material.metalness = 0.05;
+          obj.material.roughness = 0.65;
+          obj.material.metalness = 0.04;
         }
       }
     });
@@ -618,7 +618,8 @@ export function buildTrackScene(track) {
 
       const geom = new THREE.BoxGeometry(p.dir === "+x" ? len : p.w, p.h, p.dir === "-z" ? len : p.d);
       const mesh = castRec(addOutline(new THREE.Mesh(geom, p.kind === "ice_ramp" ? mats.ice : mats.wood), 1.016));
-      mesh.position.set(p.x, (p.yStart + p.yEnd) / 2 - p.h / 2, p.z);
+      // Exact cos(angle) vertical thickness compensation so visual ramp top == physics surface to 0.001m!
+      mesh.position.set(p.x, (p.yStart + p.yEnd) / 2 - (p.h * 0.5) / Math.cos(angle), p.z);
       if (p.dir === "-z") mesh.rotation.x = angle;
       else if (p.dir === "+x") mesh.rotation.z = angle;
       group.add(mesh);

@@ -215,10 +215,10 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   kittyRig = createKittyBall(cat);
   scene.add(kittyRig.root);
   scene.add(kittyRig.shadow);
-  // Auto-mount external AI-generated 3D .glb kitten if available in src/models/!
+  // Auto-mount external AI-generated 3D .glb kitten bounded cleanly inside the bubble!
   const glbKey = cat.id === "ginger_scarf" ? "cat-ginger" : "cat-witch";
   loadGlbModel(glbKey, (model) => {
-    if (kittyRig) kittyRig.mountExternalModel(model, 0.88);
+    if (kittyRig) kittyRig.mountExternalModel(model, 0.72);
   });
 
   // Lush Pastel Rainbow Speed Ribbon Trail!
@@ -521,6 +521,28 @@ function updatePhysics(dt) {
   b.y += b.vy * dt;
   b.z += b.vz * dt;
 
+  // Solid Side-Wall Pushout: prevents the ball from clipping horizontally into raised platforms!
+  for (const p of state.track.platforms) {
+    if (p.kind === "ramp" || p.kind === "ice_ramp" || p.kind === "cloud") continue;
+    if (b.y < p.y - 0.12 && b.y + b.r > p.y - p.h) {
+      const hw = p.w * 0.5 + b.r;
+      const hd = p.d * 0.5 + b.r;
+      const dx = b.x - p.x;
+      const dz = b.z - p.z;
+      if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
+        const penX = hw - Math.abs(dx);
+        const penZ = hd - Math.abs(dz);
+        if (penX < penZ) {
+          b.x = p.x + Math.sign(dx || 1) * hw;
+          b.vx = -b.vx * 0.45;
+        } else {
+          b.z = p.z + Math.sign(dz || 1) * hd;
+          b.vz = -b.vz * 0.45;
+        }
+      }
+    }
+  }
+
   // Surface Collision & Smooth, Controllable Slope Physics
   const surf = sampleTrackSurface(b.x, b.y, b.z, b.r);
   if (surf && b.vy <= 1.2) {
@@ -755,19 +777,27 @@ function updateVisuals(dt) {
   sunLight.position.set(b.x + 16, b.y + 26, b.z + 14);
   sunLight.target.position.set(b.x, b.y, b.z - 6);
 
-  // Wide Tapered Pastel Rainbow Ribbon Trail!
-  trailPoints.unshift(new THREE.Vector3(b.x, b.y - 0.14, b.z));
+  // Wide Tapered Pastel Rainbow Ribbon Trail — anchored strictly BEHIND the ball's outer edge (zero clipping!)
+  const dirX = spd > 0.25 ? b.vx / spd : -Math.sin(b.facing);
+  const dirZ = spd > 0.25 ? b.vz / spd : -Math.cos(b.facing);
+  const tailOrigin = new THREE.Vector3(
+    b.x - dirX * (b.r + 0.16),
+    b.y - b.r * 0.48,
+    b.z - dirZ * (b.r + 0.16)
+  );
+  trailPoints.unshift(tailOrigin);
   if (trailPoints.length > 24) trailPoints.pop();
+  trailMesh.visible = spd > 1.2 && b.popTimer <= 0;
   const attr = trailMesh.geometry.attributes.position;
   for (let i = 0; i < 24; i++) {
-    const pt = trailPoints[Math.min(i, trailPoints.length - 1)] || new THREE.Vector3(b.x, b.y, b.z);
+    const pt = trailPoints[Math.min(i, trailPoints.length - 1)] || tailOrigin;
     const nextPt = trailPoints[Math.min(i + 1, trailPoints.length - 1)] || pt;
     const dx = pt.x - nextPt.x;
     const dz = pt.z - nextPt.z;
     const len = Math.hypot(dx, dz) || 1;
     const px = -dz / len;
     const pz = dx / len;
-    const halfW = (1 - i / 23) * (spd > 2 ? 0.44 : 0.18);
+    const halfW = (1 - i / 23) * Math.min(0.38, 0.1 + spd * 0.025);
     attr.setXYZ(i * 2, pt.x - px * halfW, pt.y, pt.z - pz * halfW);
     attr.setXYZ(i * 2 + 1, pt.x + px * halfW, pt.y, pt.z + pz * halfW);
   }
