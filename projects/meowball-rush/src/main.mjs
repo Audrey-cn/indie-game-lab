@@ -1,9 +1,36 @@
 // Meowball Rush v0.1.0 — Authentic Hamsterball 3D Physics + WitchSpring Cel-Shading!
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { CATS, DEFAULT_SAVE, TRACKS } from "./config.mjs";
 import { sfx } from "./audio.mjs";
 import { buildTrackScene, createKittyBall, createRainbowRibbon } from "./cel-builder.mjs";
+import { GLB_MODELS } from "./models/manifest.mjs";
 import coverUrl from "./assets/cover.webp";
+
+const gltfLoader = new GLTFLoader();
+const loadedGlbCache = {};
+function loadGlbModel(key, onReady) {
+  const url = GLB_MODELS[key];
+  if (!url) return;
+  if (loadedGlbCache[key]) {
+    onReady(loadedGlbCache[key].clone(true));
+    return;
+  }
+  gltfLoader.load(url, (gltf) => {
+    // Auto-normalize size & center pivot so any Tripo3D / Hunyuan3D .glb fits seamlessly!
+    const root = gltf.scene;
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    root.scale.setScalar(1 / maxDim);
+    root.position.set(-center.x / maxDim, -center.y / maxDim, -center.z / maxDim);
+    const wrapper = new THREE.Group();
+    wrapper.add(root);
+    loadedGlbCache[key] = wrapper;
+    onReady(wrapper.clone(true));
+  });
+}
 
 const SAVE_KEY = "meowball_rush_save_v1";
 function loadSave() {
@@ -162,9 +189,37 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   dynamicMeshes = built.dynamicMeshes;
   scene.add(trackRoot);
 
+  // Mount Real Sculpted 3D Hunyuan GLB Trees & Golden Portal Archway!
+  if (dynamicMeshes.treeSlots && dynamicMeshes.treeSlots.length > 0) {
+    loadGlbModel("tree", (treeProto) => {
+      for (const slot of dynamicMeshes.treeSlots) {
+        slot.anchor.clear();
+        const t = treeProto.clone(true);
+        t.scale.setScalar(slot.scale);
+        t.position.y = slot.scale * 0.48;
+        t.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        slot.anchor.add(t);
+      }
+    });
+  }
+  if (dynamicMeshes.portalAnchor) {
+    loadGlbModel("portal", (portalModel) => {
+      dynamicMeshes.portalAnchor.clear();
+      portalModel.scale.setScalar(4.4);
+      portalModel.position.y = 2.15;
+      portalModel.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      dynamicMeshes.portalAnchor.add(portalModel);
+    });
+  }
+
   kittyRig = createKittyBall(cat);
   scene.add(kittyRig.root);
   scene.add(kittyRig.shadow);
+  // Auto-mount external AI-generated 3D .glb kitten if available in src/models/!
+  const glbKey = cat.id === "ginger_scarf" ? "cat-ginger" : "cat-witch";
+  loadGlbModel(glbKey, (model) => {
+    if (kittyRig) kittyRig.mountExternalModel(model, 0.88);
+  });
 
   // Lush Pastel Rainbow Speed Ribbon Trail!
   trailPoints.length = 0;
@@ -633,14 +688,19 @@ function updateVisuals(dt) {
     kittyRig.kitty.rotation.y = b.facing;
   }
 
-  // Adorable frantic paw cycling inside the bubble!
+  // Adorable frantic paw cycling (or bouncy trotting bob for external GLB figurine!)
   b.pawCycle += (2.5 + spd * 2.4) * dt;
-  kittyRig.paws.forEach((p, i) => {
-    const phase = b.pawCycle + (i % 2 === 0 ? 0 : Math.PI);
-    p.mesh.position.y = p.baseY + Math.max(0, Math.sin(phase)) * 0.075;
-    p.mesh.position.z = p.baseZ + Math.cos(phase) * 0.08;
-  });
-  kittyRig.tail.rotation.z = Math.sin(state.elapsed * 9) * 0.35;
+  if (kittyRig.isExternal && kittyRig.isExternal()) {
+    kittyRig.kitty.position.y = Math.abs(Math.sin(b.pawCycle * 0.65)) * Math.min(0.09, 0.02 + spd * 0.008);
+    kittyRig.kitty.rotation.x = Math.sin(b.pawCycle * 0.65) * Math.min(0.16, spd * 0.015);
+  } else {
+    kittyRig.paws.forEach((p, i) => {
+      const phase = b.pawCycle + (i % 2 === 0 ? 0 : Math.PI);
+      p.mesh.position.y = p.baseY + Math.max(0, Math.sin(phase)) * 0.075;
+      p.mesh.position.z = p.baseZ + Math.cos(phase) * 0.08;
+    });
+    kittyRig.tail.rotation.z = Math.sin(state.elapsed * 9) * 0.35;
+  }
 
   // Dizzy Halo!
   kittyRig.dizzyHalo.visible = b.dizzyTimer > 0 && b.popTimer <= 0;

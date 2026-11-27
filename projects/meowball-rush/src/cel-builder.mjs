@@ -526,19 +526,27 @@ export function createKittyBall(catDef) {
   shadow.rotation.x = -Math.PI / 2;
 
   // Ready-to-use External GLB Model Mount Hook (pass any loaded gltf.scene to replace procedural cat!)
-  function mountExternalModel(gltfScene, scale = 0.45) {
+  let hasExternal = false;
+  function mountExternalModel(gltfScene, scale = 0.84) {
     kitty.clear();
+    hasExternal = true;
     gltfScene.scale.setScalar(scale);
+    gltfScene.rotation.y = Math.PI; // Face forward (-Z) along track direction
     gltfScene.traverse((obj) => {
       if (obj.isMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
+        if (obj.material && obj.material.isMeshStandardMaterial) {
+          // Brighten PBR slightly for sunny WitchSpring storybook look!
+          obj.material.roughness = 0.72;
+          obj.material.metalness = 0.05;
+        }
       }
     });
     kitty.add(gltfScene);
   }
 
-  return { root, bubbleMesh, bubbleMat, kitty, accGroup, paws, tail, dizzyHalo, furball, shadow, mountExternalModel };
+  return { root, bubbleMesh, bubbleMat, kitty, accGroup, paws, tail, dizzyHalo, furball, shadow, mountExternalModel, isExternal: () => hasExternal };
 }
 
 // Helper: Stylized WitchSpring Storybook Tree!
@@ -565,7 +573,7 @@ function createStorybookTree(leafColor = 0x5fd468) {
 // Build Poster-Grade Natural Storybook 3D Scene!
 export function buildTrackScene(track) {
   const group = new THREE.Group();
-  const dynamicMeshes = { gears: [], hammers: [], stars: [], boosts: [], mushrooms: [], portal: null, clouds: [], floaters: [], petals: null };
+  const dynamicMeshes = { gears: [], hammers: [], stars: [], boosts: [], mushrooms: [], portal: null, portalAnchor: null, treeSlots: [], clouds: [], floaters: [], petals: null };
 
   group.add(createSkyDome(track));
 
@@ -681,10 +689,13 @@ export function buildTrackScene(track) {
       }
       // Plant a lush Storybook Tree on a safe decorative corner of large terraces!
       if (p.w >= 6.2) {
+        const treeAnchor = new THREE.Group();
+        treeAnchor.position.set(p.x - p.w * 0.42, p.y, p.z + p.d * 0.38);
         const tree = createStorybookTree(p.z < -20 ? 0x7ae582 : 0x5cd666);
         tree.scale.setScalar(0.82);
-        tree.position.set(p.x - p.w * 0.42, p.y, p.z + p.d * 0.38);
-        group.add(tree);
+        treeAnchor.add(tree);
+        group.add(treeAnchor);
+        dynamicMeshes.treeSlots.push({ anchor: treeAnchor, scale: 2.8 });
       }
     } else {
       const topMat =
@@ -796,22 +807,25 @@ export function buildTrackScene(track) {
   const f = track.finish;
   const portalGroup = new THREE.Group();
   portalGroup.position.set(f.x, f.y, f.z);
+  const portalArchHolder = new THREE.Group();
   for (const s of [-2.05, 2.05]) {
     const pil = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 2.3, 10), mats.stoneCurb), 1.05));
     pil.position.set(s, 1.15, 0);
-    portalGroup.add(pil);
+    portalArchHolder.add(pil);
   }
   const archRing = castRec(addOutline(new THREE.Mesh(new THREE.TorusGeometry(2.05, 0.3, 12, 24, Math.PI), toonMat(0xffd54a, 0xffa000, 0.38)), 1.05));
   archRing.position.y = 2.1;
-  portalGroup.add(archRing);
+  portalArchHolder.add(archRing);
+  portalGroup.add(portalArchHolder);
   const swirl = new THREE.Mesh(
-    new THREE.CircleGeometry(1.92, 24),
-    new THREE.MeshBasicMaterial({ color: track.id === "aurora" ? 0xc084fc : 0xffe57f, transparent: true, opacity: 0.74, side: THREE.DoubleSide })
+    new THREE.CircleGeometry(1.75, 24),
+    new THREE.MeshBasicMaterial({ color: track.id === "aurora" ? 0xc084fc : 0xffe57f, transparent: true, opacity: 0.72, side: THREE.DoubleSide })
   );
-  swirl.position.y = 1.95;
+  swirl.position.y = 1.85;
   portalGroup.add(swirl);
   group.add(portalGroup);
   dynamicMeshes.portal = swirl;
+  dynamicMeshes.portalAnchor = portalArchHolder;
 
   // 8. Lush Distant Floating Sky Islands with Storybook Trees & Stone Ruin Arches!
   const decoIslands = [
