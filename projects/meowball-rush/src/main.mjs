@@ -15,6 +15,7 @@ import coverUrl from "./assets/cover.webp";
 
 const gltfLoader = new GLTFLoader();
 const loadedGlbCache = {};
+const pendingGlbLoads = new Map();
 function loadGlbModel(key, onReady) {
   const url = GLB_MODELS[key];
   if (!url) return;
@@ -22,18 +23,31 @@ function loadGlbModel(key, onReady) {
     onReady(loadedGlbCache[key].scene.clone(true), loadedGlbCache[key].animations);
     return;
   }
+  if (pendingGlbLoads.has(key)) {
+    pendingGlbLoads.get(key).push(onReady);
+    return;
+  }
+  pendingGlbLoads.set(key, [onReady]);
   gltfLoader.load(url, (gltf) => {
     const root = gltf.scene;
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    root.scale.setScalar(1 / maxDim);
-    root.position.set(-center.x / maxDim, -center.y / maxDim, -center.z / maxDim);
+    // Normalize a parent so authored model transforms remain intact.
+    const normalized = new THREE.Group();
+    normalized.add(root);
+    normalized.scale.setScalar(1 / maxDim);
+    normalized.position.copy(center).multiplyScalar(-1 / maxDim);
     const wrapper = new THREE.Group();
-    wrapper.add(root);
+    wrapper.add(normalized);
     loadedGlbCache[key] = { scene: wrapper, animations: gltf.animations || [] };
-    onReady(wrapper.clone(true), gltf.animations || []);
+    const callbacks = pendingGlbLoads.get(key);
+    pendingGlbLoads.delete(key);
+    for (const ready of callbacks) ready(wrapper.clone(true), gltf.animations || []);
+  }, undefined, (error) => {
+    pendingGlbLoads.delete(key);
+    console.warn(`Unable to load GLB model: ${key}`, error);
   });
 }
 
@@ -372,6 +386,64 @@ function renderLobby() {
 }
 
 // ===== TRACK LOADER & 3D SCENE SETUP =====
+function mountTrackModels(built) {
+  const meshes = built.dynamicMeshes;
+  const isCurrentTrack = () => trackRoot === built.group;
+
+  if (meshes.treeSlots.length > 0) {
+    loadGlbModel("tree", (treeProto) => {
+      if (!isCurrentTrack()) return;
+      for (const slot of meshes.treeSlots) {
+        slot.anchor.clear();
+        const tree = treeProto.clone(true);
+        tree.scale.setScalar(slot.scale);
+        tree.position.y = slot.scale * 0.48;
+        tree.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        slot.anchor.add(tree);
+      }
+    });
+  }
+  if (meshes.portalAnchor) {
+    loadGlbModel("portal", (portalModel) => {
+      if (!isCurrentTrack()) return;
+      meshes.portalAnchor.clear();
+      portalModel.scale.setScalar(4.4);
+      portalModel.position.y = 2.15;
+      portalModel.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      meshes.portalAnchor.add(portalModel);
+    });
+  }
+
+  for (const key of ["banner-red", "fence", "fountain-center"]) {
+    const slots = (meshes.propSlots || []).filter((slot) => slot.key === key);
+    if (!slots.length) continue;
+    loadGlbModel(key, (prototype) => {
+      if (!isCurrentTrack()) return;
+      for (const slot of slots) {
+        const model = prototype.clone(true);
+        model.scale.setScalar(slot.scale);
+        model.rotation.y = slot.rotation || 0;
+        // Measure before parenting: the anchor is already at slot.y. Ground the
+        // fully transformed model at local y=0, including asymmetric GLB bounds.
+        model.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(model);
+        if (slot.maxFootprint) {
+          const size = box.getSize(new THREE.Vector3());
+          const fit = Math.min(1, slot.maxFootprint.x / (size.x || 1), slot.maxFootprint.z / (size.z || 1));
+          model.scale.multiplyScalar(fit);
+          model.updateMatrixWorld(true);
+          box.setFromObject(model);
+        }
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.set(-center.x, -box.min.y, -center.z);
+        model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        slot.anchor.clear();
+        slot.anchor.add(model);
+      }
+    });
+  }
+}
+
 function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   const track = TRACKS[trackIndex];
   const cat = getSelectedCat();
@@ -396,42 +468,22 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   dynamicMeshes = built.dynamicMeshes;
   scene.add(trackRoot);
 
-  // Mount Real Sculpted 3D Hunyuan GLB Trees & Golden Portal Archway!
-  if (dynamicMeshes.treeSlots && dynamicMeshes.treeSlots.length > 0) {
-    loadGlbModel("tree", (treeProto) => {
-      for (const slot of dynamicMeshes.treeSlots) {
-        slot.anchor.clear();
-        const t = treeProto.clone(true);
-        t.scale.setScalar(slot.scale);
-        t.position.y = slot.scale * 0.48;
-        t.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-        slot.anchor.add(t);
-      }
-    });
-  }
-  if (dynamicMeshes.portalAnchor) {
-    loadGlbModel("portal", (portalModel) => {
-      dynamicMeshes.portalAnchor.clear();
-      portalModel.scale.setScalar(4.4);
-      portalModel.position.y = 2.15;
-      portalModel.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-      dynamicMeshes.portalAnchor.add(portalModel);
-    });
-  }
+  mountTrackModels(built);
 
   kittyRig = createKittyBall(cat);
   scene.add(kittyRig.root);
   scene.add(kittyRig.shadow);
   // Auto-mount external AI-generated 3D .glb kitten + automatic AnimationMixer for rigged GLBs!
   const glbKey = cat.glbKey || (cat.id === "ginger_scarf" ? "cat-ginger" : "cat-witch");
+  const targetRig = kittyRig;
   loadGlbModel(glbKey, (model, animations) => {
-    if (!kittyRig) return;
-    kittyRig.mountExternalModel(model, 0.72);
+    if (kittyRig !== targetRig) return;
+    targetRig.mountExternalModel(model, 0.72);
     if (animations && animations.length > 0) {
       const mixer = new THREE.AnimationMixer(model);
       const action = mixer.clipAction(animations[0]);
       action.play();
-      kittyRig.mixer = mixer;
+      targetRig.mixer = mixer;
     }
   });
 
@@ -564,6 +616,7 @@ function triggerBubblePop(reason = "💥 砰！猫球破啦！") {
   sfx.playPop();
   kittyRig.bubbleMesh.visible = false;
   kittyRig.kitty.visible = false;
+  kittyRig.accGroup.visible = false;
   kittyRig.dizzyHalo.visible = false;
   kittyRig.furball.visible = true;
   showToast(reason);
@@ -692,6 +745,7 @@ function tick(ts) {
       lobbyShowcaseRig.root.position.set(0, 9.75 + Math.sin(tSec * 2.4) * 0.14, 0);
       lobbyShowcaseRig.kitty.rotation.y = tSec * 0.9;
       lobbyShowcaseRig.bubbleMat.uniforms.uTime.value = tSec;
+      lobbyShowcaseRig.updateAccessories(tSec);
       if (lobbyShowcaseRig.animUniforms) {
         lobbyShowcaseRig.animUniforms.uTime.value = tSec;
         lobbyShowcaseRig.animUniforms.uPhase.value = tSec * 4.2;
@@ -754,6 +808,7 @@ function updatePhysics(dt) {
       b.vz = 0;
       kittyRig.bubbleMesh.visible = true;
       kittyRig.kitty.visible = true;
+      kittyRig.accGroup.visible = true;
       kittyRig.furball.visible = false;
     }
     return;
@@ -1068,6 +1123,7 @@ function updateVisuals(dt) {
     b.facing += diff * Math.min(1, dt * 10);
     kittyRig.kitty.rotation.y = b.facing;
   }
+  kittyRig.updateAccessories(state.elapsed);
   state.turnSmooth += (turnDelta - state.turnSmooth) * Math.min(1, dt * 8);
 
   // Detect landing impact & jump impulse for elastic jelly squash-and-stretch + camera spring dip!
@@ -1411,5 +1467,6 @@ trackRoot = initBuilt.group;
 scene.background = new THREE.Color(TRACKS[0].skyTop);
 scene.fog = new THREE.Fog(TRACKS[0].fogColor, 64, 185);
 scene.add(trackRoot);
+mountTrackModels(initBuilt);
 renderLobby();
 requestAnimationFrame(tick);

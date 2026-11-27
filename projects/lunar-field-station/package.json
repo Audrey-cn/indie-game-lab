@@ -1,9 +1,9 @@
 {
   "name": "lunar-field-station",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Standalone <2MB WebGL 2 lunar rover technical vertical slice built with Three.js r182",
+  "description": "Standalone <2.2MB WebGL 2 lunar rover technical vertical slice built with Three.js r182",
   "scripts": {
     "build": "node scripts/pack-three-demo.mjs",
     "build:qa": "node scripts/pack-three-demo.mjs --qa",

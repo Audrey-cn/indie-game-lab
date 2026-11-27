@@ -563,7 +563,181 @@ export function createKittyBall(catDef) {
     cr.position.set(0, 0.38, -0.15);
     accGroup.add(cr);
   }
-  kitty.add(accGroup);
+  // Charms use the bubble's origin, independently of the kitty's hopping/leaning.
+  // This conservative radius also covers every later orbit and local spin.
+  const accessoryOrbits = [];
+  function fitAccessoriesInsideBubble() {
+    function radiusOf(node) {
+      let radius = 0;
+      if (node.geometry) {
+        node.geometry.computeBoundingSphere();
+        const sphere = node.geometry.boundingSphere;
+        radius = sphere.center.length() + sphere.radius;
+      }
+      for (const child of node.children) {
+        const scale = Math.max(Math.abs(child.scale.x), Math.abs(child.scale.y), Math.abs(child.scale.z));
+        radius = Math.max(radius, child.position.length() + radiusOf(child) * scale);
+      }
+      return radius;
+    }
+    accGroup.scale.setScalar(Math.min(1, 0.55 / (radiusOf(accGroup) || 1)));
+    accGroup.traverse((obj) => {
+      if (obj.isMesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+  }
+  fitAccessoriesInsideBubble();
+  root.add(accGroup);
+
+  function addFloatingAccessories() {
+    accGroup.clear();
+    accGroup.scale.setScalar(1);
+    accessoryOrbits.length = 0;
+    accGroup.name = `charms-${catDef.id}`;
+    const gold = toonMat(0xffcf58, 0xffad32, 0.24);
+    const glow = (color) => toonMat(color, color, 0.65);
+    const accent = glow(catDef.trailColor || catDef.bubbleColor);
+    function mesh(geometry, material, x = 0, y = 0, z = 0, parent = accGroup) {
+      const item = new THREE.Mesh(geometry, material);
+      item.position.set(x, y, z);
+      parent.add(item);
+      return item;
+    }
+    function orbit(speed, phase = 0) {
+      const pivot = new THREE.Group();
+      pivot.rotation.y = phase;
+      accGroup.add(pivot);
+      accessoryOrbits.push({ pivot, speed, phase });
+      return pivot;
+    }
+    function pip(parent, x, y, z, size = 0.032, material = accent) {
+      const star = mesh(new THREE.OctahedronGeometry(size, 0), material, x, y, z, parent);
+      star.scale.y = 1.5;
+      return star;
+    }
+
+    if (catDef.acc === "crown") {
+      const crown = new THREE.Group();
+      crown.position.set(0, 0.405, -0.035);
+      accGroup.add(crown);
+      const rim = mesh(new THREE.TorusGeometry(0.105, 0.018, 6, 20), gold, 0, 0, 0, crown);
+      rim.rotation.x = Math.PI / 2;
+      for (let i = 0; i < 5; i++) {
+        const a = i * Math.PI * 2 / 5;
+        mesh(new THREE.ConeGeometry(0.027, 0.075, 4), gold, Math.cos(a) * 0.095, 0.038, Math.sin(a) * 0.095, crown);
+        pip(crown, Math.cos(a) * 0.095, 0.083, Math.sin(a) * 0.095, 0.016);
+      }
+    } else if (catDef.acc === "goggles") {
+      const lensMat = glow(0x55eeff);
+      const frameMat = toonMat(catDef.id === "cloud_explorer" ? 0xf4e4ae : 0x156b94, 0x32dfff, 0.25);
+      for (const s of [-1, 1]) {
+        mesh(new THREE.TorusGeometry(0.066, 0.014, 6, 18), frameMat, s * 0.082, 0.205, -0.375);
+        const lens = mesh(new THREE.SphereGeometry(0.052, 12, 8), lensMat, s * 0.082, 0.205, -0.378);
+        lens.scale.z = 0.22;
+      }
+      mesh(new THREE.BoxGeometry(0.05, 0.018, 0.02), frameMat, 0, 0.205, -0.375);
+      const halo = mesh(new THREE.TorusGeometry(0.19, 0.008, 5, 28), lensMat, 0, 0.32, 0);
+      halo.rotation.x = Math.PI / 2;
+      if (catDef.id === "cloud_explorer") {
+        // A little cloud crest distinguishes the explorer from the SSR racing visor.
+        for (const [x, y, r] of [[-0.045, 0.37, 0.035], [0, 0.39, 0.045], [0.045, 0.37, 0.035]]) {
+          mesh(new THREE.SphereGeometry(r, 8, 6), glow(0xe7f7ff), x, y, 0.1);
+        }
+      } else {
+        for (const s of [-1, 1]) pip(accGroup, s * 0.25, 0.16, -0.25, 0.038, lensMat);
+      }
+    } else if (catDef.acc === "ribbon") {
+      const bow = new THREE.Group();
+      bow.position.set(0, 0.36, -0.16);
+      accGroup.add(bow);
+      for (const s of [-1, 1]) {
+        const loop = mesh(new THREE.SphereGeometry(0.067, 10, 8), glow(0xffb6d8), s * 0.07, 0.015, 0, bow);
+        loop.scale.set(1.15, 0.7, 0.42);
+        loop.rotation.z = s * 0.35;
+        const ribbon = mesh(new THREE.ConeGeometry(0.035, 0.095, 3), toonMat(0xff81b6), s * 0.043, -0.06, 0.005, bow);
+        ribbon.rotation.z = s * 0.35 + Math.PI;
+      }
+      mesh(new THREE.SphereGeometry(0.032, 8, 6), gold, 0, 0.012, -0.008, bow);
+      const petals = orbit(-0.55);
+      for (let i = 0; i < 3; i++) {
+        const a = i * Math.PI * 2 / 3;
+        pip(petals, Math.cos(a) * 0.39, 0.1, Math.sin(a) * 0.39, 0.025, glow(0xffb6d8));
+      }
+    } else if (catDef.acc === "bell") {
+      const bellOrbit = orbit(catDef.id === "calico_mint" ? -0.7 : 0.65, -0.8);
+      const bell = new THREE.Group();
+      bell.position.set(0.37, 0.035, 0);
+      bellOrbit.add(bell);
+      mesh(new THREE.SphereGeometry(0.06, 10, 8), gold, 0, 0, 0, bell);
+      const lip = mesh(new THREE.TorusGeometry(0.053, 0.012, 6, 14), gold, 0, -0.032, 0, bell);
+      lip.rotation.x = Math.PI / 2;
+      mesh(new THREE.SphereGeometry(0.014, 8, 6), toonMat(0x8b5a21), 0, -0.057, 0, bell);
+      const loop = mesh(new THREE.TorusGeometry(0.022, 0.008, 5, 12), gold, 0, 0.067, 0, bell);
+      loop.rotation.y = Math.PI / 2;
+      const stars = orbit(-0.45, 1.2);
+      for (let i = 0; i < 3; i++) {
+        const a = i * Math.PI * 2 / 3;
+        pip(stars, Math.cos(a) * 0.39, 0.18, Math.sin(a) * 0.39);
+      }
+      // Mint's clover and Starbell's butterfly make the two SR bells distinct in silhouette.
+      const crest = new THREE.Group();
+      crest.position.set(0, 0.38, -0.09);
+      accGroup.add(crest);
+      if (catDef.id === "calico_mint") {
+        for (const [x, y] of [[-0.033, 0.02], [0.033, 0.02], [0, 0.065]]) {
+          mesh(new THREE.SphereGeometry(0.036, 8, 6), accent, x, y, 0, crest);
+        }
+      } else {
+        for (const s of [-1, 1]) {
+          const wing = mesh(new THREE.SphereGeometry(0.05, 8, 6), accent, s * 0.045, 0, 0, crest);
+          wing.scale.set(0.8, 1.2, 0.3);
+          wing.rotation.z = -s * 0.4;
+        }
+        pip(crest, 0, 0, 0, 0.023, gold);
+      }
+    } else if (catDef.acc === "scarf") {
+      const ring = mesh(new THREE.TorusGeometry(0.365, 0.025, 8, 32), glow(0xffab3d), 0, -0.03, 0);
+      ring.rotation.set(Math.PI / 2, 0.12, 0.12);
+      const sparks = orbit(0.8);
+      for (let i = 0; i < 4; i++) {
+        const a = i * Math.PI / 2;
+        pip(sparks, Math.cos(a) * 0.38, -0.03, Math.sin(a) * 0.38, 0.032, gold);
+      }
+    } else if (catDef.acc === "witch_hat") {
+      const phantom = catDef.id === "phantom_tuxedo";
+      const wisps = orbit(phantom ? -0.65 : 0.55, 0.4);
+      for (const s of [-1, 1]) {
+        const wisp = new THREE.Group();
+        wisp.position.set(s * 0.365, 0.2, 0);
+        wisps.add(wisp);
+        mesh(new THREE.SphereGeometry(0.045, 10, 8), accent, 0, 0, 0, wisp);
+        pip(wisp, 0, 0.06, 0, 0.022, gold);
+        for (let i = 1; i <= 3; i++) {
+          mesh(new THREE.SphereGeometry(0.025 / i, 6, 4), accent, -s * i * 0.023, -i * 0.025, i * 0.018, wisp);
+        }
+      }
+      if (phantom) {
+        // A silver mask crest accompanies the rogue's rose wisps.
+        for (const s of [-1, 1]) pip(accGroup, s * 0.047, 0.37, -0.18, 0.047, glow(0xffe9f3));
+      }
+    }
+
+    if (catDef.rarity === "SSR") {
+      const crystals = orbit(-0.45, Math.PI / 3);
+      for (let i = 0; i < 3; i++) {
+        const a = i * Math.PI * 2 / 3;
+        pip(crystals, Math.cos(a) * 0.405, -0.12, Math.sin(a) * 0.405, 0.046);
+      }
+    }
+    fitAccessoriesInsideBubble();
+  }
+
+  function updateAccessories(time) {
+    accGroup.rotation.y = kitty.rotation.y;
+    for (const { pivot, speed, phase } of accessoryOrbits) pivot.rotation.y = phase + time * speed;
+  }
 
   const dizzyHalo = new THREE.Group();
   dizzyHalo.visible = false;
@@ -707,9 +881,10 @@ export function createKittyBall(catDef) {
       }
     });
     kitty.add(gltfScene);
+    addFloatingAccessories();
   }
 
-  return { root, bubbleMesh, bubbleMat, kitty, accGroup, paws, tail, dizzyHalo, furball, shadow, mountExternalModel, isExternal: () => hasExternal, animUniforms };
+  return { root, bubbleMesh, bubbleMat, kitty, accGroup, paws, tail, dizzyHalo, furball, shadow, mountExternalModel, updateAccessories, isExternal: () => hasExternal, animUniforms };
 }
 
 // Helper: Stylized WitchSpring Storybook Tree!
@@ -736,7 +911,7 @@ function createStorybookTree(leafColor = 0x5fd468) {
 // Build Poster-Grade Natural Storybook 3D Scene!
 export function buildTrackScene(track) {
   const group = new THREE.Group();
-  const dynamicMeshes = { gears: [], hammers: [], stars: [], boosts: [], mushrooms: [], portal: null, portalAnchor: null, treeSlots: [], clouds: [], floaters: [], petals: null };
+  const dynamicMeshes = { gears: [], hammers: [], stars: [], boosts: [], mushrooms: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], petals: null };
 
   group.add(createSkyDome(track));
 
@@ -772,6 +947,64 @@ export function buildTrackScene(track) {
   };
 
   const flowerCols = [0xff85c0, 0xffe066, 0xffffff, 0x93c5fd];
+
+  // Reserve the outer corners for landmarks; bridges and the rolling lane stay clear.
+  const plazas = track.platforms.filter((p) => p.w >= 6 && p.d >= 6 && !p.kind.includes("ramp"));
+  const contains = (p, point) => Math.abs(point.x - p.x) <= p.w / 2 && Math.abs(point.z - p.z) <= p.d / 2;
+  const startPlaza = plazas.find((p) => contains(p, track.start) && Math.abs(p.y - (track.start.y - 0.6)) < 0.2);
+  const finishPlaza = plazas.find((p) => contains(p, track.finish) && Math.abs(p.y - track.finish.y) < 0.2);
+  const propCorners = new Map(plazas.map((p) => [p, new Set()]));
+  function addPropSlot(p, key, sx, sz, scale, footprint, role) {
+    propCorners.get(p).add(`${sx},${sz}`);
+    // Small stone corner ledges support the props beyond the island's rounded top.
+    const x = p.x + sx * p.w * 0.42;
+    const z = p.z + sz * p.d * 0.42;
+    const y = p.y + (p.kind === "mud" ? -0.016 : p.kind === "ice" ? 0.008 : p.kind === "neon" ? 0.014 : 0);
+    const ledge = castRec(new THREE.Mesh(createRoundedSlabGeo(0.98, 0.98, 0.28, 0.12, 0.04), mats.stoneCurb));
+    ledge.position.set(x, y - 0.04, z);
+    group.add(ledge);
+    const anchor = new THREE.Group();
+    anchor.position.set(x, y, z);
+    group.add(anchor);
+    dynamicMeshes.propSlots.push({ key, anchor, y, scale, rotation: key === "fountain-center" ? 0 : Math.PI / 2, maxFootprint: footprint, platform: p, role });
+
+    if (key === "fountain-center") {
+      // Kenney's center is the stone floor + water tile; frame it as a tiny fountain.
+      const basin = new THREE.Group();
+      basin.position.set(x, y, z);
+      for (const side of [-1, 1]) {
+        const rimX = castRec(new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.18, 0.055), mats.stoneCurb));
+        rimX.position.set(0, 0.09, side * 0.405);
+        basin.add(rimX);
+        const rimZ = castRec(new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.18, 0.76), mats.stoneCurb));
+        rimZ.position.set(side * 0.405, 0.09, 0);
+        basin.add(rimZ);
+      }
+      const spout = castRec(new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.08, 0.3, 8), mats.stoneCurb));
+      spout.position.y = 0.17;
+      basin.add(spout);
+      const waterMat = toonMat(0x75e5ff, 0x38bdf8, 0.4);
+      const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.025, 0.16, 6), waterMat);
+      jet.position.y = 0.38;
+      basin.add(jet);
+      const drop = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), waterMat);
+      drop.scale.y = 1.4;
+      drop.position.y = 0.49;
+      basin.add(drop);
+      group.add(basin);
+    }
+  }
+  for (const p of plazas) {
+    if (p === startPlaza || p === finishPlaza) {
+      const back = p === startPlaza ? 1 : -1;
+      const role = p === startPlaza ? "start" : "finish";
+      for (const side of [-1, 1]) addPropSlot(p, "banner-red", side, -back, 1.65, { x: 0.76, z: 0.14 }, role);
+      addPropSlot(p, "fence", 1, back, 1.35, { x: 0.82, z: 0.14 }, role);
+    } else {
+      const role = (track.checkpoints || []).some((cp) => contains(p, cp) && Math.abs(cp.y - p.y) < 0.2) ? "checkpoint" : "terrace";
+      addPropSlot(p, "fountain-center", 1, -1, 0.76, { x: 0.76, z: 0.76 }, role);
+    }
+  }
 
   // 1. Multi-Material Floating Islands, Stone Curbs, Slatted Rope-Wood Bridges & Natural Trees!
   for (const p of track.platforms) {
@@ -843,6 +1076,7 @@ export function buildTrackScene(track) {
 
       // Stylized Rounded Stone Boulders & Wildflower Tufts along the Island Rim!
       for (const [cx, cz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        if (propCorners.get(p)?.has(`${cx},${cz}`)) continue;
         const fx = p.x + cx * (p.w * 0.39);
         const fz = p.z + cz * (p.d * 0.39);
         const boulder = castRec(addOutline(new THREE.Mesh(new THREE.DodecahedronGeometry(0.38, 0), mats.stoneCurb), 1.05));
@@ -864,8 +1098,9 @@ export function buildTrackScene(track) {
       }
       // Plant a real Sculpted Hunyuan 3D Storybook Tree on large terraces!
       if (p.w >= 6.0) {
+        const [tx, tz] = [[-1, 1], [-1, -1], [1, 1], [1, -1]].find(([cx, cz]) => !propCorners.get(p)?.has(`${cx},${cz}`));
         const treeAnchor = new THREE.Group();
-        treeAnchor.position.set(p.x - p.w * 0.38, p.y, p.z + p.d * 0.34);
+        treeAnchor.position.set(p.x + tx * p.w * 0.38, p.y, p.z + tz * p.d * 0.34);
         const tree = createStorybookTree(p.z < -20 ? 0x7ae582 : 0x5cd666);
         tree.scale.setScalar(0.82);
         treeAnchor.add(tree);
@@ -892,6 +1127,7 @@ export function buildTrackScene(track) {
       // Glowing Crystal Spires poking out of Aurora Crystal Islands!
       if (p.kind === "crystal" && p.w >= 5) {
         for (const [cx, cz] of [[-1, -1], [1, 1]]) {
+          if (propCorners.get(p)?.has(`${cx},${cz}`)) continue;
           const spire = castRec(addOutline(new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0), mats.ice), 1.05));
           spire.scale.set(0.65, 1.9, 0.65);
           spire.rotation.z = cx * 0.25;
