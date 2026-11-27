@@ -83,3 +83,15 @@ cd projects/lunar-field-station && npm install && npm run build
 # 独立构建「魔女猫球」
 cd projects/meowball-rush && npm install && npm run build
 ```
+
+---
+
+## 🤝 开放协作：欢迎 Fork、魔改、提 Issue 与 PR
+
+本实验室的所有单文件离线小游戏都鼓励 **Fork、魔改二创、提 Issue 反馈与提交 Pull Request**！无论你是想换皮肤、加新关卡/新玩法、反馈手机/浏览器适配 Bug，还是交流单文件小游戏的工程技巧，都非常欢迎：
+
+- **欢迎 Fork & 二创** —— 直接拉走代码自由魔改，做出你自己的创意版本！
+- **欢迎提 [Issue](https://github.com/Audrey-cn/indie-game-lab/issues)** —— 玩法建议、手感/数值反馈、Bug 报告随时欢迎。
+- **欢迎提 [PR](https://github.com/Audrey-cn/indie-game-lab/pulls)** —— 优化手感、修 Bug 或贡献新内容，统统欢迎！
+
+<sub>*Open Collaboration: Forks, remixes, [Issues](https://github.com/Audrey-cn/indie-game-lab/issues), and [PRs](https://github.com/Audrey-cn/indie-game-lab/pulls) are all warmly welcome!*</sub>
