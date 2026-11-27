@@ -11,8 +11,22 @@ using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
 /// <summary>Deterministic, repeatable Unity 6 / URP Stage 1 authoring. No glTF runtime dependency.</summary>
+[InitializeOnLoad]
 public static class MeowballSceneBuilder
 {
+    static MeowballSceneBuilder()
+    {
+        EditorApplication.delayCall += () =>
+        {
+            if (Application.isBatchMode || EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (!File.Exists(ScenePath))
+            {
+                Debug.Log("[Meowball] Auto-building Fairy Valley Stage 1 with hand-painted Studio Ghibli textures...");
+                BuildVerticalSlice();
+            }
+        };
+    }
+
     public const string ScenePath = "Assets/Scenes/FairyValleyStage1.unity";
     private const string Generated = "Assets/MeowballGenerated";
     private const float Center = 80f;
@@ -123,16 +137,30 @@ public static class MeowballSceneBuilder
         QualitySettings.shadowResolution = UnityEngine.ShadowResolution.High;
     }
 
+    private static void ApplyHandPaintedTex(Material mat, string assetPath, float tiling = 1.5f)
+    {
+        var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
+        if (tex == null || mat == null) return;
+        mat.SetTexture("_BaseMap", tex);
+        mat.SetTextureScale("_BaseMap", new Vector2(tiling, tiling));
+        mat.SetColor("_BaseColor", Color.white);
+        EditorUtility.SetDirty(mat);
+    }
+
     private static void CreateMaterials()
     {
-        _cream = Lit("Warm Porcelain", new Color(0.94f, 0.88f, 0.70f), 0.3f);
+        _cream = Lit("Warm Porcelain", new Color(0.94f, 0.88f, 0.70f), 0.25f);
+        ApplyHandPaintedTex(_cream, "Assets/Textures/tex-cobble-path.png", 2.2f);
         _teal = Lit("Lagoon Course", new Color(0.23f, 0.66f, 0.62f), 0.34f);
-        _gold = Lit("Honey Gold", new Color(1f, 0.66f, 0.13f), 0.65f, 0.5f);
+        _gold = Lit("Honey Gold", new Color(1f, 0.66f, 0.13f), 0.65f, 0.15f);
+        ApplyHandPaintedTex(_gold, "Assets/Textures/tex-honey-amber.png", 1.8f);
         _wood = Lit("Cedar", new Color(0.31f, 0.18f, 0.10f), 0.1f);
         _leaf = Lit("Apple Foliage", new Color(0.26f, 0.52f, 0.17f), 0.14f);
+        ApplyHandPaintedTex(_leaf, "Assets/Textures/tex-meadow-grass.png", 1.2f);
         _pink = Lit("Blossom", new Color(0.98f, 0.48f, 0.66f), 0.22f);
         _red = Lit("Mushroom Ruby", new Color(0.87f, 0.075f, 0.12f), 0.43f);
         _stone = Lit("Lilac Stone", new Color(0.44f, 0.44f, 0.57f), 0.18f);
+        ApplyHandPaintedTex(_stone, "Assets/Textures/tex-cliff-rock.png", 1.6f);
         _glow = Lit("Star Candy", new Color(1f, 0.75f, 0.12f), 0.65f, 0.45f);
         _glow.EnableKeyword("_EMISSION");
         _glow.SetColor("_EmissionColor", new Color(2.8f, 1.3f, 0.12f));
@@ -302,7 +330,28 @@ public static class MeowballSceneBuilder
 
     private static TerrainLayer TerrainPaint(string name, Color dark, Color light)
     {
-        // Persist textures and layers; the scene survives domain reloads and player builds.
+        // Prefer our 1024px seamless hand-painted Studio Ghibli textures when imported!
+        string customTexPath = name.Contains("Rock")
+            ? "Assets/Textures/tex-cliff-rock.png"
+            : "Assets/Textures/tex-meadow-grass.png";
+        Texture2D customTex = AssetDatabase.LoadAssetAtPath<Texture2D>(customTexPath);
+        if (customTex != null)
+        {
+            string layerPath = Generated + "/Terrain/" + name + ".terrainlayer";
+            TerrainLayer layer = AssetDatabase.LoadAssetAtPath<TerrainLayer>(layerPath);
+            if (layer == null)
+            {
+                layer = new TerrainLayer { name = name };
+                AssetDatabase.CreateAsset(layer, layerPath);
+            }
+            layer.diffuseTexture = customTex;
+            layer.tileSize = name.Contains("Rock") ? new Vector2(14f, 14f) : new Vector2(10f, 10f);
+            layer.smoothness = 0.08f;
+            layer.metallic = 0f;
+            EditorUtility.SetDirty(layer);
+            return layer;
+        }
+        // Fallback procedural texture if custom PNGs aren't imported yet.
         string texturePath = Generated + "/Terrain/" + name + ".asset";
         Texture2D texture = AssetDatabase.LoadAssetAtPath<Texture2D>(texturePath);
         if (texture == null)
