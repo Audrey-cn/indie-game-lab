@@ -48,6 +48,21 @@ cat_obj.name = "MeowCatMesh"
 
 bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
+# Auto-decimate ultra-dense raw AI meshes (e.g., 2M-poly Hunyuan 3D downloads -> crisp ~24k tris)
+poly_count = len(cat_obj.data.polygons)
+if poly_count > 32000:
+    ratio = max(0.008, min(0.95, 24000.0 / float(poly_count)))
+    print(f"Auto-decimating raw mesh: {poly_count} polys -> ratio {ratio:.4f}")
+    dec = cat_obj.modifiers.new("AutoDecimate", "DECIMATE")
+    dec.ratio = ratio
+    bpy.ops.object.modifier_apply(modifier=dec.name)
+    print(f"After decimate: {len(cat_obj.data.polygons)} polys, {len(cat_obj.data.vertices)} verts")
+
+# Resize oversized embedded textures (>1024px) to crisp 1024x1024 for fast web/mobile loading
+for img in bpy.data.images:
+    if img.size[0] > 1024 or img.size[1] > 1024:
+        img.scale(1024, 1024)
+
 verts_world = [cat_obj.matrix_world @ v.co for v in cat_obj.data.vertices]
 min_v = Vector((min(v.x for v in verts_world), min(v.y for v in verts_world), min(v.z for v in verts_world)))
 max_v = Vector((max(v.x for v in verts_world), max(v.y for v in verts_world), max(v.z for v in verts_world)))
