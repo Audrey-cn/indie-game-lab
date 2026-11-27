@@ -52,10 +52,17 @@ function writeSave(s) {
 
 let save = loadSave();
 let selectedPracticeTrack = 0;
+let currentHubTab = "tracks";
+let gyroEnabled = false;
+let gyroZeroBeta = 38; // Comfortable phone holding pitch angle
+let gyroZeroGamma = 0;
+let gyroTiltX = 0;
+let gyroTiltZ = 0;
 
 // UI Refs
 const canvas = document.getElementById("gl-canvas");
 const lobbyScreen = document.getElementById("lobby-screen");
+const pauseScreen = document.getElementById("pause-screen");
 const resultScreen = document.getElementById("result-screen");
 const hudEl = document.getElementById("hud");
 const toastEl = document.getElementById("toast");
@@ -115,10 +122,13 @@ scene.add(sunLight.target);
 function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
+  const isPortrait = h > w * 1.05;
   renderer.setSize(w, h, false);
   composer.setSize(w, h);
   bloomPass.setSize(w, h);
   camera.aspect = w / h;
+  // Widen FOV cleanly on portrait phones so narrow bridges & swinging hammers stay crystal clear!
+  camera.fov = isPortrait ? 54 : 42;
   camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
@@ -144,15 +154,114 @@ function getSelectedCat() {
   return CATS.find((c) => c.id === save.selectedCat) || CATS[0];
 }
 
-function renderLobby() {
-  document.getElementById("lobby-stars").textContent = `⭐ 累计星糖：${save.totalStars}`;
-  document.getElementById("lobby-best").textContent = save.bestTourneyTime > 0 ? `最佳结转：${save.bestTourneyTime.toFixed(1)}s` : "最佳结转：--";
+function isTrackUnlocked(idx) {
+  if (idx === 0) return true;
+  return save.clearedTracks.includes(idx - 1);
+}
 
+function updateGyroUI() {
+  const lBtn = document.getElementById("btn-lobby-gyro");
+  const hBtn = document.getElementById("btn-hud-gyro");
+  lBtn.textContent = gyroEnabled ? "📱 陀螺仪：开" : "📱 陀螺仪：关";
+  lBtn.classList.toggle("on", gyroEnabled);
+  hBtn.classList.toggle("active", gyroEnabled);
+}
+
+async function toggleGyro() {
+  if (gyroEnabled) {
+    gyroEnabled = false;
+    gyroTiltX = 0;
+    gyroTiltZ = 0;
+    updateGyroUI();
+    showToast("📱 已关闭手机陀螺仪（切换为触屏滑动）");
+    return;
+  }
+  if (typeof DeviceOrientationEvent === "undefined") {
+    showToast("⚠️ 当前设备不支持陀螺仪传感器，请使用鼠标或触屏滑动！");
+    return;
+  }
+  try {
+    if (typeof DeviceOrientationEvent.requestPermission === "function") {
+      const perm = await DeviceOrientationEvent.requestPermission();
+      if (perm !== "granted") {
+        showToast("⚠️ 未授予陀螺仪权限，可在系统设置中开启！");
+        return;
+      }
+    }
+    gyroEnabled = true;
+    gyroZeroBeta = null; // Auto-calibrate to user's current comfortable holding posture!
+    gyroZeroGamma = null;
+    updateGyroUI();
+    showToast("📱 陀螺仪体感已开启！倾斜手机即可滚动猫球！");
+  } catch {
+    showToast("⚠️ 陀螺仪初始化失败，请使用触屏滑动或鼠标！");
+  }
+}
+
+window.addEventListener("deviceorientation", (e) => {
+  if (!gyroEnabled || e.beta == null || e.gamma == null) return;
+  if (gyroZeroBeta === null) {
+    gyroZeroBeta = Math.max(10, Math.min(65, e.beta));
+    gyroZeroGamma = e.gamma;
+  }
+  const dGamma = e.gamma - gyroZeroGamma;
+  const dBeta = e.beta - gyroZeroBeta;
+  const dz = 3.5; // Smooth deadzone so hands don't jitter!
+  const gx = Math.abs(dGamma) < dz ? 0 : Math.max(-24, Math.min(24, (dGamma - Math.sign(dGamma) * dz) * 0.95));
+  const gz = Math.abs(dBeta) < dz ? 0 : Math.max(-24, Math.min(24, (dBeta - Math.sign(dBeta) * dz) * 0.95));
+  gyroTiltX = gx * save.mouseSens;
+  gyroTiltZ = gz * save.mouseSens;
+});
+
+function renderLobby() {
+  document.getElementById("lobby-stars").textContent = `⭐ ${save.totalStars}`;
+  document.getElementById("lobby-best").textContent = save.bestTourneyTime > 0 ? `🏆 ${save.bestTourneyTime.toFixed(1)}s` : "🏆 --";
+  updateGyroUI();
+
+  document.querySelectorAll(".htab").forEach((b) => b.classList.toggle("active", b.dataset.tab === currentHubTab));
+  document.getElementById("pane-tracks").hidden = currentHubTab !== "tracks";
+  document.getElementById("pane-cats").hidden = currentHubTab !== "cats";
+
+  // Progressive Difficulty Track Cards (★ -> ★★ -> ★★★)
+  const cardsEl = document.getElementById("track-cards");
+  cardsEl.innerHTML = "";
+  if (!isTrackUnlocked(selectedPracticeTrack)) selectedPracticeTrack = 0;
+  TRACKS.forEach((t, idx) => {
+    const unlocked = isTrackUnlocked(idx);
+    const cleared = save.clearedTracks.includes(idx);
+    const diffStars = "★".repeat(idx + 1) + "☆".repeat(2 - idx);
+    const bestT = save.bestTrackTimes?.[t.id];
+    const card = document.createElement("button");
+    card.className = `tcard ${selectedPracticeTrack === idx ? "active" : ""} ${unlocked ? "" : "locked"}`;
+    card.innerHTML = `
+      <div>
+        <div class="tcard-title">${unlocked ? t.name : `🔒 ${t.name}`}</div>
+        <div class="tcard-sub">${unlocked ? t.subtitle : `通关第 ${idx} 关后自动解锁！`}</div>
+      </div>
+      <div class="tcard-right">
+        <div class="tcard-diff">${diffStars}</div>
+        <div class="tcard-best">${cleared ? (bestT ? `最佳 ${bestT.toFixed(1)}s` : "✅ 已通关") : unlocked ? `+${t.bonusTime}s` : "未解锁"}</div>
+      </div>
+    `;
+    card.onclick = () => {
+      if (!unlocked) {
+        showToast(`🔒 请先通关第 ${idx} 关解锁【${t.name}】！`);
+        return;
+      }
+      selectedPracticeTrack = idx;
+      renderLobby();
+    };
+    cardsEl.appendChild(card);
+  });
+
+  // Cat Wardrobe Grid + 4 Visual Stat Bars
   const catGrid = document.getElementById("cat-grid");
   catGrid.innerHTML = "";
   const catIcons = { witch_hat: "🧙‍♀️", scarf: "🧣", ribbon: "🎀", bell: "🔔", goggles: "🥽", crown: "👑" };
+  let ownedCount = 0;
   for (const cat of CATS) {
     const unlocked = isCatUnlocked(cat);
+    if (unlocked) ownedCount++;
     const btn = document.createElement("button");
     btn.className = `cat-btn ${save.selectedCat === cat.id ? "active" : ""} ${unlocked ? "" : "locked"}`;
     const hex = `#${cat.bubbleColor.toString(16).padStart(6, "0")}`;
@@ -171,21 +280,18 @@ function renderLobby() {
     };
     catGrid.appendChild(btn);
   }
+  document.getElementById("cat-count").textContent = `${ownedCount}/${CATS.length}`;
   const activeCat = getSelectedCat();
   document.getElementById("cat-desc").textContent = `${activeCat.name}（${activeCat.title}）· ${activeCat.desc}`;
-
-  const trkRow = document.getElementById("track-row");
-  trkRow.innerHTML = "";
-  TRACKS.forEach((t, idx) => {
-    const b = document.createElement("button");
-    b.className = `trk-btn ${selectedPracticeTrack === idx ? "active" : ""}`;
-    b.textContent = `${idx + 1} · ${t.name.split("·")[1].trim()}`;
-    b.onclick = () => {
-      selectedPracticeTrack = idx;
-      renderLobby();
-    };
-    trkRow.appendChild(b);
-  });
+  const barDefs = [
+    ["加速", activeCat.stats.accel / 1.15],
+    ["极速", activeCat.stats.topSpeed / 1.15],
+    ["抓地", activeCat.stats.grip / 1.25],
+    ["抗晕", activeCat.stats.dizzyResist / 1.5],
+  ];
+  document.getElementById("cat-bars").innerHTML = barDefs
+    .map(([k, pct]) => `<div class="sbar-row"><span>${k}</span><div class="sbar-track"><div class="sbar-fill" style="width:${Math.min(100, Math.round(pct * 100))}%"></div></div></div>`)
+    .join("");
 }
 
 // ===== TRACK LOADER & 3D SCENE SETUP =====
@@ -201,7 +307,10 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   if (trailMesh) scene.remove(trailMesh);
 
   scene.background = new THREE.Color(track.skyTop);
-  scene.fog = new THREE.Fog(track.fogColor, 26, 92);
+  // Crisp sunlit visibility on Track 1 (pushed fog far back so the whole Sky Garden is crystal clear!)
+  scene.fog = trackIndex === 0
+    ? new THREE.Fog(track.fogColor, 64, 185)
+    : new THREE.Fog(track.fogColor, 54, 165);
   sunLight.color.setHex(track.sunColor);
 
   const built = buildTrackScene(track);
@@ -379,6 +488,9 @@ function finishStage(cleared) {
   if (cleared) {
     sfx.playFinish();
     if (!save.clearedTracks.includes(state.trackIndex)) save.clearedTracks.push(state.trackIndex);
+    if (!save.bestTrackTimes) save.bestTrackTimes = {};
+    const prevBest = save.bestTrackTimes[state.track.id] || 0;
+    if (state.timeLeft > prevBest) save.bestTrackTimes[state.track.id] = state.timeLeft;
     save.totalStars += state.stars;
     const isFinalTourney = state.mode === "tourney" && state.trackIndex === TRACKS.length - 1;
     if (isFinalTourney && state.timeLeft > save.bestTourneyTime) {
@@ -500,9 +612,9 @@ function updatePhysics(dt) {
   if (inp.keys.has("KeyA") || inp.keys.has("ArrowLeft")) kx -= 1;
   if (inp.keys.has("KeyD") || inp.keys.has("ArrowRight")) kx += 1;
 
-  // Convert screen-space mouse/keyboard into isometric world axes (camera offset is +X, +Z looking toward -X, -Z)
-  let rawX = kx * 18 + inp.mouseAccX;
-  let rawZ = kz * 18 + inp.mouseAccZ;
+  // Convert screen-space mouse/keyboard/gyroscope into isometric world axes!
+  let rawX = kx * 18 + inp.mouseAccX + (gyroEnabled ? gyroTiltX : 0);
+  let rawZ = kz * 18 + inp.mouseAccZ + (gyroEnabled ? gyroTiltZ : 0);
   inp.mouseAccX *= Math.pow(0.02, dt);
   inp.mouseAccZ *= Math.pow(0.02, dt);
 
@@ -835,8 +947,10 @@ function updateVisuals(dt) {
   }
   attr.needsUpdate = true;
 
-  // Smooth Isometric Follow Camera (classic Hamsterball elevated 3/4 angle!)
-  const desired = new THREE.Vector3(b.x + 7.2, Math.max(b.y + 9.2, 4), b.z + 10.6);
+  // Smooth Isometric Follow Camera — automatically pulls back cleanly on portrait phones!
+  const isPortrait = window.innerHeight > window.innerWidth * 1.05;
+  const distScale = isPortrait ? 1.24 : 1.0;
+  const desired = new THREE.Vector3(b.x + 7.2 * distScale, Math.max(b.y + 9.4 * distScale, 4.5), b.z + 10.6 * distScale);
   state.camPos.lerp(desired, Math.min(1, dt * 6.5));
   camera.position.copy(state.camPos);
   camera.lookAt(b.x, b.y - 0.4, b.z - 1.5);
@@ -893,20 +1007,61 @@ window.addEventListener("pointermove", (e) => {
 window.addEventListener("pointerup", () => {
   if (state) state.input.touchActive = false;
 });
+function openPause() {
+  if (!state || state.phase !== "playing") return;
+  state.phase = "paused";
+  sfx.stopBgm();
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  document.getElementById("sens-slider").value = String(save.mouseSens || 1.0);
+  document.getElementById("sens-val").textContent = `${(save.mouseSens || 1.0).toFixed(1)}×`;
+  pauseScreen.hidden = false;
+}
+function closePause() {
+  if (!state || state.phase !== "paused") return;
+  pauseScreen.hidden = true;
+  state.phase = "playing";
+  sfx.startBgm(state.trackIndex);
+}
+
 window.addEventListener("keydown", (e) => {
+  if (e.code === "Escape" || e.code === "KeyP") {
+    if (state?.phase === "playing") openPause();
+    else if (state?.phase === "paused") closePause();
+    return;
+  }
   if (state && state.phase === "playing") state.input.keys.add(e.code);
 });
 window.addEventListener("keyup", (e) => {
   if (state) state.input.keys.delete(e.code);
 });
 
-// Buttons
+// Buttons & Hub Tabs
+document.querySelectorAll(".htab").forEach((b) => {
+  b.onclick = () => {
+    currentHubTab = b.dataset.tab;
+    renderLobby();
+  };
+});
 document.getElementById("btn-tourney").onclick = () => loadTrack(0, "tourney", 0);
 document.getElementById("btn-practice").onclick = () => loadTrack(selectedPracticeTrack, "practice", 0);
-document.getElementById("btn-back").onclick = () => {
+document.getElementById("btn-pause").onclick = openPause;
+document.getElementById("btn-resume").onclick = closePause;
+document.getElementById("btn-restart-stage").onclick = () => {
+  pauseScreen.hidden = true;
+  if (state) loadTrack(state.trackIndex, state.mode, 0);
+};
+document.getElementById("btn-pause-gyro").onclick = toggleGyro;
+document.getElementById("btn-lobby-gyro").onclick = toggleGyro;
+document.getElementById("btn-hud-gyro").onclick = toggleGyro;
+document.getElementById("sens-slider").oninput = (e) => {
+  save.mouseSens = parseFloat(e.target.value) || 1.0;
+  document.getElementById("sens-val").textContent = `${save.mouseSens.toFixed(1)}×`;
+  writeSave(save);
+};
+document.getElementById("btn-pause-lobby").onclick = () => {
   if (state) state.phase = "ended";
   sfx.stopBgm();
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  pauseScreen.hidden = true;
   hudEl.hidden = true;
   resultScreen.hidden = true;
   lobbyScreen.hidden = false;
@@ -922,11 +1077,11 @@ document.getElementById("btn-mute").onclick = (e) => {
   e.target.textContent = sfx.muted ? "🔇" : "🔊";
 };
 
-// Boot with Track 0 preview rendered live behind Lobby!
+// Boot with Track 0 preview rendered live behind Lobby (clear low-fog sky)!
 const initBuilt = buildTrackScene(TRACKS[0]);
 trackRoot = initBuilt.group;
 scene.background = new THREE.Color(TRACKS[0].skyTop);
-scene.fog = new THREE.Fog(TRACKS[0].fogColor, 26, 92);
+scene.fog = new THREE.Fog(TRACKS[0].fogColor, 64, 185);
 scene.add(trackRoot);
 renderLobby();
 requestAnimationFrame(tick);
