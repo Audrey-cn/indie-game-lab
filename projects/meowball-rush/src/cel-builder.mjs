@@ -253,6 +253,32 @@ function getIceCrystalTex() {
   });
 }
 
+// Sticky Honey-Caramel Mud Slowdown Trap Texture!
+function getHoneyMudTex() {
+  return makeTex("mud_v1", 256, 256, (g, w, h) => {
+    const grad = g.createRadialGradient(w / 2, h / 2, 18, w / 2, h / 2, w * 0.65);
+    grad.addColorStop(0, "#b45309");
+    grad.addColorStop(0.6, "#92400e");
+    grad.addColorStop(1, "#6b2f0b");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, w, h);
+    // Sticky honey-mud ripples & bubbles
+    for (let i = 0; i < 18; i++) {
+      const bx = (i * 59 + 23) % w;
+      const by = (i * 83 + 17) % h;
+      const br = 8 + (i % 4) * 5;
+      g.fillStyle = i % 2 === 0 ? "rgba(251, 191, 36, 0.34)" : "rgba(69, 26, 3, 0.32)";
+      g.beginPath();
+      g.arc(bx, by, br, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = "rgba(255, 245, 200, 0.45)";
+      g.beginPath();
+      g.arc(bx - br * 0.3, by - br * 0.3, br * 0.25, 0, Math.PI * 2);
+      g.fill();
+    }
+  });
+}
+
 // Hand-Painted Expressive Anime Kitten Face Texture (replaces raw sphere dots!)
 function getCatFaceTex(catDef) {
   return makeTex(`face_${catDef.id}`, 256, 256, (g, w, h) => {
@@ -720,6 +746,7 @@ export function buildTrackScene(track) {
   const brassTex = getBrassTex();
   const rainbowTex = getRainbowBoostTex();
   const iceTex = getIceCrystalTex();
+  const mudTex = getHoneyMudTex();
 
   // Multi-material Grass Island: Top = Hand-Painted Cobblestones, Sides = Hanging Grass + Cliff Rock!
   const grassSideMat = toonMat(0xffffff, 0x000000, 0, cliffTex);
@@ -740,6 +767,7 @@ export function buildTrackScene(track) {
     ice: new THREE.MeshToonMaterial({ color: 0xffffff, map: iceTex, gradientMap: getToonGradient(), emissive: 0x165e8a, emissiveIntensity: 0.25 }),
     neon: new THREE.MeshToonMaterial({ color: 0xff6ee6, gradientMap: getToonGradient(), emissive: 0xff2eb3, emissiveIntensity: 0.5, transparent: true, opacity: 0.86 }),
     crystal: toonMat(0x52398e, 0x2a1860, 0.35),
+    mud: new THREE.MeshToonMaterial({ color: 0xffffff, map: mudTex, gradientMap: getToonGradient(), emissive: 0x78350f, emissiveIntensity: 0.16 }),
     rainbow: new THREE.MeshBasicMaterial({ map: rainbowTex, transparent: true, opacity: 0.94 }),
   };
 
@@ -848,10 +876,11 @@ export function buildTrackScene(track) {
       const topMat =
         p.kind === "cloud" ? mats.cloud
           : p.kind === "ice" ? mats.ice
-            : p.kind === "neon" ? mats.neon
-              : p.kind === "crystal" ? mats.crystal
-                : mats.brass;
-      const isRounded = p.kind === "brass" || p.kind === "crystal" || p.kind === "ice";
+            : p.kind === "mud" ? mats.mud
+              : p.kind === "neon" ? mats.neon
+                : p.kind === "crystal" ? mats.crystal
+                  : mats.brass;
+      const isRounded = p.kind === "brass" || p.kind === "crystal" || p.kind === "ice" || p.kind === "mud";
       const geo = isRounded ? createRoundedSlabGeo(p.w, p.d, p.h, Math.min(p.w, p.d) * 0.2, 0.12) : new THREE.BoxGeometry(p.w, p.h, p.d);
       const mesh = castRec(new THREE.Mesh(geo, topMat), false, true);
       mesh.position.set(p.x, isRounded ? p.y - 0.12 : p.y - p.h / 2, p.z);

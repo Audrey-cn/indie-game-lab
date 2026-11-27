@@ -1,4 +1,4 @@
-// Meowball Rush v0.8.0 — 9 Collectible WitchSpring Kittens + Multi-Track Unlock System + 3 Courses
+// Meowball Rush v1.0.0 — 9 Collectible WitchSpring Kittens + 10 Progressive Courses (Tutorial -> Grand Finale)
 
 export const CATS = [
   {
@@ -36,7 +36,7 @@ export const CATS = [
     acc: "scarf",
     stats: { accel: 1.05, topSpeed: 1.04, grip: 0.96, dizzyResist: 1.2 },
     desc: "大橘为重 · 陡坡冲刺更快，抗砸抗摔！",
-    unlockText: "通关第 1 关【魔女空中花园】解锁",
+    unlockText: "通关第 1 关【新手草坪学院】解锁",
     unlockReq: { type: "clear", track: 0 },
   },
   {
@@ -74,8 +74,8 @@ export const CATS = [
     acc: "ribbon",
     stats: { accel: 1.03, topSpeed: 1.0, grip: 1.1, dizzyResist: 1.45 },
     desc: "轻盈优雅 · 摔晕恢复极快，丝滑控球！",
-    unlockText: "累计收集 8 颗魔法星糖解锁",
-    unlockReq: { type: "stars", count: 8 },
+    unlockText: "累计收集 10 颗魔法星糖解锁",
+    unlockReq: { type: "stars", count: 10 },
   },
   {
     id: "calico_mint",
@@ -93,8 +93,8 @@ export const CATS = [
     acc: "bell",
     stats: { accel: 1.08, topSpeed: 1.01, grip: 1.24, dizzyResist: 1.05 },
     desc: "急停之王 · 超强抓地力，冰面窄桥稳如老狗！",
-    unlockText: "通关第 2 关【钟表魔法工坊】解锁",
-    unlockReq: { type: "clear", track: 1 },
+    unlockText: "通关第 4 关【蘑菇云梯峡谷】解锁",
+    unlockReq: { type: "clear", track: 3 },
   },
   {
     id: "cloud_explorer",
@@ -150,8 +150,8 @@ export const CATS = [
     acc: "goggles",
     stats: { accel: 1.12, topSpeed: 1.15, grip: 0.98, dizzyResist: 1.1 },
     desc: "竞速神车 · 全场最高极速突破，抢榜必备！",
-    unlockText: "任意关卡剩余时间 ≥ 25 秒通关解锁",
-    unlockReq: { type: "fast", seconds: 25 },
+    unlockText: "通关第 7 关【双轮蒸汽飞跃】解锁",
+    unlockReq: { type: "clear", track: 6 },
   },
   {
     id: "aurora_queen",
@@ -169,76 +169,277 @@ export const CATS = [
     acc: "crown",
     stats: { accel: 1.13, topSpeed: 1.13, grip: 1.18, dizzyResist: 1.45 },
     desc: "隐藏传说 · 全属性天花板，极光尾迹闪耀天际！",
-    unlockText: "通关第 3 关【极光水晶高塔】解锁",
-    unlockReq: { type: "clear", track: 2 },
+    unlockText: "通关第 10 关【魔女苍穹终章】解锁",
+    unlockReq: { type: "clear", track: 9 },
   },
 ];
 
-// Each track is composed of deterministic 3D surfaces (boxes, ramps, rotating gears, cloud shortcuts),
-// plus hazards (swinging hammers), bounce mushrooms, boost strips, star pickups, checkpoints & finish portal!
+// ===== 10 PROGRESSIVE COURSES (Nintendo-Style Escalation: 1 Mechanism per Stage!) =====
+const SKY_GARDEN = { skyTop: 0x60b8ff, skyBottom: 0xdff5ff, fogColor: 0xd9f2ff, sunColor: 0xfff5d6 };
+const CLOCKWORK = { skyTop: 0xff8c5a, skyBottom: 0xffe4b5, fogColor: 0xffdcb3, sunColor: 0xffe09e };
+const AURORA = { skyTop: 0x0d1538, skyBottom: 0x3b1d66, fogColor: 0x24174a, sunColor: 0xb8f2ff };
+
 export const TRACKS = [
+  // ===== STAGE 01: FRIENDLY TUTORIAL ACADEMY (Zero traps that launch you off!) =====
+  {
+    id: "academy",
+    name: "01 · 新手草坪学院",
+    subtitle: "教学引导 · 缓坡重力 · 彩虹加速 · 蜂蜜减速 · 弹跳蘑菇",
+    diff: 1,
+    ...SKY_GARDEN,
+    bonusTime: 60,
+    start: { x: 0, y: 8.6, z: 0 },
+    deathY: -8,
+    tips: [
+      { z: -1.5, msg: "🐾 新手学院：滑鼠 / WASD / 倾斜手机推球，先收集前方星糖！" },
+      { z: -4.2, msg: "⛰️ 前方温和缓坡：松手也会随重力自然加速，轻松体验惯性！" },
+      { z: -11.5, msg: "🌈 彩虹加速带：踩上去瞬间提速！前方是宽阔安全直道放心冲！" },
+      { z: -24.5, msg: "🍯 蜂蜜减速泥沼：棕色粘稠地面会大幅减速，用力推球穿过它！" },
+      { z: -31.8, msg: "🍄 弹跳红蘑菇：高台爬不上去？踩蘑菇直接腾空飞跃到终点！" },
+    ],
+    platforms: [
+      { kind: "grass", x: 0, y: 8.0, z: 0, w: 7.4, d: 7.0, h: 1.2 },
+      // Very gentle slope (drop only 1.2m over 6.4m -> ~10.6 deg)
+      { kind: "ramp", x: 0, y: 7.4, z: -6.4, w: 5.4, d: 6.4, h: 0.75, yStart: 8.0, yEnd: 6.8, dir: "-z" },
+      // Wide safe meadow with gentle straight boost pad
+      { kind: "grass", x: 0, y: 6.8, z: -12.6, w: 7.0, d: 6.6, h: 1.2 },
+      { kind: "grass", x: 0, y: 6.8, z: -20.2, w: 6.4, d: 9.4, h: 1.2 },
+      // Honey Mud Slowdown Zone (clear visual contrast!)
+      { kind: "mud", x: 0, y: 6.8, z: -27.2, w: 6.0, d: 5.4, h: 1.1 },
+      // Mushroom Launch Plaza -> Elevated Finish Terrace (+1.2m tall, teaches jumping!)
+      { kind: "grass", x: 0, y: 6.8, z: -33.0, w: 6.6, d: 6.8, h: 1.2 },
+      { kind: "grass", x: 0, y: 8.0, z: -42.2, w: 7.6, d: 7.4, h: 1.4 },
+    ],
+    boosts: [
+      { x: 0, y: 6.85, z: -13.2, w: 2.8, d: 3.0, fx: 0, fz: -14 },
+    ],
+    mushrooms: [
+      { x: 0, y: 6.95, z: -34.8, r: 1.5, vy: 11.4, vz: -8.8 },
+    ],
+    gears: [],
+    hammers: [],
+    checkpoints: [
+      { x: 0, y: 6.8, z: -20.2 },
+    ],
+    stars: [
+      { x: 0, y: 8.8, z: -2.4 },
+      { x: 0, y: 7.6, z: -16.5 },
+      { x: 0, y: 7.6, z: -27.2 },
+      { x: 0, y: 11.0, z: -38.4 },
+    ],
+    finish: { x: 0, y: 8.0, z: -43.4 },
+  },
+
+  // ===== STAGE 02: BREEZY GARDEN CURVES & FIRST CLOUD SHORTCUT =====
   {
     id: "garden",
-    name: "01 · 魔女空中花园",
-    subtitle: "石砖斜坡 · 彩虹加速 · 隐藏云朵捷径",
-    skyTop: 0x60b8ff,
-    skyBottom: 0xdff5ff,
-    fogColor: 0xd9f2ff,
-    sunColor: 0xfff5d6,
+    name: "02 · 微风石阶花园",
+    subtitle: "重力下坡 · 宽桥转向 · 隐藏云朵捷径",
+    diff: 1,
+    ...SKY_GARDEN,
+    bonusTime: 52,
+    start: { x: 0, y: 8.6, z: 0 },
+    deathY: -9,
+    platforms: [
+      { kind: "grass", x: 0, y: 8.0, z: 0, w: 6.8, d: 6.6, h: 1.2 },
+      { kind: "ramp", x: 0, y: 6.9, z: -6.6, w: 4.8, d: 7.2, h: 0.8, yStart: 8.0, yEnd: 5.8, dir: "-z" },
+      { kind: "grass", x: 0, y: 5.8, z: -13.4, w: 6.8, d: 6.8, h: 1.2 },
+      // Wide safe left route
+      { kind: "wood", x: -5.6, y: 5.8, z: -13.4, w: 5.0, d: 3.0, h: 0.55 },
+      { kind: "grass", x: -10.4, y: 5.8, z: -13.4, w: 5.6, d: 5.6, h: 1.2 },
+      { kind: "wood", x: -10.4, y: 5.8, z: -19.8, w: 2.8, d: 7.8, h: 0.55 },
+      { kind: "grass", x: -10.4, y: 5.8, z: -26.2, w: 5.6, d: 5.6, h: 1.2 },
+      { kind: "ramp", x: -4.8, y: 4.5, z: -26.2, w: 6.4, d: 3.8, h: 0.8, yStart: 5.8, yEnd: 3.2, dir: "+x" },
+      // Optional Secret Cloud Shortcut on the right!
+      { kind: "cloud", x: 4.8, y: 5.2, z: -19.6, w: 2.3, d: 12.6, h: 0.45, secret: true },
+      { kind: "cloud", x: 2.6, y: 4.0, z: -26.2, w: 5.0, d: 2.4, h: 0.45, secret: true },
+      // Checkpoint & Finish
+      { kind: "grass", x: 0, y: 3.2, z: -26.2, w: 6.4, d: 6.4, h: 1.2 },
+      { kind: "wood", x: 0, y: 3.2, z: -33.6, w: 2.8, d: 9.2, h: 0.5 },
+      { kind: "grass", x: 0, y: 3.2, z: -41.0, w: 7.0, d: 6.8, h: 1.2 },
+    ],
+    boosts: [
+      { x: 4.8, y: 5.25, z: -16.8, w: 1.8, d: 2.6, fx: 0, fz: -20 },
+    ],
+    mushrooms: [],
+    gears: [],
+    hammers: [],
+    checkpoints: [{ x: 0, y: 3.2, z: -26.2 }],
+    stars: [
+      { x: 0, y: 7.6, z: -5.5 },
+      { x: -10.4, y: 6.6, z: -19.8 },
+      { x: 4.8, y: 6.0, z: -19.6 },
+      { x: 0, y: 4.0, z: -33.6 },
+    ],
+    finish: { x: 0, y: 3.2, z: -42.2 },
+  },
+
+  // ===== STAGE 03: HONEY MUD COURTYARD & FIRST SLOW HAMMER =====
+  {
+    id: "honey",
+    name: "03 · 蜂蜜果酱庭院",
+    subtitle: "减速泥沼博弈 · 冲刺破泥 · 初遇慢速木摆锤",
+    diff: 2,
+    ...SKY_GARDEN,
     bonusTime: 48,
     start: { x: 0, y: 8.6, z: 0 },
     deathY: -9,
     platforms: [
-      { kind: "grass", x: 0, y: 8, z: 0, w: 6.5, d: 6.5, h: 1.2 },
-      { kind: "ramp", x: 0, y: 6.6, z: -6.8, w: 4.4, d: 7.4, h: 0.8, yStart: 8, yEnd: 5.2, dir: "-z" },
-      { kind: "grass", x: 0, y: 5.2, z: -13.5, w: 6.4, d: 6.4, h: 1.2 },
-      { kind: "wood", x: -5.6, y: 5.2, z: -13.5, w: 5.0, d: 2.3, h: 0.55 },
-      { kind: "grass", x: -10.5, y: 5.2, z: -13.5, w: 5.2, d: 5.2, h: 1.2 },
-      { kind: "wood", x: -10.5, y: 5.2, z: -19.8, w: 2.1, d: 7.8, h: 0.55 },
-      { kind: "grass", x: -10.5, y: 5.2, z: -26.2, w: 5.4, d: 5.2, h: 1.2 },
-      { kind: "ramp", x: -4.8, y: 3.8, z: -26.2, w: 6.4, d: 3.4, h: 0.8, yStart: 5.2, yEnd: 2.4, dir: "+x" },
-      { kind: "cloud", x: 4.8, y: 4.6, z: -19.6, w: 2.1, d: 12.8, h: 0.45, secret: true },
-      { kind: "cloud", x: 2.6, y: 3.4, z: -26.2, w: 5.0, d: 2.2, h: 0.45, secret: true },
-      { kind: "grass", x: 0, y: 2.4, z: -26.2, w: 6.0, d: 6.0, h: 1.2 },
-      { kind: "wood", x: 0, y: 2.4, z: -34.2, w: 2.0, d: 10.4, h: 0.5 },
-      { kind: "grass", x: 0, y: 2.4, z: -42.5, w: 6.8, d: 6.6, h: 1.2 },
+      { kind: "grass", x: 0, y: 8.0, z: 0, w: 6.6, d: 6.4, h: 1.2 },
+      { kind: "mud", x: 0, y: 8.0, z: -6.8, w: 5.8, d: 7.6, h: 1.1 },
+      { kind: "grass", x: 0, y: 8.0, z: -13.6, w: 6.4, d: 6.4, h: 1.2 },
+      { kind: "ramp", x: 0, y: 6.6, z: -20.2, w: 4.4, d: 7.4, h: 0.8, yStart: 8.0, yEnd: 5.2, dir: "-z" },
+      // Mud catch basin after downhill so you brake naturally!
+      { kind: "mud", x: 0, y: 5.2, z: -26.8, w: 6.4, d: 6.4, h: 1.1 },
+      { kind: "wood", x: 0, y: 5.2, z: -34.6, w: 2.6, d: 9.8, h: 0.5 },
+      { kind: "grass", x: 0, y: 5.2, z: -42.4, w: 6.8, d: 6.6, h: 1.2 },
     ],
     boosts: [
-      { x: 0, y: 5.25, z: -13.5, w: 2.8, d: 3.2, fx: 0, fz: -24 },
-      { x: 4.8, y: 4.65, z: -16.2, w: 1.8, d: 2.4, fx: 0, fz: -26 },
+      { x: 0, y: 8.05, z: -2.0, w: 2.6, d: 2.6, fx: 0, fz: -20 },
     ],
     mushrooms: [],
     gears: [],
     hammers: [
-      { x: 0, y: 5.9, z: -34.2, len: 3.3, speed: 2.1, amp: 1.05, phase: 0, axis: "z" },
+      { x: 0, y: 8.6, z: -34.6, len: 3.2, speed: 1.8, amp: 1.0, phase: 0, axis: "z" },
     ],
-    checkpoints: [
-      { x: 0, y: 2.4, z: -26.2 },
-    ],
+    checkpoints: [{ x: 0, y: 5.2, z: -26.8 }],
     stars: [
-      { x: 0, y: 7.4, z: -5.5 },
-      { x: -10.5, y: 6.0, z: -19.8 },
-      { x: 4.8, y: 5.4, z: -19.6 },
-      { x: 0, y: 3.2, z: -32.2 },
-      { x: 0, y: 3.2, z: -36.2 },
+      { x: 0, y: 8.8, z: -6.8 },
+      { x: 0, y: 7.2, z: -20.2 },
+      { x: 0, y: 6.0, z: -32.0 },
+      { x: 0, y: 6.0, z: -37.0 },
     ],
-    finish: { x: 0, y: 2.4, z: -43.5 },
+    finish: { x: 0, y: 5.2, z: -43.5 },
   },
+
+  // ===== STAGE 04: MUSHROOM STEP CANYON (Vertical Platforming) =====
   {
-    id: "clockwork",
-    name: "02 · 钟表魔法工坊",
-    subtitle: "黄金齿轮转盘 · 雕花大摆锤 · 弹跳红蘑菇",
-    skyTop: 0xff8c5a,
-    skyBottom: 0xffe4b5,
-    fogColor: 0xffdcb3,
-    sunColor: 0xffe09e,
-    bonusTime: 36,
+    id: "mushroom_canyon",
+    name: "04 · 蘑菇云梯峡谷",
+    subtitle: "连续弹跳高台 · 刚体台阶跨越 · 立体浮空",
+    diff: 2,
+    ...SKY_GARDEN,
+    bonusTime: 48,
+    start: { x: 0, y: 6.6, z: 0 },
+    deathY: -8,
+    platforms: [
+      { kind: "grass", x: 0, y: 6.0, z: 0, w: 6.6, d: 6.6, h: 1.2 },
+      // Elevated Step 1 (+1.4m via Mushroom 1)
+      { kind: "grass", x: 0, y: 7.4, z: -9.4, w: 6.2, d: 6.2, h: 1.4 },
+      // Elevated Step 2 (+1.4m via Mushroom 2)
+      { kind: "grass", x: 0, y: 8.8, z: -18.8, w: 6.2, d: 6.2, h: 1.4 },
+      // High wooden skybridge + slow hammer
+      { kind: "wood", x: 0, y: 8.8, z: -26.4, w: 2.5, d: 9.6, h: 0.5 },
+      { kind: "grass", x: 0, y: 8.8, z: -34.0, w: 6.0, d: 6.0, h: 1.2 },
+      // Joyful steep downhill plunge to Finish!
+      { kind: "ramp", x: 0, y: 6.8, z: -40.8, w: 4.4, d: 8.2, h: 0.8, yStart: 8.8, yEnd: 4.8, dir: "-z" },
+      { kind: "grass", x: 0, y: 4.8, z: -48.0, w: 7.2, d: 7.0, h: 1.2 },
+    ],
+    boosts: [],
+    mushrooms: [
+      { x: 0, y: 6.15, z: -2.0, r: 1.45, vy: 11.8, vz: -9.0 },
+      { x: 0, y: 7.55, z: -11.4, r: 1.45, vy: 11.8, vz: -9.0 },
+    ],
+    gears: [],
+    hammers: [
+      { x: 0, y: 12.2, z: -26.4, len: 3.2, speed: 2.0, amp: 1.02, phase: 0.4, axis: "z" },
+    ],
+    checkpoints: [{ x: 0, y: 8.8, z: -18.8 }, { x: 0, y: 8.8, z: -34.0 }],
+    stars: [
+      { x: 0, y: 10.6, z: -5.4 },
+      { x: 0, y: 12.0, z: -14.8 },
+      { x: 0, y: 9.6, z: -26.4 },
+      { x: 0, y: 7.4, z: -40.8 },
+    ],
+    finish: { x: 0, y: 4.8, z: -49.2 },
+  },
+
+  // ===== STAGE 05: CLOCKWORK GEAR OUTPOST =====
+  {
+    id: "gear_outpost",
+    name: "05 · 黄昏齿轮前哨",
+    subtitle: "初遇黄金齿轮 · 切向带动力 · 日落工坊",
+    diff: 3,
+    ...CLOCKWORK,
+    bonusTime: 44,
     start: { x: 0, y: 8.6, z: 0 },
     deathY: -9,
     platforms: [
-      { kind: "brass", x: 0, y: 8, z: 0, w: 6.0, d: 6.0, h: 1.2 },
-      { kind: "wood", x: 0, y: 8, z: -7.5, w: 2.1, d: 9.4, h: 0.55 },
-      { kind: "brass", x: 0, y: 8, z: -14.8, w: 5.6, d: 5.6, h: 1.2 },
+      { kind: "brass", x: 0, y: 8.0, z: 0, w: 6.4, d: 6.2, h: 1.2 },
+      { kind: "brass", x: 0, y: 8.0, z: -16.8, w: 6.2, d: 6.0, h: 1.2 },
+      { kind: "ramp", x: 0, y: 6.5, z: -23.4, w: 4.2, d: 7.8, h: 0.8, yStart: 8.0, yEnd: 5.0, dir: "-z" },
+      { kind: "brass", x: 0, y: 5.0, z: -30.2, w: 6.0, d: 6.0, h: 1.2 },
+      { kind: "brass", x: 0, y: 5.0, z: -48.0, w: 7.0, d: 6.8, h: 1.2 },
+    ],
+    gears: [
+      { x: 0, y: 8.0, z: -8.4, r: 5.6, h: 0.9, omega: 0.72 },
+      { x: -1.6, y: 5.0, z: -36.2, r: 4.4, h: 0.9, omega: 0.85 },
+      { x: 1.6, y: 5.0, z: -42.0, r: 4.4, h: 0.9, omega: -0.92 },
+    ],
+    mushrooms: [],
+    boosts: [],
+    hammers: [],
+    checkpoints: [{ x: 0, y: 8.0, z: -16.8 }, { x: 0, y: 5.0, z: -30.2 }],
+    stars: [
+      { x: 0, y: 8.8, z: -8.4 },
+      { x: 0, y: 7.2, z: -23.4 },
+      { x: -1.6, y: 5.8, z: -36.2 },
+      { x: 1.6, y: 5.8, z: -42.0 },
+    ],
+    finish: { x: 0, y: 5.0, z: -49.2 },
+  },
+
+  // ===== STAGE 06: PENDULUM BELFRY CORRIDOR =====
+  {
+    id: "belfry",
+    name: "06 · 摆锤钟楼长廊",
+    subtitle: "交替双摆锤 · 蜂蜜缓冲带 · 节拍控速",
+    diff: 3,
+    ...CLOCKWORK,
+    bonusTime: 42,
+    start: { x: 0, y: 8.6, z: 0 },
+    deathY: -9,
+    platforms: [
+      { kind: "brass", x: 0, y: 8.0, z: 0, w: 6.2, d: 6.0, h: 1.2 },
+      { kind: "wood", x: 0, y: 8.0, z: -8.2, w: 2.4, d: 11.0, h: 0.55 },
+      { kind: "mud", x: 0, y: 8.0, z: -16.2, w: 5.8, d: 5.6, h: 1.1 },
+      { kind: "wood", x: 0, y: 8.0, z: -24.4, w: 2.3, d: 11.2, h: 0.55 },
+      { kind: "brass", x: 0, y: 8.0, z: -32.6, w: 6.0, d: 5.8, h: 1.2 },
+      { kind: "ramp", x: 0, y: 6.4, z: -39.2, w: 3.8, d: 7.8, h: 0.8, yStart: 8.0, yEnd: 4.8, dir: "-z" },
+      { kind: "brass", x: 0, y: 4.8, z: -46.2, w: 6.8, d: 6.6, h: 1.2 },
+    ],
+    gears: [],
+    mushrooms: [],
+    boosts: [{ x: 0, y: 8.05, z: -16.2, w: 2.0, d: 2.4, fx: 0, fz: -16 }],
+    hammers: [
+      { x: 0, y: 11.4, z: -6.2, len: 3.2, speed: 2.2, amp: 1.05, phase: 0, axis: "z" },
+      { x: 0, y: 11.4, z: -10.2, len: 3.2, speed: 2.2, amp: 1.05, phase: Math.PI, axis: "z" },
+      { x: 0, y: 11.4, z: -22.2, len: 3.2, speed: 2.5, amp: 1.08, phase: 0.6, axis: "z" },
+      { x: 0, y: 11.4, z: -26.6, len: 3.2, speed: 2.5, amp: 1.08, phase: 0.6 + Math.PI, axis: "z" },
+    ],
+    checkpoints: [{ x: 0, y: 8.0, z: -16.2 }, { x: 0, y: 8.0, z: -32.6 }],
+    stars: [
+      { x: 0, y: 8.8, z: -8.2 },
+      { x: 0, y: 8.8, z: -24.4 },
+      { x: 0, y: 7.2, z: -39.2 },
+    ],
+    finish: { x: 0, y: 4.8, z: -47.4 },
+  },
+
+  // ===== STAGE 07: DUAL-GEAR STEAM LEAP (Classic Clockwork Synthesis) =====
+  {
+    id: "clockwork",
+    name: "07 · 双轮蒸汽飞跃",
+    subtitle: "齿轮转盘 · 雕花摆锤 · 弹跳蘑菇综合试炼",
+    diff: 4,
+    ...CLOCKWORK,
+    bonusTime: 40,
+    start: { x: 0, y: 8.6, z: 0 },
+    deathY: -9,
+    platforms: [
+      { kind: "brass", x: 0, y: 8.0, z: 0, w: 6.0, d: 6.0, h: 1.2 },
+      { kind: "wood", x: 0, y: 8.0, z: -7.5, w: 2.2, d: 9.4, h: 0.55 },
+      { kind: "brass", x: 0, y: 8.0, z: -14.8, w: 5.6, d: 5.6, h: 1.2 },
       { kind: "brass", x: 0, y: 9.2, z: -23.4, w: 5.6, d: 5.4, h: 1.2 },
       { kind: "ramp", x: 0, y: 7.1, z: -29.8, w: 3.6, d: 7.6, h: 0.75, yStart: 9.2, yEnd: 5.0, dir: "-z" },
       { kind: "brass", x: 0, y: 5.0, z: -35.8, w: 5.4, d: 5.0, h: 1.2 },
@@ -250,10 +451,10 @@ export const TRACKS = [
       { x: 1.8, y: 5.0, z: -47.0, r: 4.1, h: 0.9, omega: -1.05 },
     ],
     mushrooms: [
-      { x: 0, y: 8.15, z: -16.0, r: 1.35, vy: 11.8, vz: -9.5 },
+      { x: 0, y: 8.15, z: -16.0, r: 1.4, vy: 11.8, vz: -9.5 },
     ],
     boosts: [
-      { x: 0, y: 5.05, z: -53.2, w: 2.0, d: 3.2, fx: 0, fz: -24 },
+      { x: 0, y: 5.05, z: -53.2, w: 2.0, d: 3.2, fx: 0, fz: -22 },
     ],
     hammers: [
       { x: 0, y: 11.4, z: -6.0, len: 3.2, speed: 2.4, amp: 1.08, phase: 0, axis: "z" },
@@ -273,15 +474,49 @@ export const TRACKS = [
     ],
     finish: { x: 0, y: 5.0, z: -60.8 },
   },
+
+  // ===== STAGE 08: FROST CRYSTAL SLIDE (Intro to Low-Friction Ice) =====
+  {
+    id: "frost_slide",
+    name: "08 · 寒霜冰晶滑道",
+    subtitle: "初遇低摩擦冰面 · 宽阔冰晶漂移 · 提前控速",
+    diff: 4,
+    ...AURORA,
+    bonusTime: 42,
+    start: { x: 0, y: 10.6, z: 0 },
+    deathY: -8,
+    platforms: [
+      { kind: "crystal", x: 0, y: 10.0, z: 0, w: 6.4, d: 6.2, h: 1.1 },
+      { kind: "ice_ramp", x: 0, y: 8.6, z: -7.2, w: 4.8, d: 8.4, h: 0.75, yStart: 10.0, yEnd: 7.2, dir: "-z" },
+      { kind: "ice", x: 0, y: 7.2, z: -14.8, w: 7.4, d: 7.2, h: 1.0 },
+      { kind: "ice", x: 7.0, y: 7.2, z: -14.8, w: 7.2, d: 4.4, h: 0.9 },
+      { kind: "crystal", x: 13.0, y: 7.2, z: -14.8, w: 6.2, d: 6.2, h: 1.1 },
+      { kind: "ice", x: 13.0, y: 7.2, z: -23.0, w: 4.0, d: 10.6, h: 0.85 },
+      { kind: "crystal", x: 13.0, y: 7.2, z: -31.6, w: 7.0, d: 7.0, h: 1.2 },
+    ],
+    gears: [],
+    mushrooms: [],
+    boosts: [],
+    hammers: [
+      { x: 13.0, y: 10.6, z: -23.0, len: 3.2, speed: 2.3, amp: 1.05, phase: 0, axis: "z" },
+    ],
+    checkpoints: [{ x: 13.0, y: 7.2, z: -14.8 }],
+    stars: [
+      { x: 0, y: 9.2, z: -7.2 },
+      { x: 7.0, y: 8.0, z: -14.8 },
+      { x: 13.0, y: 8.0, z: -23.0 },
+    ],
+    finish: { x: 13.0, y: 7.2, z: -32.8 },
+  },
+
+  // ===== STAGE 09: NEON GLASS LABYRINTH =====
   {
     id: "aurora",
-    name: "03 · 极光水晶高塔",
-    subtitle: "低摩擦冰晶滑道 · 霓虹玻璃窄路 · 终极挑战",
-    skyTop: 0x0d1538,
-    skyBottom: 0x3b1d66,
-    fogColor: 0x24174a,
-    sunColor: 0xb8f2ff,
-    bonusTime: 40,
+    name: "09 · 霓虹玻璃迷廊",
+    subtitle: "冰面发卡弯 · 霓虹玻璃窄路 · 高空云朵捷径",
+    diff: 5,
+    ...AURORA,
+    bonusTime: 42,
     start: { x: 0, y: 10.6, z: 0 },
     deathY: -8,
     platforms: [
@@ -290,31 +525,25 @@ export const TRACKS = [
       { kind: "ice", x: 0, y: 6.0, z: -15.4, w: 6.8, d: 6.4, h: 1.0 },
       { kind: "ice", x: 6.6, y: 6.0, z: -15.4, w: 6.6, d: 3.2, h: 0.8 },
       { kind: "ice", x: 12.0, y: 6.0, z: -15.4, w: 5.6, d: 5.8, h: 1.0 },
-      { kind: "neon", x: 12.0, y: 6.0, z: -24.2, w: 1.75, d: 12.2, h: 0.45 },
+      { kind: "neon", x: 12.0, y: 6.0, z: -24.2, w: 1.85, d: 12.2, h: 0.45 },
       { kind: "crystal", x: 12.0, y: 6.0, z: -33.2, w: 5.8, d: 5.8, h: 1.1 },
-      { kind: "neon", x: 6.2, y: 4.5, z: -38.8, w: 2.0, d: 10.6, h: 0.45, secret: true },
+      { kind: "neon", x: 6.2, y: 4.5, z: -38.8, w: 2.1, d: 10.6, h: 0.45, secret: true },
       { kind: "ice", x: 5.2, y: 6.0, z: -33.2, w: 8.2, d: 2.6, h: 0.65 },
       { kind: "crystal", x: 0, y: 6.0, z: -33.2, w: 5.2, d: 5.2, h: 1.1 },
-      { kind: "neon", x: 0, y: 4.5, z: -41.4, w: 1.85, d: 11.4, h: 0.45 },
+      { kind: "neon", x: 0, y: 4.5, z: -41.4, w: 1.95, d: 11.4, h: 0.45 },
       { kind: "crystal", x: 0, y: 4.5, z: -50.2, w: 7.4, d: 7.2, h: 1.2 },
     ],
-    gears: [
-      { x: 0, y: 4.5, z: -41.4, r: 3.2, h: 0.7, omega: 1.35 },
-    ],
-    mushrooms: [
-      { x: 12.0, y: 6.15, z: -16.8, r: 1.25, vy: 10.2, vz: -7.0 },
-    ],
+    gears: [{ x: 0, y: 4.5, z: -41.4, r: 3.2, h: 0.7, omega: 1.35 }],
+    mushrooms: [{ x: 12.0, y: 6.15, z: -16.8, r: 1.25, vy: 10.2, vz: -7.0 }],
     boosts: [
-      { x: 12.0, y: 6.05, z: -22.2, w: 1.6, d: 3.4, fx: 0, fz: -26 },
-      { x: 6.2, y: 4.55, z: -38.8, w: 1.8, d: 3.2, fx: -12, fz: -24 },
+      { x: 12.0, y: 6.05, z: -22.2, w: 1.6, d: 3.4, fx: 0, fz: -24 },
+      { x: 6.2, y: 4.55, z: -38.8, w: 1.8, d: 3.2, fx: -12, fz: -22 },
     ],
     hammers: [
       { x: 12.0, y: 9.4, z: -26.2, len: 3.2, speed: 2.7, amp: 1.05, phase: 0.5, axis: "z" },
       { x: 0, y: 7.9, z: -44.2, len: 3.2, speed: 3.0, amp: 1.1, phase: 2.0, axis: "z" },
     ],
-    checkpoints: [
-      { x: 12.0, y: 6.0, z: -33.2 },
-    ],
+    checkpoints: [{ x: 12.0, y: 6.0, z: -33.2 }],
     stars: [
       { x: 0, y: 8.6, z: -7.6 },
       { x: 6.6, y: 6.8, z: -15.4 },
@@ -323,6 +552,56 @@ export const TRACKS = [
       { x: 0, y: 5.3, z: -41.4 },
     ],
     finish: { x: 0, y: 4.5, z: -51.4 },
+  },
+
+  // ===== STAGE 10: GRAND WITCH SKY FINALE (All Mechanics Combined!) =====
+  {
+    id: "sky_finale",
+    name: "10 · 魔女苍穹终章",
+    subtitle: "全机制大满贯 · 冰坡×泥沼×蘑菇×双齿轮×终极摆锤",
+    diff: 5,
+    ...AURORA,
+    bonusTime: 46,
+    start: { x: 0, y: 11.6, z: 0 },
+    deathY: -8,
+    platforms: [
+      { kind: "crystal", x: 0, y: 11.0, z: 0, w: 6.2, d: 6.2, h: 1.2 },
+      // Steep Ice Plunge into Honey Mud Brake Pad!
+      { kind: "ice_ramp", x: 0, y: 9.0, z: -7.4, w: 4.0, d: 9.0, h: 0.75, yStart: 11.0, yEnd: 7.0, dir: "-z" },
+      { kind: "mud", x: 0, y: 7.0, z: -14.8, w: 6.0, d: 6.0, h: 1.1 },
+      // Mushroom Vault over gap onto High Crystal Island (+1.4m)
+      { kind: "crystal", x: 0, y: 8.4, z: -24.2, w: 5.8, d: 5.8, h: 1.2 },
+      // Twin High-Speed Gears -> Neon Hammer Sprint -> Grand Finale Portal!
+      { kind: "crystal", x: 0, y: 8.4, z: -42.2, w: 5.6, d: 5.4, h: 1.2 },
+      { kind: "neon", x: 0, y: 8.4, z: -51.0, w: 1.9, d: 12.6, h: 0.45 },
+      { kind: "crystal", x: 0, y: 8.4, z: -60.6, w: 7.8, d: 7.6, h: 1.4 },
+    ],
+    gears: [
+      { x: -1.8, y: 8.4, z: -30.2, r: 4.0, h: 0.85, omega: 1.15 },
+      { x: 1.8, y: 8.4, z: -36.2, r: 4.0, h: 0.85, omega: -1.25 },
+    ],
+    mushrooms: [
+      { x: 0, y: 7.15, z: -16.6, r: 1.4, vy: 12.2, vz: -9.6 },
+    ],
+    boosts: [
+      { x: 0, y: 8.45, z: -48.0, w: 1.7, d: 3.0, fx: 0, fz: -24 },
+    ],
+    hammers: [
+      { x: 0, y: 11.8, z: -49.2, len: 3.2, speed: 2.9, amp: 1.08, phase: 0, axis: "z" },
+      { x: 0, y: 11.8, z: -53.4, len: 3.2, speed: 3.1, amp: 1.1, phase: Math.PI, axis: "z" },
+    ],
+    checkpoints: [
+      { x: 0, y: 8.4, z: -24.2 },
+      { x: 0, y: 8.4, z: -42.2 },
+    ],
+    stars: [
+      { x: 0, y: 9.6, z: -7.4 },
+      { x: 0, y: 11.8, z: -20.2 },
+      { x: -1.8, y: 9.2, z: -30.2 },
+      { x: 1.8, y: 9.2, z: -36.2 },
+      { x: 0, y: 9.2, z: -51.4 },
+    ],
+    finish: { x: 0, y: 8.4, z: -62.0 },
   },
 ];
 

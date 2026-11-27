@@ -249,7 +249,8 @@ function renderLobby() {
   TRACKS.forEach((t, idx) => {
     const unlocked = isTrackUnlocked(idx);
     const cleared = save.clearedTracks.includes(idx);
-    const diffStars = "★".repeat(idx + 1) + "☆".repeat(2 - idx);
+    const d = t.diff || Math.min(5, Math.ceil((idx + 1) / 2));
+    const diffStars = "★".repeat(d) + "☆".repeat(5 - d);
     const bestT = save.bestTrackTimes?.[t.id];
     const card = document.createElement("button");
     card.className = `tcard ${selectedPracticeTrack === idx ? "active" : ""} ${unlocked ? "" : "locked"}`;
@@ -426,6 +427,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
       boostFlash: 0,
     },
     input: { ix: 0, iz: 0, mouseAccX: 0, mouseAccZ: 0, keys: new Set(), touchActive: false, lx: 0, ly: 0 },
+    shownTips: new Set(),
     urgentLastSec: 10,
     camPos: new THREE.Vector3(track.start.x + 8.5, track.start.y + 10.5, track.start.z + 11.5),
     camLook: new THREE.Vector3(track.start.x, track.start.y - 0.3, track.start.z - 2.0),
@@ -562,8 +564,8 @@ function finishStage(cleared) {
       unlockBox.hidden = true;
     }
 
-    document.getElementById("res-tag").textContent = isFinalTourney ? "🏆 TOURNAMENT CHAMPION!" : "✨ STAGE CLEAR!";
-    document.getElementById("res-title").textContent = isFinalTourney ? "🎉 3 关锦标赛全通！" : `✅ 通过 ${state.track.name}`;
+    document.getElementById("res-tag").textContent = isFinalTourney ? "🏆 GRAND CHAMPION!" : "✨ STAGE CLEAR!";
+    document.getElementById("res-title").textContent = isFinalTourney ? "🎉 10 关大冒险全通！" : `✅ 通过 ${state.track.name}`;
     document.getElementById("res-sub").textContent =
       state.mode === "tourney" && hasNextStage
         ? `剩余 ${state.timeLeft.toFixed(1)}s 已全额结转！下一关再奖 +${TRACKS[state.trackIndex + 1].bonusTime}s！`
@@ -584,7 +586,7 @@ function finishStage(cleared) {
         loadTrack(state.trackIndex + 1, state.mode, state.mode === "tourney" ? state.timeLeft : 0);
       };
     } else {
-      nextBtn.textContent = "🏆 再冲一轮 3 关锦标赛";
+      nextBtn.textContent = "🏆 再冲一轮 10 关大冒险";
       nextBtn.onclick = () => loadTrack(0, "tourney", 0);
     }
   } else {
@@ -721,14 +723,14 @@ function updatePhysics(dt) {
   const driveZ = -rawX * sy + rawZ * cy;
 
   const isIce = b.surfaceKind === "ice" || b.surfaceKind === "ice_ramp";
-  const accelMult = (b.grounded ? (isIce ? 0.55 : 1.0) : 0.36) * catStats.accel;
+  const isMud = b.surfaceKind === "mud";
+  const accelMult = (b.grounded ? (isMud ? 0.45 : isIce ? 0.55 : 1.0) : 0.36) * catStats.accel;
   b.vx += driveX * accelMult * dt;
   b.vz += driveZ * accelMult * dt;
 
-  // Authentic Rigid-Sphere Rolling Inertia vs Active Steering Grip!
-  // Natural coasting drag is low so releasing input preserves momentum & lets downhill gravity truly accelerate!
+  // Authentic Rigid-Sphere Rolling Inertia vs Sticky Honey Mud vs Active Steering Grip!
   const isDriving = Math.hypot(driveX, driveZ) > 0.5;
-  const rollingDrag = b.grounded ? (isIce ? 0.90 : 0.64) : 0.88;
+  const rollingDrag = b.grounded ? (isMud ? 0.08 : isIce ? 0.90 : 0.64) : 0.88;
   b.vx *= Math.pow(rollingDrag, dt);
   b.vz *= Math.pow(rollingDrag, dt);
   // Active grip helps carve corners & brake when pushing against current velocity (never acts like glue when coasting!)
@@ -846,6 +848,16 @@ function updatePhysics(dt) {
     }
   } else {
     b.grounded = false;
+  }
+
+  // Stage 01 Interactive Tutorial Zone Tips!
+  if (state.track.tips && state.track.tips.length > 0) {
+    state.track.tips.forEach((tip, i) => {
+      if (!state.shownTips.has(i) && b.z <= tip.z) {
+        state.shownTips.add(i);
+        showToast(tip.msg);
+      }
+    });
   }
 
   // Fall off floating sky island!
@@ -1147,9 +1159,10 @@ function syncHud() {
   document.getElementById("hud-status").textContent =
     b.popTimer > 0 ? "💥 破球复活中…"
       : b.dizzyTimer > 0 ? "💫 摔晕冒金星！"
-        : b.surfaceKind === "ice" || b.surfaceKind === "ice_ramp" ? "❄️ 冰面极限漂移！"
-          : b.boostFlash > 0 ? "🌈 彩虹加速狂飙！"
-            : "🐾 全速滚动中";
+        : b.surfaceKind === "mud" ? "🍯 陷入蜂蜜泥沼减速！"
+          : b.surfaceKind === "ice" || b.surfaceKind === "ice_ramp" ? "❄️ 冰面极限漂移！"
+            : b.boostFlash > 0 ? "🌈 彩虹加速狂飙！"
+              : "🐾 全速滚动中";
 }
 
 // ===== AUTHENTIC HAMSTERBALL CONTROLS (Pointer Lock Mouse + WASD + Mobile Touch Swipe!) =====

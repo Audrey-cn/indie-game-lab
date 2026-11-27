@@ -148,8 +148,8 @@
     }
     .tab-pane[hidden] { display: none; }
 
-    /* Progressive Difficulty Track Cards */
-    .track-cards { display: flex; flex-direction: column; gap: 7px; }
+    /* Progressive Difficulty Track Cards (Scrollable 10-Stage Adventure) */
+    .track-cards { display: flex; flex-direction: column; gap: 7px; max-height: 215px; overflow-y: auto; padding-right: 2px; }
     .tcard {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       background: #fff; border: 2.5px solid #d9cbe8; border-radius: 16px;
@@ -309,7 +309,7 @@
         <div class="tab-pane" id="pane-tracks">
           <div class="track-cards" id="track-cards"></div>
           <div class="cta-row">
-            <button class="gbtn gbtn-play" id="btn-tourney">🏆 3关锦标赛</button>
+            <button class="gbtn gbtn-play" id="btn-tourney">🏆 10关大冒险</button>
             <button class="gbtn gbtn-gold" id="btn-practice">🎯 挑战所选关卡</button>
           </div>
         </div>
