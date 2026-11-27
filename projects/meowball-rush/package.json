@@ -12,6 +12,7 @@
     "three": "^0.182.0"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "qrcode-generator": "^2.0.4"
   }
 }

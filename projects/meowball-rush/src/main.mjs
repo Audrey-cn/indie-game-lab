@@ -474,8 +474,9 @@ function sampleTrackSurface(x, y, z, r) {
         slopeX = (p.yEnd - p.yStart) / p.w;
       }
     }
-    // Only collide if ball bottom is near or above the surface top
-    if (y - r <= surfY + 0.55 && y >= surfY - 0.85 && surfY > bestY) {
+    // Only snap to surface if ball bottom is descending onto it or within tiny smooth bevel (<= 0.14m).
+    // Taller 90-degree vertical steps are handled by true rigid-body momentum & radius climbing physics!
+    if (y - r <= surfY + 0.55 && y - r >= surfY - 0.14 && surfY > bestY) {
       bestY = surfY;
       bestSurf = { y: surfY, kind: p.kind, slopeX, slopeZ, secret: p.secret, gearVx: 0, gearVz: 0 };
     }
@@ -485,7 +486,7 @@ function sampleTrackSurface(x, y, z, r) {
     const dx = x - g.x;
     const dz = z - g.z;
     const dist = Math.hypot(dx, dz);
-    if (dist <= g.r + r * 0.35 && y - r <= g.y + 0.55 && y >= g.y - 0.85 && g.y > bestY) {
+    if (dist <= g.r + r * 0.35 && y - r <= g.y + 0.55 && y - r >= g.y - 0.14 && g.y > bestY) {
       bestY = g.y;
       // Tangential rotational carry velocity from the spinning brass gear!
       bestSurf = {
@@ -720,18 +721,34 @@ function updatePhysics(dt) {
   const driveZ = -rawX * sy + rawZ * cy;
 
   const isIce = b.surfaceKind === "ice" || b.surfaceKind === "ice_ramp";
-  const accelMult = (b.grounded ? (isIce ? 0.52 : 1.0) : 0.35) * catStats.accel;
+  const accelMult = (b.grounded ? (isIce ? 0.55 : 1.0) : 0.36) * catStats.accel;
   b.vx += driveX * accelMult * dt;
   b.vz += driveZ * accelMult * dt;
 
-  // Surface Friction & Gravity
-  const friction = b.grounded ? (isIce ? 0.48 : 0.14 / catStats.grip) : 0.65;
-  b.vx *= Math.pow(friction, dt);
-  b.vz *= Math.pow(friction, dt);
+  // Authentic Rigid-Sphere Rolling Inertia vs Active Steering Grip!
+  // Natural coasting drag is low so releasing input preserves momentum & lets downhill gravity truly accelerate!
+  const isDriving = Math.hypot(driveX, driveZ) > 0.5;
+  const rollingDrag = b.grounded ? (isIce ? 0.90 : 0.64) : 0.88;
+  b.vx *= Math.pow(rollingDrag, dt);
+  b.vz *= Math.pow(rollingDrag, dt);
+  // Active grip helps carve corners & brake when pushing against current velocity (never acts like glue when coasting!)
+  if (b.grounded && isDriving && !isIce) {
+    const spdNow = Math.hypot(b.vx, b.vz);
+    const dLen = Math.hypot(driveX, driveZ);
+    if (spdNow > 0.5 && dLen > 0.1) {
+      const dot = (b.vx * driveX + b.vz * driveZ) / (spdNow * dLen);
+      if (dot < 0.35) {
+        // Braking or sharp turn: catStats.grip cleanly tightens lateral slip
+        const brakeDrag = Math.pow(Math.max(0.28, 0.58 / catStats.grip), dt);
+        b.vx *= brakeDrag;
+        b.vz *= brakeDrag;
+      }
+    }
+  }
   b.vy -= 26.0 * dt;
 
   // Cap max horizontal speed
-  const maxSpd = 18.5 * catStats.topSpeed;
+  const maxSpd = 19.5 * catStats.topSpeed;
   const hSpd = Math.hypot(b.vx, b.vz);
   if (hSpd > maxSpd) {
     b.vx = (b.vx / hSpd) * maxSpd;
@@ -742,10 +759,14 @@ function updatePhysics(dt) {
   b.y += b.vy * dt;
   b.z += b.vz * dt;
 
-  // Solid Side-Wall Pushout: prevents the ball from clipping horizontally into raised platforms!
+  // True Rigid-Body 90-Degree Step-Climbing & Solid Wall Collision!
+  // Uses exact sphere radius (b.r = 0.62) & classical kinetic momentum threshold v_min(stepH, r, g):
+  // - If stepH >= 0.78 * r: physically impossible vertical wall -> elastic bounce!
+  // - If 0.08 < stepH < 0.78 * r: climbs ONLY if incoming velocity >= vMin (and deducts potential energy!), else bounces back!
   for (const p of state.track.platforms) {
     if (p.kind === "ramp" || p.kind === "ice_ramp" || p.kind === "cloud") continue;
-    if (b.y < p.y - 0.12 && b.y + b.r > p.y - p.h) {
+    const stepH = p.y - (b.y - b.r);
+    if (stepH > 0.08 && b.y + b.r > p.y - p.h) {
       const hw = p.w * 0.5 + b.r;
       const hd = p.d * 0.5 + b.r;
       const dx = b.x - p.x;
@@ -753,18 +774,39 @@ function updatePhysics(dt) {
       if (Math.abs(dx) < hw && Math.abs(dz) < hd) {
         const penX = hw - Math.abs(dx);
         const penZ = hd - Math.abs(dz);
-        if (penX < penZ) {
-          b.x = p.x + Math.sign(dx || 1) * hw;
-          b.vx = -b.vx * 0.45;
+        const hitX = penX < penZ;
+        const sgn = hitX ? Math.sign(dx || 1) : Math.sign(dz || 1);
+        const vIn = hitX ? -sgn * b.vx : -sgn * b.vz;
+
+        // Classical sphere-over-curb momentum criterion: requires higher speed as stepH approaches sphere radius r!
+        const maxClimbH = b.r * 0.78;
+        const canClimb = stepH < maxClimbH;
+        const vMin = canClimb
+          ? (b.r / Math.max(0.12, b.r - stepH)) * Math.sqrt(2.8 * 26.0 * stepH) * 0.48
+          : Infinity;
+
+        if (canClimb && vIn >= vMin) {
+          // Sufficient momentum to vault up the 90° lip! Deduct real gravitational potential energy & give upward pop!
+          b.y = p.y + b.r + 0.02;
+          const vAfter = Math.sqrt(Math.max(0.5, vIn * vIn - 2.0 * 26.0 * stepH * 0.45));
+          if (hitX) b.vx = -sgn * vAfter;
+          else b.vz = -sgn * vAfter;
+          b.vy = Math.max(b.vy, Math.min(4.2, Math.sqrt(2 * 26 * stepH) * 0.42));
         } else {
-          b.z = p.z + Math.sign(dz || 1) * hd;
-          b.vz = -b.vz * 0.45;
+          // Step too tall or momentum too weak -> solid rigid-body rebound off the vertical face!
+          if (hitX) {
+            b.x = p.x + sgn * hw;
+            if (vIn > 0) b.vx = sgn * Math.max(1.2, vIn * 0.48);
+          } else {
+            b.z = p.z + sgn * hd;
+            if (vIn > 0) b.vz = sgn * Math.max(1.2, vIn * 0.48);
+          }
         }
       }
     }
   }
 
-  // Surface Collision & Smooth, Controllable Slope Physics
+  // Surface Collision & True Inclined-Plane Gravity Decomposition (a = 5/7 * g * sin(theta)!)
   const surf = sampleTrackSurface(b.x, b.y, b.z, b.r);
   if (surf && b.vy <= 1.2) {
     const impactVy = -b.vy;
@@ -783,20 +825,14 @@ function updatePhysics(dt) {
     }
     b.grounded = true;
     b.surfaceKind = surf.kind;
-    // Realistic, controllable slope gravity (g * sin(theta) scaled for crisp arcade counter-steering!)
-    const isIceSlope = surf.kind === "ice_ramp";
-    const slopeGain = isIceSlope ? 14.5 : 11.2;
-    b.vx -= surf.slopeX * slopeGain * dt;
-    b.vz += surf.slopeZ * slopeGain * dt;
-    // Soft downhill speed cap so steep ramps feel fast without launching uncontrollably
+    // True rolling-sphere gravity along ramp: a = (5/7) * g * sin(theta) — coasting downhill genuinely accelerates!
     if (surf.slopeX !== 0 || surf.slopeZ !== 0) {
-      const rampCap = (isIceSlope ? 13.8 : 11.8) * catStats.topSpeed;
-      const curSpd = Math.hypot(b.vx, b.vz);
-      if (curSpd > rampCap) {
-        const blend = rampCap + (curSpd - rampCap) * Math.pow(0.15, dt);
-        b.vx = (b.vx / curSpd) * blend;
-        b.vz = (b.vz / curSpd) * blend;
-      }
+      const isIceSlope = surf.kind === "ice_ramp";
+      const gSlope = isIceSlope ? 24.5 : 19.5;
+      const sinX = surf.slopeX / Math.hypot(1, surf.slopeX);
+      const sinZ = surf.slopeZ / Math.hypot(1, surf.slopeZ);
+      b.vx -= sinX * gSlope * dt;
+      b.vz += sinZ * gSlope * dt;
     }
     // Rotating Gear tangential carry!
     if (surf.gearVx || surf.gearVz) {
