@@ -13,7 +13,6 @@ import { createLunarSurvey, SURVEY_SITES } from "../world/lunar-survey.mjs";
 import { bindLunarEarthObservatory, canObserveEarth, EARTH_SITE, installEarthTelescope, isNearEarthObservatory } from "../ui/lunar-earth-observatory.mjs";
 import { createLunarAmbientActivity, DUST_MONITOR_SITE } from "../world/lunar-ambient-activity.mjs";
 import { createLunarBase } from "../world/lunar-base.mjs";
-import { addLunarOutpostModels } from "../world/lunar-outpost-models.mjs";
 import { createRelay, createObservatory, RELAY_SITE, OBSERVATORY_SITE } from "../world/lunar-expansion.mjs";
 import { createPowerStation } from "../world/lunar-power-station.mjs";
 import { createScoutDrone } from "../simulation/lunar-scout.mjs";
@@ -102,7 +101,7 @@ scene.environment = createReflectionEnvironment(renderer);
 scene.environmentIntensity = 0.45;
 
 await bootStep(28, t("烘制月壤、远坡与科研站", "Preparing terrain and the field station"));
-const { ground, tallRockFixtures, sampleRockSupport, lowRockSupports, wheelSurface, applyProceduralSector: rebuildSector } = buildLunarTerrain(scene, renderer, camera, sun, { mobile: mobileGraphics });
+const { ground, tallRockFixtures, sampleRockSupport, lowRockSupports, wheelSurface, applyProceduralSector } = buildLunarTerrain(scene, renderer, camera, sun, { mobile: mobileGraphics });
 const ambientActivity = createLunarAmbientActivity(scene, height, { sunlight: solarKeyOffset });
 const sharedMats = createSharedMaterials();
 const { silver, slateMetal, ice, amber, roadMarks } = sharedMats;
@@ -141,12 +140,6 @@ function layContactPatch(patch, x, z, cosine, sine) {
 await bootStep(54, t("检查工坊、车辆和巡检设备", "Preparing rover and field equipment"));
 const base = createLunarBase({ height, glow, displayProgressStep: mobileGraphics ? 5 : 1 });
 scene.add(base.station);
-const outpostModels = await addLunarOutpostModels(scene, height);
-function applyProceduralSector(seed, biomeIndex) {
-  const result = rebuildSector(seed, biomeIndex);
-  outpostModels.refreshTerrain();
-  return result;
-}
 const workshopPoint = { x: base.workshopPoint.x, z: base.workshopPoint.z, radius: base.visitRadius, access: base.workshopAccess };
 const campaignWorldGroup = new THREE.Group();
 campaignWorldGroup.name = "campaign-world-props";

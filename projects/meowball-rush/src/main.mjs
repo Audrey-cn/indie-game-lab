@@ -1,4 +1,4 @@
-// Meowball Rush v0.1.0 — Authentic Hamsterball 3D Physics + WitchSpring Cel-Shading!
+// Meowball Rush v1.3.0 — Storybook sky valleys, banked troughs and magic elevators.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -8,7 +8,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, DEFAULT_SAVE, TRACKS } from "./config.mjs";
 import { sfx } from "./audio.mjs";
-import { buildTrackScene, createKittyBall, createRainbowRibbon } from "./cel-builder.mjs";
+import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings } from "./cel-builder.mjs";
 import { generateClearPoster } from "./poster.mjs";
 import { GLB_MODELS } from "./models/manifest.mjs";
 import coverUrl from "./assets/cover.webp";
@@ -517,6 +517,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
       vz: 0,
       r: 0.62,
       grounded: false,
+      supportPlatform: null,
       surfaceKind: "grass",
       dizzyTimer: 0,
       popTimer: 0,
@@ -551,6 +552,73 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
 }
 
 // ===== DETERMINISTIC 3D SURFACE QUERY (Platforms, Ramps & Rotating Gears!) =====
+function platformHeight(p, time = state.elapsed) {
+  if (p.kind !== "elevator") return p.y;
+  return (p.yMin + p.yMax) * 0.5
+    + Math.sin(time * p.speed + (p.phase || 0)) * (p.yMax - p.yMin) * 0.5;
+}
+
+function platformFloor(p, x, z, time = state.elapsed) {
+  let y = platformHeight(p, time);
+  let slopeX = 0;
+  let slopeZ = 0;
+  if (p.kind === "trough") {
+    const hw = p.w * 0.5;
+    const dx = Math.max(-hw, Math.min(hw, x - p.x));
+    y += 0.6 * (dx / hw) ** 2;
+    slopeX = 1.2 * dx / (hw * hw);
+  } else if (p.kind === "ramp" || p.kind === "ice_ramp") {
+    if (p.dir === "-z") {
+      const t = Math.max(0, Math.min(1, (p.z + p.d * 0.5 - z) / p.d));
+      y = p.yStart + (p.yEnd - p.yStart) * t;
+      slopeZ = (p.yEnd - p.yStart) / p.d;
+    } else if (p.dir === "+x") {
+      const t = Math.max(0, Math.min(1, (x - p.x + p.w * 0.5) / p.w));
+      y = p.yStart + (p.yEnd - p.yStart) * t;
+      slopeX = (p.yEnd - p.yStart) / p.w;
+    }
+  }
+  return { y, slopeX, slopeZ };
+}
+
+function clampHorizontalSpeed(b, limit) {
+  const speed = Math.hypot(b.vx, b.vz);
+  if (speed > limit) {
+    b.vx *= limit / speed;
+    b.vz *= limit / speed;
+  }
+}
+
+function isDownhillSurface(surf, b) {
+  return surf && (surf.kind === "ramp" || surf.kind === "ice_ramp")
+    && (-surf.slopeX * b.vx + surf.slopeZ * b.vz) > 0.01;
+}
+
+function collideSideRails(b, previousX, previousZ) {
+  for (const p of state.track.platforms) {
+    if (!p.walls && p.kind !== "trough") continue;
+    const floor = platformFloor(p, b.x, b.z).y;
+    const wallTop = platformHeight(p) + (p.kind === "trough" ? 1.35 : 0.55);
+    if (b.y + b.r < floor - (p.h || 0.6) || (b.y - b.r > wallTop && b.supportPlatform !== p)) continue;
+    // Ends stay open; retain the previous position so a fast bank cannot tunnel through a rail.
+    if (Math.abs(b.z - p.z) > p.d * 0.5 || Math.abs(previousZ - p.z) > p.d * 0.5 + b.r) continue;
+    const limit = p.w * 0.5 - b.r;
+    for (const side of [-1, 1]) {
+      if (p.kind !== "trough" && getSideWallOpenings(p, state.track.platforms, side)
+        .some(([lo, hi]) => b.z > lo + b.r && b.z < hi - b.r)) continue;
+      const lateral = (b.x - p.x) * side;
+      const previousLateral = (previousX - p.x) * side;
+      if (lateral > limit && (previousLateral <= p.w * 0.5 || b.supportPlatform === p)) {
+        b.x = p.x + side * limit;
+        if (b.vx * side > 0) b.vx = -side * Math.abs(b.vx) * (p.kind === "trough" ? 0.48 : 0.3);
+      } else if (lateral < p.w * 0.5 + b.r && previousLateral >= p.w * 0.5 + b.r) {
+        b.x = p.x + side * (p.w * 0.5 + b.r);
+        if (b.vx * side < 0) b.vx = side * Math.abs(b.vx) * 0.3;
+      }
+    }
+  }
+}
+
 function sampleTrackSurface(x, y, z, r) {
   const tr = state.track;
   let bestY = -999;
@@ -561,25 +629,14 @@ function sampleTrackSurface(x, y, z, r) {
     const hd = p.d * 0.5 + r * 0.35;
     if (Math.abs(x - p.x) > hw || Math.abs(z - p.z) > hd) continue;
 
-    let surfY = p.y;
-    let slopeX = 0;
-    let slopeZ = 0;
-    if (p.kind === "ramp" || p.kind === "ice_ramp") {
-      if (p.dir === "-z") {
-        const t = Math.max(0, Math.min(1, (p.z + p.d * 0.5 - z) / p.d));
-        surfY = p.yStart + (p.yEnd - p.yStart) * t;
-        slopeZ = (p.yEnd - p.yStart) / p.d;
-      } else if (p.dir === "+x") {
-        const t = Math.max(0, Math.min(1, (x - (p.x - p.w * 0.5)) / p.w));
-        surfY = p.yStart + (p.yEnd - p.yStart) * t;
-        slopeX = (p.yEnd - p.yStart) / p.w;
-      }
-    }
+    const { y: surfY, slopeX, slopeZ } = platformFloor(p, x, z);
     // Only snap to surface if ball bottom is descending onto it or within tiny smooth bevel (<= 0.14m).
     // Taller 90-degree vertical steps are handled by true rigid-body momentum & radius climbing physics!
-    if (y - r <= surfY + 0.55 && y - r >= surfY - 0.14 && surfY > bestY) {
+    const followingFloor = state.ball.grounded && state.ball.supportPlatform === p;
+    const crossedFloor = state.ball.previousBottom >= surfY - 0.02 && y - r <= surfY;
+    if (y - r <= surfY + 0.55 && (y - r >= surfY - 0.14 || followingFloor || crossedFloor) && surfY > bestY) {
       bestY = surfY;
-      bestSurf = { y: surfY, kind: p.kind, slopeX, slopeZ, secret: p.secret, gearVx: 0, gearVz: 0 };
+      bestSurf = { y: surfY, kind: p.kind, platform: p, slopeX, slopeZ, secret: p.secret, gearVx: 0, gearVz: 0 };
     }
   }
 
@@ -587,7 +644,8 @@ function sampleTrackSurface(x, y, z, r) {
     const dx = x - g.x;
     const dz = z - g.z;
     const dist = Math.hypot(dx, dz);
-    if (dist <= g.r + r * 0.35 && y - r <= g.y + 0.55 && y - r >= g.y - 0.14 && g.y > bestY) {
+    if (dist <= g.r + r * 0.35 && y - r <= g.y + 0.55
+      && (y - r >= g.y - 0.14 || state.ball.previousBottom >= g.y - 0.02) && g.y > bestY) {
       bestY = g.y;
       // Tangential rotational carry velocity from the spinning brass gear!
       bestSurf = {
@@ -774,6 +832,23 @@ function updatePhysics(dt) {
   const b = state.ball;
   const catStats = state.cat.stats;
   const inp = state.input;
+  const previousX = b.x;
+  const previousZ = b.z;
+  const speedBeforeDrive = Math.hypot(b.vx, b.vz);
+  const cruiseMax = 10.2 * catStats.topSpeed;
+  const burstMax = 15.2 * catStats.topSpeed;
+  // A full burst settles to cruise in 0.6s, even while holding the accelerator.
+  const settlingLimit = Math.max(cruiseMax, Math.min(burstMax, speedBeforeDrive) - (burstMax - cruiseMax) * dt / 0.6);
+  b.boostFlash = Math.max(0, b.boostFlash - dt);
+
+  for (const lift of dynamicMeshes.elevators || []) {
+    const curY = platformHeight(lift.def);
+    lift.mesh.position.y = curY;
+    if (b.grounded && b.supportPlatform === lift.def) {
+      b.y += curY - platformHeight(lift.def, state.elapsed - dt);
+    }
+  }
+  b.previousBottom = b.y - b.r;
 
   // Animate dynamic track hazards
   for (const g of dynamicMeshes.gears) {
@@ -806,6 +881,8 @@ function updatePhysics(dt) {
       b.vx = 0;
       b.vy = 0;
       b.vz = 0;
+      b.grounded = false;
+      b.supportPlatform = null;
       kittyRig.bubbleMesh.visible = true;
       kittyRig.kitty.visible = true;
       kittyRig.accGroup.visible = true;
@@ -874,17 +951,14 @@ function updatePhysics(dt) {
   }
   b.vy -= 26.0 * dt;
 
-  // Cap max horizontal speed
-  const maxSpd = 19.5 * catStats.topSpeed;
-  const hSpd = Math.hypot(b.vx, b.vz);
-  if (hSpd > maxSpd) {
-    b.vx = (b.vx / hSpd) * maxSpd;
-    b.vz = (b.vz / hSpd) * maxSpd;
-  }
+  const startSurf = b.grounded ? sampleTrackSurface(b.x, b.y, b.z, b.r) : null;
+  clampHorizontalSpeed(b, b.boostFlash > 0 || !b.grounded || isDownhillSurface(startSurf, b)
+    ? burstMax : settlingLimit);
 
   b.x += b.vx * dt;
   b.y += b.vy * dt;
   b.z += b.vz * dt;
+  collideSideRails(b, previousX, previousZ);
 
   // True Rigid-Body 90-Degree Step-Climbing & Solid Wall Collision!
   // Uses exact sphere radius (b.r = 0.62) & classical kinetic momentum threshold v_min(stepH, r, g):
@@ -892,10 +966,12 @@ function updatePhysics(dt) {
   // - If 0.08 < stepH < 0.78 * r: climbs ONLY if incoming velocity >= vMin (and deducts potential energy!), else bounces back!
   for (const p of state.track.platforms) {
     if (p.kind === "ramp" || p.kind === "ice_ramp" || p.kind === "cloud") continue;
-    const stepH = p.y - (b.y - b.r);
+    if (b.grounded && b.supportPlatform === p) continue;
+    const surfaceY = platformFloor(p, b.x, b.z).y;
+    const stepH = surfaceY - (b.y - b.r);
     // Allow seamless exit from a ramp onto its adjoining flat platform without catching the seam lip!
     const onRampSeam = (b.surfaceKind === "ramp" || b.surfaceKind === "ice_ramp") && stepH < 0.30;
-    if (!onRampSeam && stepH > 0.08 && b.y + b.r > p.y - p.h) {
+    if (!onRampSeam && stepH > 0.08 && b.y + b.r > surfaceY - p.h) {
       const hw = p.w * 0.5 + b.r;
       const hd = p.d * 0.5 + b.r;
       const dx = b.x - p.x;
@@ -916,7 +992,7 @@ function updatePhysics(dt) {
 
         if (canClimb && vIn >= vMin) {
           // Sufficient momentum to vault up the 90° lip! Deduct real gravitational potential energy & give upward pop!
-          b.y = p.y + b.r + 0.02;
+          b.y = surfaceY + b.r + 0.02;
           const vAfter = Math.sqrt(Math.max(0.5, vIn * vIn - 2.0 * 26.0 * stepH * 0.45));
           if (hitX) b.vx = -sgn * vAfter;
           else b.vz = -sgn * vAfter;
@@ -954,6 +1030,7 @@ function updatePhysics(dt) {
     }
     b.grounded = true;
     b.surfaceKind = surf.kind;
+    b.supportPlatform = surf.platform || null;
     // True rolling-sphere gravity along ramp: a = (5/7) * g * sin(theta) — coasting downhill genuinely accelerates!
     if (surf.slopeX !== 0 || surf.slopeZ !== 0) {
       const isIceSlope = surf.kind === "ice_ramp";
@@ -975,6 +1052,7 @@ function updatePhysics(dt) {
     }
   } else {
     b.grounded = false;
+    b.supportPlatform = null;
   }
 
   // Stage 01 Interactive Tutorial Zone Tips!
@@ -1045,15 +1123,14 @@ function updatePhysics(dt) {
   }
 
   // Rainbow Speed Boost Strips (Snappy & Controllable!)
-  b.boostFlash = Math.max(0, b.boostFlash - dt);
   for (const bs of state.track.boosts) {
     if (Math.abs(b.x - bs.x) < bs.w * 0.5 + b.r && Math.abs(b.z - bs.z) < bs.d * 0.5 + b.r && Math.abs(b.y - bs.y) < 1.2) {
       b.vx += bs.fx * dt * 1.45;
       b.vz += bs.fz * dt * 1.45;
       if (b.boostFlash <= 0) {
-        b.boostFlash = 0.6;
         sfx.playBoost();
       }
+      b.boostFlash = 0.6;
     }
   }
 
@@ -1095,6 +1172,11 @@ function updatePhysics(dt) {
       }
     }
   }
+
+  // Impulses from pickups, boosters and banks must obey the same speed envelope as driving.
+  clampHorizontalSpeed(b, b.boostFlash > 0 || !b.grounded || isDownhillSurface(surf, b)
+    ? burstMax : settlingLimit);
+  collideSideRails(b, previousX, previousZ);
 
   // Finish Portal!
   const fin = state.track.finish;

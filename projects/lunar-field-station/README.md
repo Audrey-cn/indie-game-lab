@@ -1,5 +1,5 @@
 <h1 align="center">月面采集站 · Lunar Field Station</h1>
-<p align="center"><strong>1.91 MiB 单文件离线可运行的 WebGL 2 三模式月面 3D 游戏与图形技术切片（Three.js r182）</strong></p>
+<p align="center"><strong>1.81 MB 单文件离线可运行的 WebGL 2 三模式月面 3D 游戏与图形技术切片（Three.js r182）</strong></p>
 
 <p align="center">
   <a href="https://audrey-cn.github.io/indie-game-lab/projects/lunar-field-station/"><img src="./media/play-zh.png" width="146" height="42" alt="在线试玩"></a>
@@ -14,7 +14,7 @@
   <a href="./docs/OPTIMIZATION_LOG.md">性能优化实测</a> ·
   <a href="./CHANGELOG.md">更新日志</a>
 </p>
-<p align="center"><sub>v0.4.0 · WebGL 2 · Three.js r182 · 1.91 MiB 单文件（Gzip 833 KiB） · 3 大玩法模式 · 3D 实时变形机库 · 手机竖/横屏全适配 · 按 <code>F2</code> 开启实时渲染 Breakdown</sub></p>
+<p align="center"><sub>v0.3.0 · WebGL 2 · Three.js r182 · 1.81 MB 单文件（Gzip 806 KB） · 3 大玩法模式 · 3D 实时变形机库 · 手机竖/横屏全适配 · 按 <code>F2</code> 开启实时渲染 Breakdown</sub></p>
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 工程与渲染亮点（点击直达核心源码）
 
-本项目在 **< 2.2 MB 单文件包体约束** 下，将 4 个 Kenney Space Kit CC0 GLB 模型内嵌为 data URL，结合程序化 PBR 月面场景、自定义 WebGL 2 图形管线、解耦式 120Hz 车辆动力学、颗粒合成音频与确定性自动化测试。
+本项目在 **< 2 MB 极限单文件包体约束** 下，不依赖外部 3D 模型资产，完整构建了程序化 PBR 月面场景、自定义 WebGL 2 图形管线、解耦式 120Hz 车辆动力学、颗粒合成音频与确定性自动化测试。
 
 | 技术模块 | 核心实现亮点 | 核心源码 |
 | :--- | :--- | :--- |

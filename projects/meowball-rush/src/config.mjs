@@ -198,17 +198,17 @@ export const TRACKS = [
       { z: -31.8, msg: "🍄 弹跳红蘑菇：高台爬不上去？踩蘑菇直接腾空飞跃到终点！" },
     ],
     platforms: [
-      { kind: "grass", x: 0, y: 8.0, z: 0, w: 7.4, d: 7.0, h: 1.2 },
+      { kind: "grass", x: 0, y: 8.0, z: 0, w: 7.4, d: 7.0, h: 1.2, walls: true },
       // Very gentle slope (drop only 1.2m over 6.4m -> ~10.6 deg)
       { kind: "ramp", x: 0, y: 7.4, z: -6.4, w: 5.4, d: 6.4, h: 0.75, yStart: 8.0, yEnd: 6.8, dir: "-z" },
       // Wide safe meadow with gentle straight boost pad
-      { kind: "grass", x: 0, y: 6.8, z: -12.6, w: 7.0, d: 6.6, h: 1.2 },
-      { kind: "grass", x: 0, y: 6.8, z: -20.2, w: 6.4, d: 9.4, h: 1.2 },
+      { kind: "grass", x: 0, y: 6.8, z: -12.6, w: 7.0, d: 6.6, h: 1.2, walls: true },
+      { kind: "grass", x: 0, y: 6.8, z: -20.2, w: 6.4, d: 9.4, h: 1.2, walls: true },
       // Honey Mud Slowdown Zone (clear visual contrast!)
-      { kind: "mud", x: 0, y: 6.8, z: -27.2, w: 6.0, d: 5.4, h: 1.1 },
+      { kind: "mud", x: 0, y: 6.8, z: -27.2, w: 6.0, d: 5.4, h: 1.1, walls: true },
       // Mushroom Launch Plaza -> Elevated Finish Terrace (+1.2m tall, teaches jumping!)
-      { kind: "grass", x: 0, y: 6.8, z: -33.0, w: 6.6, d: 6.8, h: 1.2 },
-      { kind: "grass", x: 0, y: 8.0, z: -42.2, w: 7.6, d: 7.4, h: 1.4 },
+      { kind: "grass", x: 0, y: 6.8, z: -33.0, w: 6.6, d: 6.8, h: 1.2, walls: true },
+      { kind: "grass", x: 0, y: 8.0, z: -42.2, w: 7.6, d: 7.4, h: 1.4, walls: true },
     ],
     boosts: [
       { x: 0, y: 6.85, z: -13.2, w: 2.8, d: 3.0, fx: 0, fz: -14 },
@@ -234,16 +234,16 @@ export const TRACKS = [
   {
     id: "garden",
     name: "02 · 微风石阶花园",
-    subtitle: "重力下坡 · 宽桥转向 · 隐藏云朵捷径",
+    subtitle: "重力下坡 · 弧槽滑行 · 隐藏云朵捷径",
     diff: 1,
     ...SKY_GARDEN,
     bonusTime: 52,
     start: { x: 0, y: 8.6, z: 0 },
     deathY: -9,
     platforms: [
-      { kind: "grass", x: 0, y: 8.0, z: 0, w: 6.8, d: 6.6, h: 1.2 },
+      { kind: "grass", x: 0, y: 8.0, z: 0, w: 6.8, d: 6.6, h: 1.2, walls: true },
       { kind: "ramp", x: 0, y: 6.9, z: -6.6, w: 4.8, d: 7.2, h: 0.8, yStart: 8.0, yEnd: 5.8, dir: "-z" },
-      { kind: "grass", x: 0, y: 5.8, z: -13.4, w: 6.8, d: 6.8, h: 1.2 },
+      { kind: "grass", x: 0, y: 5.8, z: -13.4, w: 6.8, d: 6.8, h: 1.2, walls: true },
       // Wide safe left route
       { kind: "wood", x: -5.6, y: 5.8, z: -13.4, w: 5.0, d: 3.0, h: 0.55 },
       { kind: "grass", x: -10.4, y: 5.8, z: -13.4, w: 5.6, d: 5.6, h: 1.2 },
@@ -255,8 +255,9 @@ export const TRACKS = [
       { kind: "cloud", x: 2.6, y: 4.0, z: -26.2, w: 5.0, d: 2.4, h: 0.45, secret: true },
       // Checkpoint & Finish
       { kind: "grass", x: 0, y: 3.2, z: -26.2, w: 6.4, d: 6.4, h: 1.2 },
-      { kind: "wood", x: 0, y: 3.2, z: -33.6, w: 2.8, d: 9.2, h: 0.5 },
-      { kind: "grass", x: 0, y: 3.2, z: -41.0, w: 7.0, d: 6.8, h: 1.2 },
+      // A broad, bankable trough keeps the first curved-floor lesson forgiving.
+      { kind: "trough", x: 0, y: 3.2, z: -33.6, w: 4.8, d: 9.2, h: 0.5 },
+      { kind: "grass", x: 0, y: 3.2, z: -41.0, w: 7.0, d: 6.8, h: 1.2, walls: true },
     ],
     boosts: [
       { x: 4.8, y: 5.25, z: -16.8, w: 1.8, d: 2.6, fx: 0, fz: -20 },
@@ -285,12 +286,12 @@ export const TRACKS = [
     start: { x: 0, y: 8.6, z: 0 },
     deathY: -9,
     platforms: [
-      { kind: "grass", x: 0, y: 8.0, z: 0, w: 6.6, d: 6.4, h: 1.2 },
-      { kind: "mud", x: 0, y: 8.0, z: -6.8, w: 5.8, d: 7.6, h: 1.1 },
-      { kind: "grass", x: 0, y: 8.0, z: -13.6, w: 6.4, d: 6.4, h: 1.2 },
+      { kind: "grass", x: 0, y: 8.0, z: 0, w: 6.6, d: 6.4, h: 1.2, walls: true },
+      { kind: "mud", x: 0, y: 8.0, z: -6.8, w: 5.8, d: 7.6, h: 1.1, walls: true },
+      { kind: "grass", x: 0, y: 8.0, z: -13.6, w: 6.4, d: 6.4, h: 1.2, walls: true },
       { kind: "ramp", x: 0, y: 6.6, z: -20.2, w: 4.4, d: 7.4, h: 0.8, yStart: 8.0, yEnd: 5.2, dir: "-z" },
       // Mud catch basin after downhill so you brake naturally!
-      { kind: "mud", x: 0, y: 5.2, z: -26.8, w: 6.4, d: 6.4, h: 1.1 },
+      { kind: "mud", x: 0, y: 5.2, z: -26.8, w: 6.4, d: 6.4, h: 1.1, walls: true },
       { kind: "wood", x: 0, y: 5.2, z: -34.6, w: 2.6, d: 9.8, h: 0.5 },
       { kind: "grass", x: 0, y: 5.2, z: -42.4, w: 6.8, d: 6.6, h: 1.2 },
     ],
@@ -328,8 +329,8 @@ export const TRACKS = [
       { kind: "grass", x: 0, y: 7.4, z: -9.4, w: 6.2, d: 6.2, h: 1.4 },
       // Elevated Step 2 (+1.4m via Mushroom 2)
       { kind: "grass", x: 0, y: 8.8, z: -18.8, w: 6.2, d: 6.2, h: 1.4 },
-      // High wooden skybridge + slow hammer
-      { kind: "wood", x: 0, y: 8.8, z: -26.4, w: 2.5, d: 9.6, h: 0.5 },
+      // High banked skybridge + slow hammer; enough width to carve either side.
+      { kind: "trough", x: 0, y: 8.8, z: -26.4, w: 4.8, d: 9.6, h: 0.5 },
       { kind: "grass", x: 0, y: 8.8, z: -34.0, w: 6.0, d: 6.0, h: 1.2 },
       // Joyful steep downhill plunge to Finish!
       { kind: "ramp", x: 0, y: 6.8, z: -40.8, w: 4.4, d: 8.2, h: 0.8, yStart: 8.8, yEnd: 4.8, dir: "-z" },
@@ -358,18 +359,25 @@ export const TRACKS = [
   {
     id: "gear_outpost",
     name: "05 · 黄昏齿轮前哨",
-    subtitle: "初遇黄金齿轮 · 切向带动力 · 日落工坊",
+    subtitle: "初遇黄金齿轮 · 切向带动力 · 黄昏升降台",
     diff: 3,
     ...CLOCKWORK,
-    bonusTime: 44,
+    bonusTime: 52,
     start: { x: 0, y: 8.6, z: 0 },
     deathY: -9,
+    tips: [
+      { z: -46.8, msg: "🛗 前方升降台：在宽平台等候最低点，登台停稳，升到高处再从另一端驶出！" },
+    ],
     platforms: [
       { kind: "brass", x: 0, y: 8.0, z: 0, w: 6.4, d: 6.2, h: 1.2 },
       { kind: "brass", x: 0, y: 8.0, z: -16.8, w: 6.2, d: 6.0, h: 1.2 },
       { kind: "ramp", x: 0, y: 6.5, z: -23.4, w: 4.2, d: 7.8, h: 0.8, yStart: 8.0, yEnd: 5.0, dir: "-z" },
       { kind: "brass", x: 0, y: 5.0, z: -30.2, w: 6.0, d: 6.0, h: 1.2 },
-      { kind: "brass", x: 0, y: 5.0, z: -48.0, w: 7.0, d: 6.8, h: 1.2 },
+      // Safe lower waiting dock; the lift is the only connection to the high exit.
+      { kind: "brass", x: 0, y: 5.0, z: -48.0, w: 7.0, d: 6.8, h: 1.2, walls: true },
+      // ~7s period, starts exactly at the lower dock (sin(-PI/2) = -1).
+      { kind: "elevator", x: 0, y: 5.0, z: -54.6, w: 6.2, d: 6.4, h: 1.2, yMin: 5.0, yMax: 7.0, speed: 0.9, phase: -Math.PI / 2, walls: true },
+      { kind: "brass", x: 0, y: 7.0, z: -61.3, w: 7.0, d: 7.0, h: 1.2, walls: true },
     ],
     gears: [
       { x: 0, y: 8.0, z: -8.4, r: 5.6, h: 0.9, omega: 0.72 },
@@ -379,14 +387,14 @@ export const TRACKS = [
     mushrooms: [],
     boosts: [],
     hammers: [],
-    checkpoints: [{ x: 0, y: 8.0, z: -16.8 }, { x: 0, y: 5.0, z: -30.2 }],
+    checkpoints: [{ x: 0, y: 8.0, z: -16.8 }, { x: 0, y: 5.0, z: -30.2 }, { x: 0, y: 5.0, z: -48.0 }],
     stars: [
       { x: 0, y: 8.8, z: -8.4 },
       { x: 0, y: 7.2, z: -23.4 },
       { x: -1.6, y: 5.8, z: -36.2 },
       { x: 1.6, y: 5.8, z: -42.0 },
     ],
-    finish: { x: 0, y: 5.0, z: -49.2 },
+    finish: { x: 0, y: 7.0, z: -62.5 },
   },
 
   // ===== STAGE 06: PENDULUM BELFRY CORRIDOR =====
@@ -479,7 +487,7 @@ export const TRACKS = [
   {
     id: "frost_slide",
     name: "08 · 寒霜冰晶滑道",
-    subtitle: "初遇低摩擦冰面 · 宽阔冰晶漂移 · 提前控速",
+    subtitle: "初遇低摩擦冰面 · 宽阔冰晶漂移 · 弧槽摆锤",
     diff: 4,
     ...AURORA,
     bonusTime: 44,
@@ -493,7 +501,7 @@ export const TRACKS = [
       { kind: "crystal", x: 0, y: 7.8, z: -21.2, w: 9.2, d: 2.8, h: 1.0 },
       { kind: "ice", x: 7.4, y: 7.8, z: -15.6, w: 7.6, d: 5.4, h: 0.9 },
       { kind: "crystal", x: 13.4, y: 7.8, z: -15.6, w: 6.6, d: 6.6, h: 1.1 },
-      { kind: "ice", x: 13.4, y: 7.8, z: -23.8, w: 4.4, d: 10.6, h: 0.85 },
+      { kind: "trough", x: 13.4, y: 7.8, z: -23.8, w: 5.4, d: 10.6, h: 0.85 },
       { kind: "crystal", x: 13.4, y: 7.8, z: -32.4, w: 7.2, d: 7.2, h: 1.2 },
     ],
     gears: [],
@@ -562,12 +570,15 @@ export const TRACKS = [
   {
     id: "sky_finale",
     name: "10 · 魔女苍穹终章",
-    subtitle: "全机制大满贯 · 冰坡×泥沼×蘑菇×双齿轮×终极摆锤",
+    subtitle: "全机制大满贯 · 弹跳双齿轮 · 摆锤冲刺 · 苍穹升降台",
     diff: 5,
     ...AURORA,
-    bonusTime: 46,
+    bonusTime: 54,
     start: { x: 0, y: 11.6, z: 0 },
     deathY: -8,
+    tips: [
+      { z: -59.0, msg: "🛗 最后的苍穹升降台：先在宽阔月台刹稳，等低位登台，升到顶端再驶向星门！" },
+    ],
     platforms: [
       { kind: "crystal", x: 0, y: 11.0, z: 0, w: 6.2, d: 6.2, h: 1.2 },
       // Steep Ice Plunge into Honey Mud Brake Pad!
@@ -575,10 +586,13 @@ export const TRACKS = [
       { kind: "mud", x: 0, y: 7.0, z: -14.8, w: 6.0, d: 6.0, h: 1.1 },
       // Mushroom Vault over gap onto High Crystal Island (+1.4m)
       { kind: "crystal", x: 0, y: 8.4, z: -24.2, w: 5.8, d: 5.8, h: 1.2 },
-      // Twin High-Speed Gears -> Neon Hammer Sprint -> Grand Finale Portal!
+      // Twin High-Speed Gears -> Neon Hammer Sprint -> Elevator Sky Finale!
       { kind: "crystal", x: 0, y: 8.4, z: -42.2, w: 5.6, d: 5.4, h: 1.2 },
       { kind: "neon", x: 0, y: 8.4, z: -51.0, w: 1.9, d: 12.6, h: 0.45 },
-      { kind: "crystal", x: 0, y: 8.4, z: -60.6, w: 7.8, d: 7.6, h: 1.4 },
+      { kind: "crystal", x: 0, y: 8.4, z: -60.6, w: 7.8, d: 7.6, h: 1.4, walls: true },
+      // Opposite-end docks abut the slab: entry z=-64.4, high exit z=-70.8.
+      { kind: "elevator", x: 0, y: 8.4, z: -67.6, w: 6.4, d: 6.4, h: 1.2, yMin: 8.4, yMax: 10.6, speed: 0.85, phase: -Math.PI / 2, walls: true },
+      { kind: "crystal", x: 0, y: 10.6, z: -74.6, w: 7.8, d: 7.6, h: 1.4, walls: true },
     ],
     gears: [
       { x: -1.8, y: 8.4, z: -30.2, r: 4.0, h: 0.85, omega: 1.15 },
@@ -597,6 +611,7 @@ export const TRACKS = [
     checkpoints: [
       { x: 0, y: 8.4, z: -24.2 },
       { x: 0, y: 8.4, z: -42.2 },
+      { x: 0, y: 8.4, z: -60.6 },
     ],
     stars: [
       { x: 0, y: 9.6, z: -7.4 },
@@ -605,7 +620,7 @@ export const TRACKS = [
       { x: 1.8, y: 9.2, z: -36.2 },
       { x: 0, y: 9.2, z: -51.4 },
     ],
-    finish: { x: 0, y: 8.4, z: -62.0 },
+    finish: { x: 0, y: 10.6, z: -76.0 },
   },
 ];
 

@@ -30,7 +30,7 @@ const result = await esbuild.build({
   format: "iife",
   platform: "browser",
   target: "es2022",
-  loader: { ".css": "text", ".html": "text", ".jpg": "dataurl", ".webp": "dataurl", ".glb": "dataurl" },
+  loader: { ".css": "text", ".html": "text", ".jpg": "dataurl", ".webp": "dataurl" },
   define: { LUNAR_QA: String(qa), LUNAR_TITLE_CAPTURE: "false" },
 });
 const [{ text: bundle }] = result.outputFiles;

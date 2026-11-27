@@ -908,10 +908,51 @@ function createStorybookTree(leafColor = 0x5fd468) {
   return tg;
 }
 
+// Shared with collision handling: a neighboring deck opens a doorway in an X-side curb.
+// Values are world-space Z intervals, expanded slightly so a rolling bubble clears the ends.
+export function getSideWallOpenings(p, platforms, side) {
+  const edgeX = p.x + side * p.w / 2;
+  const openings = [];
+  for (const q of platforms) {
+    if (q === p) continue;
+    const left = q.x - q.w / 2;
+    const right = q.x + q.w / 2;
+    if (left > edgeX + 0.28 || right < edgeX - 0.28) continue;
+    if ((q.x + side * q.w / 2 - edgeX) * side < 0.12) continue;
+    let lo = Math.max(p.z - p.d / 2, q.z - q.d / 2);
+    let hi = Math.min(p.z + p.d / 2, q.z + q.d / 2);
+    if (hi <= lo) continue;
+
+    if (q.kind === "ramp" || q.kind === "ice_ramp") {
+      const drop = q.yEnd - q.yStart;
+      if (q.dir === "-z" && Math.abs(drop) > 0.0001) {
+        const za = q.z + q.d / 2 - ((p.y - 0.3 - q.yStart) / drop) * q.d;
+        const zb = q.z + q.d / 2 - ((p.y + 0.3 - q.yStart) / drop) * q.d;
+        lo = Math.max(lo, Math.min(za, zb));
+        hi = Math.min(hi, Math.max(za, zb));
+      } else {
+        const t = q.dir === "+x" ? THREE.MathUtils.clamp((edgeX - q.x) / q.w + 0.5, 0, 1) : 0.5;
+        if (Math.abs(q.yStart + t * drop - p.y) > 0.3) continue;
+      }
+    } else {
+      const qY = q.y + (q.kind === "trough" ? 0.6 * Math.pow(THREE.MathUtils.clamp((edgeX - q.x) / (q.w / 2), -1, 1), 2) : 0);
+      if (Math.abs(qY - p.y) > 0.3) continue;
+    }
+    if (hi > lo) openings.push([lo - 0.2, hi + 0.2]);
+  }
+  return openings.sort((a, b) => a[0] - b[0]);
+}
+
+function extrudeChannelSection(shape, length) {
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: length, bevelEnabled: false, curveSegments: 8, steps: 1 });
+  geometry.translate(0, 0, -length / 2);
+  return geometry;
+}
+
 // Build Poster-Grade Natural Storybook 3D Scene!
 export function buildTrackScene(track) {
   const group = new THREE.Group();
-  const dynamicMeshes = { gears: [], hammers: [], stars: [], boosts: [], mushrooms: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], petals: null };
+  const dynamicMeshes = { gears: [], hammers: [], stars: [], boosts: [], mushrooms: [], elevators: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], petals: null };
 
   group.add(createSkyDome(track));
 
@@ -949,7 +990,7 @@ export function buildTrackScene(track) {
   const flowerCols = [0xff85c0, 0xffe066, 0xffffff, 0x93c5fd];
 
   // Reserve the outer corners for landmarks; bridges and the rolling lane stay clear.
-  const plazas = track.platforms.filter((p) => p.w >= 6 && p.d >= 6 && !p.kind.includes("ramp"));
+  const plazas = track.platforms.filter((p) => p.w >= 6 && p.d >= 6 && !p.kind.includes("ramp") && !p.walls && p.kind !== "trough" && p.kind !== "elevator");
   const contains = (p, point) => Math.abs(point.x - p.x) <= p.w / 2 && Math.abs(point.z - p.z) <= p.d / 2;
   const startPlaza = plazas.find((p) => contains(p, track.start) && Math.abs(p.y - (track.start.y - 0.6)) < 0.2);
   const finishPlaza = plazas.find((p) => contains(p, track.finish) && Math.abs(p.y - track.finish.y) < 0.2);
@@ -1006,6 +1047,34 @@ export function buildTrackScene(track) {
     }
   }
 
+  function addSideCurbs(p, parent = group, local = false) {
+    for (const side of [-1, 1]) {
+      const openings = getSideWallOpenings(p, track.platforms, side);
+      const segments = [];
+      let cursor = p.z - p.d / 2;
+      for (const [lo, hi] of openings) {
+        if (lo > cursor) segments.push([cursor, Math.min(lo, p.z + p.d / 2)]);
+        cursor = Math.max(cursor, hi);
+      }
+      if (cursor < p.z + p.d / 2) segments.push([cursor, p.z + p.d / 2]);
+      for (const [lo, hi] of segments) {
+        if (hi - lo < 0.08) continue;
+        const length = hi - lo;
+        const x = (local ? 0 : p.x) + side * (p.w / 2 + 0.12);
+        const y = local ? 0 : p.y;
+        const z = (lo + hi) / 2 - (local ? p.z : 0);
+        const stone = castRec(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.44, length), mats.stoneCurb));
+        stone.name = "side-curb-stone";
+        stone.position.set(x, y + 0.22, z);
+        parent.add(stone);
+        const timber = castRec(new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.11, length), mats.woodPlank));
+        timber.name = "side-curb-timber";
+        timber.position.set(x, y + 0.495, z);
+        parent.add(timber);
+      }
+    }
+  }
+
   // 1. Multi-Material Floating Islands, Stone Curbs, Slatted Rope-Wood Bridges & Natural Trees!
   for (const p of track.platforms) {
     if (p.kind === "ramp" || p.kind === "ice_ramp") {
@@ -1021,6 +1090,100 @@ export function buildTrackScene(track) {
       if (p.dir === "-z") mesh.rotation.x = angle;
       else if (p.dir === "+x") mesh.rotation.z = angle;
       group.add(mesh);
+    } else if (p.kind === "trough") {
+      const channel = new THREE.Group();
+      channel.name = "parabolic-stone-trough";
+      channel.position.set(p.x, p.y, p.z);
+      const halfWidth = p.w / 2;
+      const thickness = Math.max(0.32, Math.min(p.h ?? 0.6, 0.65));
+      const section = new THREE.Shape();
+      for (let i = 0; i <= 32; i++) {
+        const x = -halfWidth + p.w * i / 32;
+        const y = 0.6 * Math.pow(x / halfWidth, 2);
+        if (i === 0) section.moveTo(x, y);
+        else section.lineTo(x, y);
+      }
+      for (let i = 32; i >= 0; i--) {
+        const x = -halfWidth + p.w * i / 32;
+        section.lineTo(x, 0.6 * Math.pow(x / halfWidth, 2) - thickness);
+      }
+      section.closePath();
+      channel.add(castRec(new THREE.Mesh(extrudeChannelSection(section, p.d), mats.stoneCurb)));
+
+      // Curved stone cheeks rise outside the usable channel width. Z ends stay open.
+      for (const side of [-1, 1]) {
+        const wallSection = new THREE.Shape();
+        wallSection.moveTo(side * halfWidth, 0.6 - thickness);
+        wallSection.lineTo(side * halfWidth, 0.76);
+        wallSection.quadraticCurveTo(side * halfWidth, 1.28, side * (halfWidth + 0.18), 1.35);
+        wallSection.lineTo(side * (halfWidth + 0.36), 1.35);
+        wallSection.quadraticCurveTo(side * (halfWidth + 0.49), 1.1, side * (halfWidth + 0.46), 0.48 - thickness);
+        wallSection.closePath();
+        channel.add(castRec(new THREE.Mesh(extrudeChannelSection(wallSection, p.d), mats.stoneCurb)));
+        const rim = castRec(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, p.d, 8), mats.woodPost));
+        rim.rotation.x = Math.PI / 2;
+        rim.position.set(side * (halfWidth + 0.25), 1.28, 0);
+        channel.add(rim);
+      }
+      // Inlaid seams and timber braces make the channel read as crafted stonework.
+      for (let z = -p.d / 2 + 1.2; z < p.d / 2 - 0.3; z += 2.6) {
+        const points = [];
+        for (let i = 0; i <= 20; i++) {
+          const x = -halfWidth + p.w * i / 20;
+          points.push(new THREE.Vector3(x, 0.6 * Math.pow(x / halfWidth, 2) + 0.008, z));
+        }
+        channel.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 24, 0.012, 4, false), mats.woodPost));
+        const brace = castRec(new THREE.Mesh(new THREE.BoxGeometry(p.w + 0.84, 0.16, 0.22), mats.woodPlank));
+        brace.position.set(0, -thickness - 0.08, z);
+        channel.add(brace);
+      }
+      group.add(channel);
+    } else if (p.kind === "elevator") {
+      const elevator = new THREE.Group();
+      elevator.name = "rune-stone-elevator";
+      elevator.position.set(p.x, p.y, p.z);
+      const slabHeight = p.h ?? 0.65;
+      const slabMat = toonMat(0xb8bdcf, 0x384c9c, 0.24);
+      const slab = castRec(addOutline(new THREE.Mesh(createRoundedSlabGeo(p.w, p.d, slabHeight, 0.6, 0.12), slabMat), 1.012));
+      slab.position.y = -0.12;
+      elevator.add(slab);
+      const cyan = new THREE.MeshBasicMaterial({ color: 0x78f6ff });
+      const violet = new THREE.MeshBasicMaterial({ color: 0xbc9aff });
+      const haloMat = new THREE.MeshBasicMaterial({ color: 0x5deaff, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+      const shortSide = Math.min(p.w, p.d);
+      const runeRadius = shortSide * 0.4;
+      const runeY = -slabHeight - 0.3;
+      for (const [scale, material] of [[1, cyan], [1.17, violet]]) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(runeRadius * scale, 0.035, 6, 48), material);
+        ring.rotation.x = -Math.PI / 2;
+        ring.scale.set(p.w / shortSide, p.d / shortSide, 1);
+        ring.position.y = runeY;
+        elevator.add(ring);
+      }
+      const halo = new THREE.Mesh(new THREE.RingGeometry(runeRadius * 0.72, runeRadius * 1.27, 48), haloMat);
+      halo.rotation.x = -Math.PI / 2;
+      halo.scale.set(p.w / shortSide, p.d / shortSide, 1);
+      halo.position.y = runeY + 0.01;
+      elevator.add(halo);
+      for (let i = 0; i < 12; i++) {
+        const angle = i * Math.PI / 6;
+        const rune = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.025, 0.22), i % 2 ? violet : cyan);
+        rune.position.set(Math.cos(angle) * p.w * 0.435, runeY, Math.sin(angle) * p.d * 0.435);
+        rune.rotation.y = -angle;
+        elevator.add(rune);
+      }
+      for (const side of [-1, 1]) {
+        const lightStrip = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.055, p.d * 0.65), cyan);
+        lightStrip.position.set(side * (p.w / 2 - 0.18), -0.16, 0);
+        elevator.add(lightStrip);
+      }
+      const seal = new THREE.Mesh(new THREE.RingGeometry(shortSide * 0.16, shortSide * 0.174, 32), violet);
+      seal.rotation.x = -Math.PI / 2;
+      seal.position.y = 0.012;
+      elevator.add(seal);
+      if (p.walls) addSideCurbs(p, elevator, true);
+      group.add(elevator);
+      dynamicMeshes.elevators.push({ def: p, mesh: elevator });
     } else if (p.kind === "wood") {
       // TRUE SLATTED ROPE-WOOD SUSPENSION BRIDGE (matching the cover poster!)
       const isZ = p.d >= p.w;
@@ -1037,7 +1200,7 @@ export function buildTrackScene(track) {
         group.add(plank);
       }
       // Side Rope Posts + Running Side Ropes!
-      for (const s of [-1, 1]) {
+      for (const s of p.walls ? [] : [-1, 1]) {
         const ropeGeo = new THREE.CylinderGeometry(0.045, 0.045, span, 6);
         const rope = new THREE.Mesh(ropeGeo, mats.rope);
         if (isZ) {
@@ -1075,7 +1238,7 @@ export function buildTrackScene(track) {
       }
 
       // Stylized Rounded Stone Boulders & Wildflower Tufts along the Island Rim!
-      for (const [cx, cz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      for (const [cx, cz] of p.walls ? [] : [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
         if (propCorners.get(p)?.has(`${cx},${cz}`)) continue;
         const fx = p.x + cx * (p.w * 0.39);
         const fz = p.z + cz * (p.d * 0.39);
@@ -1097,7 +1260,7 @@ export function buildTrackScene(track) {
         }
       }
       // Plant a real Sculpted Hunyuan 3D Storybook Tree on large terraces!
-      if (p.w >= 6.0) {
+      if (p.w >= 6.0 && !p.walls) {
         const [tx, tz] = [[-1, 1], [-1, -1], [1, 1], [1, -1]].find(([cx, cz]) => !propCorners.get(p)?.has(`${cx},${cz}`));
         const treeAnchor = new THREE.Group();
         treeAnchor.position.set(p.x + tx * p.w * 0.38, p.y, p.z + tz * p.d * 0.34);
@@ -1125,7 +1288,7 @@ export function buildTrackScene(track) {
       group.add(mesh);
 
       // Glowing Crystal Spires poking out of Aurora Crystal Islands!
-      if (p.kind === "crystal" && p.w >= 5) {
+      if (p.kind === "crystal" && p.w >= 5 && !p.walls) {
         for (const [cx, cz] of [[-1, -1], [1, 1]]) {
           if (propCorners.get(p)?.has(`${cx},${cz}`)) continue;
           const spire = castRec(addOutline(new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0), mats.ice), 1.05));
@@ -1146,6 +1309,10 @@ export function buildTrackScene(track) {
           group.add(runeRing);
         }
       }
+    }
+
+    if (p.walls && p.kind !== "trough" && p.kind !== "elevator" && p.kind !== "ramp" && p.kind !== "ice_ramp") {
+      addSideCurbs(p);
     }
   }
 
@@ -1255,31 +1422,107 @@ export function buildTrackScene(track) {
   dynamicMeshes.portal = swirl;
   dynamicMeshes.portalAnchor = portalArchHolder;
 
-  // 8. Lush Distant Floating Sky Islands with Storybook Trees & Stone Ruin Arches!
-  const decoIslands = [
-    [-20, 8, -14, 3.6], [19, 5, -22, 4.0], [-22, 4, -40, 4.4], [21, 9, -46, 3.4], [2, 11, -68, 5.4],
-    [-12, 12, -56, 3.2], [16, 10, -4, 3.1],
-  ];
-  for (const [ix, iy, iz, ir] of decoIslands) {
-    const ig = new THREE.Group();
-    ig.position.set(ix, iy, iz);
-    const cone = addOutline(new THREE.Mesh(new THREE.ConeGeometry(ir, ir * 1.45, 7), mats.grassDirt), 1.03);
-    cone.rotation.x = Math.PI;
-    cone.position.y = -ir * 0.72;
-    ig.add(cone);
-    const top = addOutline(new THREE.Mesh(new THREE.CylinderGeometry(ir, ir * 0.96, 0.6, 8), track.id === "aurora" ? mats.crystal : mats.grassEdge), 1.03);
-    ig.add(top);
-    if (track.id !== "aurora") {
-      const t1 = createStorybookTree(track.id === "clockwork" ? 0xff9e5e : 0x62d468);
-      t1.scale.setScalar(ir * 0.28);
-      t1.position.set(-ir * 0.32, 0.25, 0.2);
-      ig.add(t1);
+  // 8. A floating, terraced valley frames the full course while keeping every route clear.
+  const nightValley = track.id === "aurora" || track.id === "sky_finale";
+  const autumnValley = ["clockwork", "gear_outpost", "belfry"].includes(track.id);
+  const frostValley = track.id === "frost_slide";
+  const valleyStone = toonMat(nightValley ? 0x68658b : autumnValley ? 0xa47b62 : 0x9a8875);
+  const valleyStoneShade = toonMat(nightValley ? 0x494965 : autumnValley ? 0x805d50 : 0x6f756a);
+  const valleyGrass = toonMat(nightValley ? 0x69b6a0 : autumnValley ? 0x9fc769 : frostValley ? 0xa2ddd1 : 0x7acb78);
+  const hillGrass = toonMat(nightValley ? 0x71c7b6 : autumnValley ? 0xb6d078 : frostValley ? 0xbce9df : 0x9bd582);
+  const waterMat = new THREE.MeshToonMaterial({ color: nightValley ? 0x7ad4ff : 0x7bdeed, emissive: 0x216985, emissiveIntensity: nightValley ? 0.4 : 0.18, gradientMap: getToonGradient(), transparent: true, opacity: 0.74 });
+  const waterShine = new THREE.MeshBasicMaterial({ color: 0xd6fbff, transparent: true, opacity: 0.66, depthWrite: false });
+  const leafColor = nightValley ? 0x76d1bf : autumnValley ? 0xe4ac69 : frostValley ? 0xb9e3d3 : 0x64be78;
+  const distantTree = createStorybookTree(leafColor);
+  const courseMinZ = Math.min(...track.platforms.map((p) => p.z - p.d / 2), track.finish.z) - 7;
+  const courseMaxZ = Math.max(...track.platforms.map((p) => p.z + p.d / 2), track.start.z) + 6;
+  const valleyCount = Math.min(9, Math.max(4, Math.ceil((courseMaxZ - courseMinZ) / 15)));
+  for (let i = 0; i < valleyCount; i++) {
+    for (const side of [-1, 1]) {
+      const z = courseMaxZ - (courseMaxZ - courseMinZ) * i / (valleyCount - 1) + side * 2.1;
+      const nearest = track.platforms.reduce((best, p) => Math.abs(p.z - z) < Math.abs(best.z - z) ? p : best, track.platforms[0]);
+      const x = side * (28.4 + (i % 3) * 1.55 + Math.sin(i * 1.7 + side) * 0.65);
+      const topY = nearest.y - 1.8 + Math.sin(i * 1.4 + side) * 1.5;
+      const radius = 4.6 + ((i + (side === 1 ? 1 : 0)) % 3) * 0.28;
+      const cliff = new THREE.Group();
+      cliff.name = "distant-valley-cliff";
+      cliff.position.set(x, topY, z);
+
+      const rock = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 0.67, 7.4, 7, 2), valleyStone);
+      rock.position.y = -3.7;
+      rock.rotation.y = i * 0.41;
+      cliff.add(rock);
+      const root = new THREE.Mesh(new THREE.ConeGeometry(radius * 0.78, 4.4, 7), valleyStoneShade);
+      root.rotation.x = Math.PI;
+      root.position.y = -8.8;
+      cliff.add(root);
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.02, radius, 0.42, 10), valleyGrass);
+      crown.position.y = 0.02;
+      cliff.add(crown);
+      const hill = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.77, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), hillGrass);
+      hill.scale.y = 0.36;
+      hill.position.set(side * 0.7, 0.18, -0.35);
+      cliff.add(hill);
+
+      // Lower shelves break the cliff silhouette and catch the cascading water.
+      const terrace = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.62, radius * 0.52, 1.1, 7), valleyStoneShade);
+      terrace.position.set(-side * radius * 0.45, -4.2, 0.45);
+      cliff.add(terrace);
+      const terraceGrass = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.63, radius * 0.62, 0.23, 8), valleyGrass);
+      terraceGrass.position.copy(terrace.position).y = -3.57;
+      cliff.add(terraceGrass);
+      for (const [tx, tz, scale] of [[-0.35, -0.27, 1.1], [0.35, 0.2, 0.86]]) {
+        const tree = distantTree.clone(true);
+        tree.position.set(radius * tx, 0.32, radius * tz);
+        tree.scale.setScalar(scale);
+        cliff.add(tree);
+      }
+      for (let bushIndex = 0; bushIndex < 3; bushIndex++) {
+        const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.62, 1), valleyGrass);
+        bush.scale.set(1.2, 0.65, 0.9);
+        bush.position.set(-side * radius * 0.55, 0.34, (bushIndex - 1) * 1.2);
+        cliff.add(bush);
+      }
+
+      if ((i + (side === 1 ? 1 : 0)) % 2 === 0) {
+        const waterfallX = -side * radius * 0.91;
+        const waterfallZ = 0.5;
+        const fall = new THREE.Mesh(new THREE.BoxGeometry(0.16, 3.7, 1.28), waterMat);
+        fall.position.set(waterfallX, -1.65, waterfallZ);
+        cliff.add(fall);
+        for (const offset of [-0.37, 0.13, 0.4]) {
+          const streak = new THREE.Mesh(new THREE.BoxGeometry(0.018, 3.45, 0.055), waterShine);
+          streak.position.set(waterfallX - side * 0.09, -1.64, waterfallZ + offset);
+          cliff.add(streak);
+        }
+        const pool = new THREE.Mesh(new THREE.CylinderGeometry(1.04, 0.93, 0.055, 16), waterMat);
+        pool.scale.set(0.84, 1, 1.15);
+        pool.position.set(waterfallX + side * 0.17, -3.4, waterfallZ);
+        cliff.add(pool);
+        const foam = new THREE.Mesh(new THREE.TorusGeometry(0.57, 0.055, 6, 20), waterShine);
+        foam.rotation.x = -Math.PI / 2;
+        foam.scale.x = 0.75;
+        foam.position.set(waterfallX, -3.34, waterfallZ);
+        cliff.add(foam);
+        const lowerFall = new THREE.Mesh(new THREE.BoxGeometry(0.11, 3.4, 0.7), waterMat);
+        lowerFall.position.set(waterfallX - side * 0.53, -5.26, waterfallZ + 0.12);
+        cliff.add(lowerFall);
+      } else {
+        // Slender neighboring pinnacles make a recognisable valley, beyond the playable lane.
+        for (const [offZ, height] of [[-3.9, 6.4], [3.2, 4.9]]) {
+          const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 1.05, height, 6), valleyStoneShade);
+          pillar.position.set(side * 2.6, -1.5, offZ);
+          cliff.add(pillar);
+          const cap = new THREE.Mesh(new THREE.SphereGeometry(0.84, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2), hillGrass);
+          cap.scale.y = 0.33;
+          cap.position.set(side * 2.6, -1.5 + height / 2, offZ);
+          cliff.add(cap);
+        }
+      }
+      cliff.traverse((node) => { node.castShadow = false; node.receiveShadow = false; });
+      group.add(cliff);
+      dynamicMeshes.floaters.push({ mesh: cliff, baseY: topY, seed: i * 1.7 + side });
     }
-    const arch = new THREE.Mesh(new THREE.TorusGeometry(ir * 0.32, 0.22, 6, 12, Math.PI), mats.stoneCurb);
-    arch.position.set(ir * 0.2, 0.25, -0.2);
-    ig.add(arch);
-    group.add(ig);
-    dynamicMeshes.floaters.push({ mesh: ig, baseY: iy, seed: ix + iz });
   }
 
   // 9. Thick, Billowing Multi-Layer Cloud Sea beneath the Floating World!

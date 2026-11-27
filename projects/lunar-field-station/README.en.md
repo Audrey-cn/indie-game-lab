@@ -1,5 +1,5 @@
 <h1 align="center">Lunar Field Station</h1>
-<p align="center"><strong>A 1.91 MiB standalone WebGL 2 three-mode lunar 3D game & rendering vertical slice built with Three.js r182</strong></p>
+<p align="center"><strong>A 1.81 MB standalone WebGL 2 three-mode lunar 3D game & rendering vertical slice built with Three.js r182</strong></p>
 
 <p align="center">
   <a href="https://audrey-cn.github.io/indie-game-lab/projects/lunar-field-station/"><img src="./media/play-en.png" width="146" height="42" alt="Play in browser"></a>
@@ -14,7 +14,7 @@
   <a href="./docs/OPTIMIZATION_LOG.md">Benchmarks</a> ·
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
-<p align="center"><sub>v0.4.0 · WebGL 2 · Three.js r182 · 1.91 MiB single-file HTML (833 KiB gzip) · 3 Game Modes · Live 3D Morphable Hangar · Mobile Portrait & Landscape UI · Press <code>F2</code> for live Render Breakdown</sub></p>
+<p align="center"><sub>v0.3.0 · WebGL 2 · Three.js r182 · 1.81 MB single-file HTML (806 KB gzip) · 3 Game Modes · Live 3D Morphable Hangar · Mobile Portrait & Landscape UI · Press <code>F2</code> for live Render Breakdown</sub></p>
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## Engineering & Graphics Highlights
 
-Built under a **< 2.2 MB single-file offline HTML budget**, embedding four Kenney Space Kit CC0 GLB models as data URLs alongside procedural terrain, custom WebGL 2 shader passes, decoupled 120Hz vehicle dynamics, granular Web Audio synthesis, and deterministic Playwright QA.
+Built under a strict **< 2 MB single-file offline HTML budget** with zero external 3D mesh downloads, combining custom WebGL 2 shader passes, decoupled 120Hz vehicle dynamics, granular Web Audio synthesis, and deterministic Playwright QA.
 
 | Subsystem | Technical Highlights | Source |
 | :--- | :--- | :--- |
