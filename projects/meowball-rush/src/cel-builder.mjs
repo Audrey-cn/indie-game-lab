@@ -3,6 +3,8 @@
 // Slatted Rope-Wood Bridges, Stylized Cel-Shaded Trees & Wildflowers, Layered Cloud Sea,
 // Drifting Magic Petals, Real-Time Soft Shadows & Hand-Painted Anime Kitten Face!
 import * as THREE from "three";
+import { addV3Platform, buildV3World } from "./v3-worlds.mjs";
+export { animateFairytaleScenery } from "./v3-worlds.mjs";
 import cobblePathTexUrl from "./assets/textures/tex-cobble-path.webp";
 import meadowGrassTexUrl from "./assets/textures/tex-meadow-grass.webp";
 import cliffRockTexUrl from "./assets/textures/tex-cliff-rock.webp";
@@ -275,7 +277,7 @@ function getCatFaceTex(catDef) {
 export function createSkyDome(track) {
   const top = new THREE.Color(track.skyTop);
   const bot = new THREE.Color(track.skyBottom);
-  const isNight = track.id === "aurora";
+  const isNight = track.id === "aurora" || track.worldType === "starlight_library";
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
@@ -305,7 +307,9 @@ export function createSkyDome(track) {
       }
     `,
   });
-  return new THREE.Mesh(new THREE.SphereGeometry(145, 24, 16), mat);
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(145, 24, 16), mat);
+  sky.name = "storybook-sky";
+  return sky;
 }
 
 export function createBubbleMaterial(tintHex = 0xb67cff) {
@@ -919,7 +923,9 @@ export function buildTrackScene(track) {
   const group = new THREE.Group();
   const dynamicMeshes = { gears: [], hammers: [], rollingPins: [], bumpers: [], steamVents: [], stars: [], boosts: [], mushrooms: [], elevators: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], petals: null };
 
-  group.add(createSkyDome(track));
+  const sky = createSkyDome(track);
+  group.add(sky);
+  dynamicMeshes.sky = sky;
 
   const cobbleTex = getCobbleGrassTex();
   const cliffTex = getCliffSideTex();
@@ -955,7 +961,7 @@ export function buildTrackScene(track) {
   const flowerCols = [0xff85c0, 0xffe066, 0xffffff, 0x93c5fd];
 
   // Reserve the outer corners for landmarks; bridges and the rolling lane stay clear.
-  const plazas = track.platforms.filter((p) => p.w >= 6 && p.d >= 6 && !p.kind.includes("ramp") && !p.walls && p.kind !== "trough" && p.kind !== "elevator");
+  const plazas = track.worldType ? [] : track.platforms.filter((p) => p.w >= 6 && p.d >= 6 && !p.kind.includes("ramp") && !p.walls && p.kind !== "trough" && p.kind !== "elevator");
   const contains = (p, point) => Math.abs(point.x - p.x) <= p.w / 2 && Math.abs(point.z - p.z) <= p.d / 2;
   const startPlaza = plazas.find((p) => contains(p, track.start) && Math.abs(p.y - (track.start.y - 0.6)) < 0.2);
   const finishPlaza = plazas.find((p) => contains(p, track.finish) && Math.abs(p.y - track.finish.y) < 0.2);
@@ -1101,6 +1107,7 @@ export function buildTrackScene(track) {
 
   // 1. Multi-Material Floating Islands, Stone Curbs, Slatted Rope-Wood Bridges & Natural Trees!
   for (const p of track.platforms) {
+    if (track.worldType) { addV3Platform(track, p, group, mats); continue; }
     if (p.kind === "ramp" || p.kind === "ice_ramp") {
       const run = p.dir === "+x" ? p.w : p.d;
       const drop = p.yEnd - p.yStart;
@@ -1369,7 +1376,7 @@ export function buildTrackScene(track) {
     arch.add(mountGear);
 
     const pivot = new THREE.Group();
-    const rod = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, hm.len, 8), mats.woodPlank), 1.08));
+    const rod = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, hm.len, 8), track.worldType === "town_street" ? mats.brass : mats.woodPlank), 1.08));
     rod.position.set(0, -hm.len / 2, 0);
     pivot.add(rod);
     const head = new THREE.Group();
@@ -1399,8 +1406,15 @@ export function buildTrackScene(track) {
         spike.quaternion.setFromUnitVectors(up, direction);
         headFallback.add(spike);
       }
+    } else if (track.worldType === "town_street") {
+      const weight = castRec(addOutline(new THREE.Mesh(new THREE.SphereGeometry(0.62, 16, 12), mats.brass), 1.04));
+      weight.scale.z = 0.52;
+      headFallback.add(weight);
+      const engraving = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.035, 6, 24), mats.brassDark);
+      engraving.position.z = 0.26;
+      headFallback.add(engraving);
     } else {
-      const barrel = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 1.55, 14), toonMat(0x9e542a)), 1.05));
+      const barrel = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 1.55, 14), toonMat(track.worldType === "town_street" ? 0xd3a84f : 0x9e542a)), 1.05));
       barrel.rotation.z = Math.PI / 2;
       headFallback.add(barrel);
       for (const s of [-0.52, 0.52]) {
@@ -1579,6 +1593,11 @@ export function buildTrackScene(track) {
   group.add(portalGroup);
   dynamicMeshes.portal = swirl;
   dynamicMeshes.portalAnchor = portalArchHolder;
+
+  if (track.worldType) {
+    buildV3World(track, group, dynamicMeshes, mats);
+    return { group, dynamicMeshes };
+  }
 
   // 8. A floating, terraced valley frames the full course while keeping every route clear.
   const nightValley = track.id === "aurora" || track.id === "sky_finale";

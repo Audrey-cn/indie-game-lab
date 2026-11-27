@@ -2,7 +2,8 @@
 // validate lighting, textures, frame rate, visual appearance, or runtime physics.
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { buildTrackScene, getSideWallOpenings, getEndWallOpenings } from "../src/cel-builder.mjs";
+import "./verify-assets.mjs";
+const { buildTrackScene, getSideWallOpenings, getEndWallOpenings } = await import("../src/cel-builder.mjs");
 import { TRACKS } from "../src/config.mjs";
 
 // Procedural textures only need a canvas-shaped object to construct the scenes.
@@ -71,111 +72,102 @@ function verifyHazardEntries(track, dynamicMeshes) {
   }
 }
 verifyHazardEntries(hazardFixture, buildTrackScene(hazardFixture).dynamicMeshes);
-for (const track of TRACKS) {
+function isAttached(node, root) {
+  for (let p = node; p; p = p.parent) if (p === root) return true;
+  return false;
+}
+function checkGeometry(geometry, label, strict = false) {
+  const positions = geometry?.attributes?.position;
+  assert.ok(positions && positions.count > 0, `${label}: empty geometry`);
+  assert.ok(positions.array.every(Number.isFinite), `${label}: non-finite vertices`);
+  if (geometry.attributes.normal) assert.ok(geometry.attributes.normal.array.every(Number.isFinite), `${label}: invalid normals`);
+  if (geometry.attributes.uv) assert.ok(geometry.attributes.uv.array.every(Number.isFinite), `${label}: invalid UV coordinates`);
+  geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+  for (const v of [...geometry.boundingBox.min.toArray(), ...geometry.boundingBox.max.toArray(), geometry.boundingSphere.radius]) assert.ok(Number.isFinite(v), `${label}: invalid bounds`);
+  assert.ok(geometry.boundingSphere.radius > 0, `${label}: collapsed geometry`);
+  const index = geometry.index;
+  if (index) for (const value of index.array) assert.ok(Number.isInteger(value) && value >= 0 && value < positions.count, `${label}: invalid triangle index ${value}`);
+  const count = index?.count ?? positions.count;
+  assert.equal(count % 3, 0, `${label}: incomplete triangle`);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  let area = 0, collapsed = 0;
+  for (let i = 0; i < count; i += 3) {
+    a.fromBufferAttribute(positions, index ? index.getX(i) : i);
+    b.fromBufferAttribute(positions, index ? index.getX(i+1) : i+1);
+    c.fromBufferAttribute(positions, index ? index.getX(i+2) : i+2);
+    const triangleArea = b.sub(a).cross(c.sub(a)).lengthSq();
+    if (triangleArea <= 1e-14) collapsed++; else area += triangleArea;
+  }
+  assert.ok(area > 0, `${label}: no nondegenerate triangles`);
+  if (strict) assert.equal(collapsed, 0, `${label}: collapsed authored ribbon triangles`);
+  return positions.count;
+}
+const expectedWorlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','starlight_library','grand_medley'];
+assert.equal(TRACKS.length, 10, 'v3 needs all ten approved stages');
+for (const [stage, track] of TRACKS.entries()) {
+  assert.equal(track.worldType, expectedWorlds[stage], `${track.id}: wrong blueprint environment`);
   const { group, dynamicMeshes } = buildTrackScene(track);
   verifyHazardEntries(track, dynamicMeshes);
   group.updateMatrixWorld(true);
-  let meshes = 0;
-  let vertices = 0;
+  let meshes = 0, vertices = 0;
   group.traverse((node) => {
     assert.ok(node.matrixWorld.elements.every(Number.isFinite), `${track.id}: invalid transform`);
     if (!node.isMesh) return;
     meshes++;
-    const positions = node.geometry?.attributes?.position;
-    if (!positions) return;
-    vertices += positions.count;
-    assert.ok(positions.array.every(Number.isFinite), `${track.id}: invalid geometry in ${node.name || node.type}`);
-    const normals = node.geometry.attributes.normal;
-    if (normals) assert.ok(normals.array.every(Number.isFinite), `${track.id}: invalid normals`);
+    vertices += checkGeometry(node.geometry, `${track.id}/${node.name || node.type}`, node.userData?.courseRibbon === true);
   });
-
-  for (const pad of track.platforms.filter(p => p.endWalls)) for (const side of [-1, 1]) {
-    const z = pad.z + side * (pad.d / 2 + 0.12);
-    const openings = getEndWallOpenings(pad, track.platforms, side, track.gears);
-    const timber = group.children.filter(node => node.name === 'end-curb-timber'
-      && Math.abs(node.position.z - z) < 1e-8 && Math.abs(node.position.y - pad.y - 0.495) < 1e-8);
-    assert.ok(timber.length, `${track.id}: missing rendered bumper plaza end curbs`);
-    let length = 0;
-    for (const curb of timber) {
-      curb.geometry.computeBoundingBox();
-      const bounds = curb.geometry.boundingBox;
-      close(curb.position.y + bounds.max.y, pad.y + 0.55, `${track.id}: end curb height`);
-      const lo = curb.position.x + bounds.min.x, hi = curb.position.x + bounds.max.x;
-      length += hi - lo;
-      for (const [doorLo, doorHi] of openings) assert.ok(Math.min(hi, doorHi) - Math.max(lo, doorLo) < 1e-6,
-        `${track.id}: end curb blocks a real connector doorway`);
-    }
-    const closedLength = pad.w - openings.reduce((total, [lo, hi]) => total + Math.max(0, Math.min(hi, pad.x + pad.w / 2) - Math.max(lo, pad.x - pad.w / 2)), 0);
-    close(length, closedLength, `${track.id}: end curbs leave an unprotected gap`);
+  const world = group.getObjectByName(`v3-world-${track.worldType}`);
+  assert.ok(world, `${track.id}: missing authentic world environment`);
+  assert.ok(world.children.length >= 3, `${track.id}: empty environment dressing`);
+  assert.ok(Array.isArray(dynamicMeshes.fairytaleProps), `${track.id}: missing interactive prop registration`);
+  assert.equal(dynamicMeshes.fairytaleProps.length, (track.props || []).length, `${track.id}: interactive prop count`);
+  for (const entry of dynamicMeshes.fairytaleProps) {
+    assert.ok(track.props.includes(entry.def), `${track.id}: orphan prop definition`);
+    assert.ok(isAttached(entry.mesh, group), `${track.id}/${entry.def.type}: prop is detached`);
+    let propMeshes=0;entry.mesh.traverse(node=>{if(node.isMesh)propMeshes++;});
+    assert.ok(propMeshes >= 2, `${track.id}/${entry.def.type}: missing sculpted prop parts`);
+    close(entry.mesh.position.x, entry.def.x, `${track.id}: prop X`);
+    close(entry.mesh.position.y, entry.def.y, `${track.id}: prop Y`);
+    close(entry.mesh.position.z, entry.def.z, `${track.id}: prop Z`);
   }
-
-  const elevators = track.platforms.filter((p) => p.kind === "elevator");
-  assert.equal(dynamicMeshes.elevators.length, elevators.length, `${track.id}: elevator registration`);
-  for (const { def, mesh } of dynamicMeshes.elevators) {
-    assert.ok(elevators.includes(def), `${track.id}: unknown elevator definition`);
-    close(mesh.position.x, def.x, `${track.id}: elevator X`);
-    close(mesh.position.y, def.y, `${track.id}: elevator initial Y`);
-    close(mesh.position.z, def.z, `${track.id}: elevator Z`);
-    const slab = mesh.children[0];
-    slab.geometry.computeBoundingBox();
-    close(slab.geometry.boundingBox.max.y + slab.position.y, 0, `${track.id}: slab top`);
-    close(slab.geometry.boundingBox.min.y + slab.position.y, -(def.h ?? 0.65), `${track.id}: slab underside`);
-    const curbs = mesh.children.filter((node) => node.name.startsWith("side-curb-"));
-    if (def.walls) assert.ok(curbs.length >= 2, `${track.id}: missing moving curbs`);
-    for (const curb of curbs) {
-      curb.geometry.computeBoundingBox();
-      const bounds = curb.geometry.boundingBox;
-      const innerFace = Math.abs(curb.position.x) - bounds.max.x;
-      close(innerFace, def.w / 2, `${track.id}: curb inner face`);
-      if (curb.name === "side-curb-timber") {
-        close(curb.position.y + bounds.max.y, 0.55, `${track.id}: moving curb height`);
-      }
-    }
-    const originalY = mesh.position.y;
-    mesh.position.y += 1.75;
-    mesh.updateMatrixWorld(true);
-    for (const curb of curbs) {
-      close(curb.getWorldPosition(new THREE.Vector3()).y, curb.position.y + originalY + 1.75, `${track.id}: curb follows lift`);
-    }
-    mesh.position.y = originalY;
-    mesh.updateMatrixWorld(true);
+  assert.ok(Array.isArray(dynamicMeshes.chutes), `${track.id}: missing chute registration`);
+  assert.equal(dynamicMeshes.chutes.length, (track.chutes || []).length, `${track.id}: chute count`);
+  for (const entry of dynamicMeshes.chutes) {
+    assert.ok(track.chutes.includes(entry.def), `${track.id}: orphan chute definition`);
+    assert.ok(isAttached(entry.mesh, group), `${track.id}: detached chute`);
+    let translucent = 0, surfaceMeshes = 0;
+    entry.mesh.traverse(node => {if (node.isMesh) {
+      surfaceMeshes++;
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      translucent += mats.filter(m => m.transparent && m.opacity > 0.15 && m.opacity < 1).length;
+    }});
+    assert.ok(surfaceMeshes >= 3, `${track.id}: chute lacks halfpipe and guard structure`);
+    if (entry.def.material !== 'oak') assert.ok(translucent, `${track.id}: missing translucent chute material`);
+    assert.ok(entry.rings?.length >= 3, `${track.id}: missing animated chute sparkle rings`);
+    const bounds = new THREE.Box3().setFromObject(entry.mesh, true);
+    for (const point of [entry.def.points[0], entry.def.points.at(-1)]) assert.ok(bounds.clone().expandByScalar(0.1).containsPoint(new THREE.Vector3(point.x, point.y, point.z)), `${track.id}: rendered chute misses its physics endpoint`);
   }
-
-  const troughs = track.platforms.filter((p) => p.kind === "trough");
-  const channels = group.children.filter((node) => node.name === "parabolic-stone-trough");
-  assert.equal(channels.length, troughs.length, `${track.id}: trough rendering`);
-  channels.forEach((channel, index) => {
-    const def = troughs[index];
-    const positions = channel.children[0].geometry.attributes.position;
-    const centerTop = [];
-    const edgeTop = [];
-    for (let i = 0; i < positions.count; i++) {
-      const x = positions.getX(i);
-      const y = positions.getY(i);
-      if (Math.abs(x) < 0.00001) centerTop.push(y);
-      if (Math.abs(Math.abs(x) - def.w / 2) < 0.00001) edgeTop.push(y);
-    }
-    close(Math.max(...centerTop), 0, `${track.id}: trough center floor`);
-    close(Math.max(...edgeTop), 0.6, `${track.id}: trough edge floor`);
-    for (const wall of [channel.children[1], channel.children[3]]) {
-      wall.geometry.computeBoundingBox();
-      close(wall.geometry.boundingBox.max.y, 1.35, `${track.id}: trough wall height`);
-    }
-  });
-
-  assert.ok(dynamicMeshes.floaters.length >= 8, `${track.id}: valley coverage`);
-  for (const { mesh } of dynamicMeshes.floaters) {
-    const bounds = new THREE.Box3().setFromObject(mesh, true);
-    if (bounds.max.x < 0) {
-      assert.ok(bounds.max.x <= -22 && bounds.min.x >= -38, `${track.id}: left scenery enters route or exceeds valley`);
-    } else {
-      assert.ok(bounds.min.x >= 22 && bounds.max.x <= 38, `${track.id}: right scenery enters route or exceeds valley`);
-    }
+  for (const route of track.routes || []) {
+    const mesh = group.getObjectByName(`route-${route.id}`);
+    assert.ok(mesh, `${track.id}/${route.id}: missing continuous route ribbon`);
+    assert.ok(isAttached(mesh, group));
   }
-  results.push({ track: track.id, lifts: elevators.length, troughs: troughs.length,
-    pins: dynamicMeshes.rollingPins.length, bumpers: dynamicMeshes.bumpers.length,
-    vents: dynamicMeshes.steamVents.length, flails: dynamicMeshes.hammers.filter(h => h.def.variant === 'flail').length,
-    cliffs: dynamicMeshes.floaters.length, meshes, vertices });
+  if (track.worldType === 'grounded_nature') {
+    assert.ok(world.getObjectByName('grounded-terrain'), `${track.id}: grounded valley has no surrounding terrain`);
+    assert.ok(world.getObjectByName('valley-stream'), `${track.id}: grounded valley lacks its stream`);
+  }
+  if (track.worldType === 'indoor_home') {
+    assert.ok(world.getObjectByName('room-floor'), `${track.id}: miniature room floor missing`);
+    assert.ok(world.getObjectByName('sunlit-window'), `${track.id}: sunlit room window missing`);
+  }
+  if (track.worldType === 'town_street') {
+    assert.ok(world.getObjectByName('town-canal'), `${track.id}: town canal missing`);
+    assert.ok(world.getObjectByName('half-timbered-house'), `${track.id}: pastel half-timbered houses missing`);
+  }
+  results.push({stage:stage+1, track:track.id, world:track.worldType, routes:track.routes.length,
+    chutes:dynamicMeshes.chutes.length, props:dynamicMeshes.fairytaleProps.length, meshes, vertices});
+  const disposed = new Set();
+  group.traverse(node=>{if(node.geometry && !disposed.has(node.geometry)){disposed.add(node.geometry);node.geometry.dispose();}});
 }
 
 // A connected side route must have a doorway; a deck at another elevation must not.
@@ -195,4 +187,4 @@ assert.deepEqual(getEndWallOpenings(endDeck, [endDeck], -1, [{ x: -1, y: 2, z: -
 assert.deepEqual(getEndWallOpenings(endDeck, [endDeck], -1, [{ x: -1, y: 4, z: -5, r: 3 }]), []);
 
 console.table(results);
-console.log(`Passed Node structural checks for all ${TRACKS.length} scenes. WebGL visual appearance remains unverified.`);
+console.log(`Passed v3 Node structural and geometry checks for all ${TRACKS.length} scenes. WebGL visual appearance remains unverified.`);

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>魔女猫球 · Meowball Rush</title>
+  <title>魔女猫球 · Meowball Rush v3.0.0</title>
   <style>
     :root {
       --ink: #2b1e3a;
@@ -79,6 +79,14 @@
       background: rgba(43, 30, 58, 0.78); border: 2px solid rgba(255,255,255,0.32);
       border-radius: 999px; padding: 6px 12px; font-size: 11px; font-weight: 800; color: #fef3c7;
     }
+    #camera-hint { position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%); padding: 7px 13px;
+      border: 1px solid #fff7; border-radius: 999px; background: #2b1e3ac9; color: #fff3cc;
+      font-size: 11px; letter-spacing: .02em; pointer-events: none; white-space: nowrap; backdrop-filter: blur(6px); }
+    #camera-hint[hidden], #touch-joystick[hidden] { display: none; }
+    #touch-joystick { position: fixed; width: 104px; height: 104px; margin: -52px; border-radius: 50%;
+      border: 2px solid #ffffff66; background: #2b1e3a40; pointer-events: none; z-index: 22; }
+    #joystick-knob { position: absolute; width: 36px; height: 36px; left: 32px; top: 32px; border-radius: 50%;
+      background: #fff5daaa; border: 2px solid #fff9; }
 
     #toast {
       position: absolute; top: 96px; left: 50%; transform: translateX(-50%);
@@ -286,7 +294,7 @@
             <div class="timer-lbl">TIME LEFT</div>
             <div class="timer-val" id="hud-time">60.0</div>
           </div>
-          <div class="hud-pill" id="hud-track" style="font-size:11px;padding:3px 10px">🌸 01 · 晨曦草坪学院</div>
+          <div class="hud-pill" id="hud-track" style="font-size:11px;padding:3px 10px">🌸 01 · 晨曦花谷学园</div>
         </div>
         <div class="hud-actions">
           <div class="hud-pill" id="hud-stars">⭐ 0</div>
@@ -300,9 +308,11 @@
           <div class="speed-val" id="hud-speed">0 km/h</div>
           <div class="speed-sub" id="hud-status">🐾 全速滚动中</div>
         </div>
-        <div class="ctrl-hint" id="ctrl-hint">🖱️ 点击锁鼠推球 · WASD · 手机滑动/陀螺仪 · Esc 暂停</div>
+        <div class="ctrl-hint" id="ctrl-hint">WASD/方向键移动 · 拖动/Q·E 转视角 · 滚轮缩放 · 手机左手移动/右手视角</div>
       </div>
+      <div id="camera-hint" hidden>↻ 拖动/Q·E 旋转视角查看落点</div>
     </div>
+    <div id="touch-joystick" hidden><div id="joystick-knob"></div></div>
 
     <div id="toast" hidden>✨ 提示</div>
     <div id="star-pop">⭐ +2.0s COMBO ×1</div>
@@ -318,9 +328,9 @@
       </div>
 
       <div class="hero-emblem">
-        <span class="badge-tag">MEOWBALL RUSH · 3D 童话仓鼠球</span>
+        <span class="badge-tag">MEOWBALL RUSH v3.0 · 3D 童话仓鼠球</span>
         <h1 class="lobby-title">魔女猫球</h1>
-        <p class="lobby-sub">混元3D手办萌猫 · 渐进立体浮空赛道 · 剩余时间结转！</p>
+        <p class="lobby-sub">9 只萌猫 · 10 幕立体童话冒险 · 螺旋滑道与自由视角！</p>
       </div>
 
       <div class="lobby-drawer">

@@ -1,4 +1,4 @@
-// Meowball Rush v2.0.0 — Art Bible courses and sculpted magical contraptions.
+// Meowball Rush v3.0.0 — approved multi-view courses + Dynamic Camera Director.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -7,9 +7,12 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { CATS, DEFAULT_SAVE, TRACKS } from "./config.mjs";
+import { CATS, TRACKS, migrateV3Save } from "./config.mjs";
 import { sfx } from "./audio.mjs";
-import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings } from "./cel-builder.mjs";
+import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings, animateFairytaleScenery } from "./cel-builder.mjs";
+import { nearestRouteSurface } from './course-math.mjs';
+import { createDirector, updateDirector, cameraRelativeInput, triggerSetpiece, CAMERA_MODES } from './director.mjs';
+import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics } from './course-runtime.mjs';
 import { generateClearPoster } from "./poster.mjs";
 import { GLB_MODELS } from "./models/manifest.mjs";
 import coverUrl from "./assets/cover.webp";
@@ -55,9 +58,9 @@ function loadGlbModel(key, onReady) {
 const SAVE_KEY = "meowball_rush_save_v1";
 function loadSave() {
   try {
-    return { ...DEFAULT_SAVE, ...JSON.parse(localStorage.getItem(SAVE_KEY) || "{}") };
+    return migrateV3Save(JSON.parse(localStorage.getItem(SAVE_KEY) || "{}"));
   } catch {
-    return { ...DEFAULT_SAVE };
+    return migrateV3Save();
   }
 }
 function writeSave(s) {
@@ -342,7 +345,7 @@ function renderLobby() {
     card.innerHTML = `
       <div>
         <div class="tcard-title">${unlocked ? t.name : `🔒 ${t.name}`}</div>
-        <div class="tcard-sub">${unlocked ? t.subtitle : `通关第 ${idx} 关后自动解锁！`}</div>
+        <div class="tcard-sub">${unlocked ? `${t.subtitle} · ${Math.round(t.length)}m` : `通关第 ${idx} 关后自动解锁！`}</div>
       </div>
       <div class="tcard-right">
         <div class="tcard-diff">${diffStars}</div>
@@ -428,7 +431,7 @@ function mountTrackModels(built) {
       }
     });
   }
-  if (meshes.portalAnchor) {
+  if (meshes.portalAnchor && !built.group.userData.v3World) {
     loadGlbModel("portal", (portalModel) => {
       if (!isCurrentTrack()) return;
       meshes.portalAnchor.clear();
@@ -567,7 +570,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
     stars: 0,
     pops: 0,
     secretFound: false,
-    checkpoint: { ...track.start },
+    checkpoint: { x: track.start.x, y: track.start.y - 0.62, z: track.start.z },
     checkpointIdx: -1,
     ball: {
       x: track.start.x,
@@ -590,6 +593,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
       boostFlash: 0,
     },
     input: { ix: 0, iz: 0, mouseAccX: 0, mouseAccZ: 0, keys: new Set(), touchActive: false, lx: 0, ly: 0 },
+    director: createDirector(track.startYaw || 0),
     shownTips: new Set(),
     urgentLastSec: 10,
     camPos: new THREE.Vector3(track.start.x + 8.5, track.start.y + 10.5, track.start.z + 11.5),
@@ -615,6 +619,23 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
 }
 
 // ===== DETERMINISTIC 3D SURFACE QUERY (Platforms, Ramps & Rotating Gears!) =====
+function showFairytaleEvent(event) {
+  const { prop, type } = event;
+  const entry = (dynamicMeshes.fairytaleProps || []).find(p => p.def === prop);
+  if (entry) entry.pulse = 1;
+  if (type === 'launch') {
+    if (state.director) triggerSetpiece(state.director, prop.type === 'toaster' ? 1.5 : 1.2);
+    sfx.playBoing();
+    showToast(prop.type === 'toaster' ? '🍞 吐司弹射！飞向上层甜点台！' : prop.type === 'willow_branch' ? '🌿 柳枝轻轻托起你！' : '☁️ 云朵打喷嚏，乘风起飞！');
+  } else if (type === 'helper') {
+    sfx.playBoost();
+    showStarPop(prop.type === 'hedgehog' ? '♡ 刺猬伙伴为你加油！' : '✦ 发条小鼠来帮忙！');
+  } else if (type === 'book_hop') {
+    sfx.playBoing();
+    showStarPop('📖 魔法书振翅，轻轻跃向下一页！');
+  }
+}
+
 function platformHeight(p, time = state.elapsed) {
   if (p.kind !== "elevator") return p.y;
   return (p.yMin + p.yMax) * 0.5
@@ -653,11 +674,35 @@ function clampHorizontalSpeed(b, limit) {
 }
 
 function isDownhillSurface(surf, b) {
-  return surf && (surf.kind === "ramp" || surf.kind === "ice_ramp")
-    && (-surf.slopeX * b.vx + surf.slopeZ * b.vz) > 0.01;
+  return surf && (surf.route || surf.kind === "ramp" || surf.kind === "ice_ramp")
+    && (-surf.slopeX * b.vx + (surf.route ? -1 : 1) * surf.slopeZ * b.vz) > 0.01;
 }
 
 function collideSideRails(b, previousX, previousZ) {
+  // Curved route rails follow the same piecewise centerline as the visible ribbon.
+  const route = b.supportRoute;
+  if (route?.walls && b.grounded) {
+    let closest = null;
+    for (let i = 1; i < route.points.length; i++) {
+      const a = route.points[i - 1], c = route.points[i];
+      const dx = c.x - a.x, dz = c.z - a.z, len2 = dx * dx + dz * dz;
+      if (len2 < 0.00001) continue;
+      const u = Math.max(0, Math.min(1, ((b.x - a.x) * dx + (b.z - a.z) * dz) / len2));
+      const x = a.x + dx * u, z = a.z + dz * u;
+      const dist = Math.hypot(b.x - x, b.z - z);
+      if (!closest || dist < closest.dist) closest = { x, z, dist, nx: -dz / Math.sqrt(len2), nz: dx / Math.sqrt(len2) };
+    }
+    if (closest) {
+      const lateral = (b.x - closest.x) * closest.nx + (b.z - closest.z) * closest.nz;
+      const limit = route.width / 2 - b.r;
+      if (Math.abs(lateral) > limit && closest.dist < route.width / 2 + b.r) {
+        const side = Math.sign(lateral), correction = lateral - side * limit;
+        b.x -= closest.nx * correction; b.z -= closest.nz * correction;
+        const outward = (b.vx * closest.nx + b.vz * closest.nz) * side;
+        if (outward > 0) { b.vx -= closest.nx * side * outward * 1.25; b.vz -= closest.nz * side * outward * 1.25; }
+      }
+    }
+  }
   for (const p of state.track.platforms) {
     if (!p.walls && p.kind !== "trough") continue;
     const floor = platformFloor(p, b.x, b.z).y;
@@ -708,6 +753,13 @@ function sampleTrackSurface(x, y, z, r) {
   const tr = state.track;
   let bestY = -999;
   let bestSurf = null;
+
+  const routeFloor = nearestRouteSurface(tr.routes || [], x, z, y - r + 0.55,
+    { bottom: y - r, previousBottom: state.ball.previousBottom, grounded: state.ball.grounded, supportRoute: state.ball.supportRoute });
+  if (routeFloor) {
+    bestY = routeFloor.y;
+    bestSurf = { ...routeFloor, secret: routeFloor.route.secret, gearVx: 0, gearVz: 0 };
+  }
 
   for (const p of tr.platforms) {
     const hw = p.w * 0.5 + r * 0.35;
@@ -767,6 +819,7 @@ function triggerBubblePop(reason = "💥 砰！猫球破啦！") {
 
 function finishStage(cleared) {
   state.phase = "ended";
+  document.getElementById('touch-joystick').hidden = true;
   // Gently duck music instead of cutting off abruptly so transitioning to Next Stage stays seamless!
   sfx.duckForResult();
   if (document.pointerLockElement === canvas) document.exitPointerLock();
@@ -918,6 +971,15 @@ function tick(ts) {
 
 function updatePhysics(dt) {
   const b = state.ball;
+  b.chuteCooldown = Math.max(0, (b.chuteCooldown || 0) - dt);
+  b.launchLanding = Math.max(0, (b.launchLanding || 0) - dt);
+  if (b.chuteRide && b.popTimer <= 0) {
+    advanceChute(b, b.chuteRide, dt, (state.input.keys.has('KeyD') ? 1 : 0) - (state.input.keys.has('KeyA') ? 1 : 0));
+    return;
+  }
+  if (b.launchAssist && b.popTimer <= 0) { advanceLaunch(b, dt); return; }
+  const chute = findChuteEntry(state.track, b);
+  if (chute) { captureChute(b, chute); advanceChute(b, b.chuteRide, dt); sfx.playBoost(); return; }
   const catStats = state.cat.stats;
   const inp = state.input;
   const previousX = b.x;
@@ -974,7 +1036,7 @@ function updatePhysics(dt) {
     kittyRig.furball.rotation.y += 10 * dt;
     if (b.popTimer <= 0) {
       b.x = state.checkpoint.x;
-      b.y = state.checkpoint.y + 0.8;
+      b.y = state.checkpoint.y + b.r + 0.12;
       b.z = state.checkpoint.z;
       b.vx = 0;
       b.vy = 0;
@@ -998,8 +1060,8 @@ function updatePhysics(dt) {
   if (inp.keys.has("KeyD") || inp.keys.has("ArrowRight")) kx += 1;
 
   // Convert screen-space mouse/keyboard/gyroscope into isometric world axes!
-  let rawX = kx * 18 + inp.mouseAccX + (gyroEnabled ? gyroTiltX : 0);
-  let rawZ = kz * 18 + inp.mouseAccZ + (gyroEnabled ? gyroTiltZ : 0);
+  let rawX = (kx + (inp.ix || 0)) * 18 + inp.mouseAccX + (gyroEnabled ? gyroTiltX : 0);
+  let rawZ = (kz + (inp.iz || 0)) * 18 + inp.mouseAccZ + (gyroEnabled ? gyroTiltZ : 0);
   inp.mouseAccX *= Math.pow(0.02, dt);
   inp.mouseAccZ *= Math.pow(0.02, dt);
 
@@ -1016,11 +1078,10 @@ function updatePhysics(dt) {
   }
 
   // Rotate input by camera horizontal yaw (~34 deg) so pushing "Up" always rolls cleanly up-screen!
-  const camYaw = 0.58;
-  const cy = Math.cos(camYaw);
-  const sy = Math.sin(camYaw);
-  const driveX = rawX * cy + rawZ * sy;
-  const driveZ = -rawX * sy + rawZ * cy;
+  const camYaw = state.viewYaw ?? state.director?.yaw ?? 0.58;
+  const drive = cameraRelativeInput(rawX, rawZ, camYaw);
+  const driveX = drive.x;
+  const driveZ = drive.z;
 
   const isIce = b.surfaceKind === "ice" || b.surfaceKind === "ice_ramp";
   const isMud = b.surfaceKind === "mud";
@@ -1064,6 +1125,10 @@ function updatePhysics(dt) {
   // - If 0.08 < stepH < 0.78 * r: climbs ONLY if incoming velocity >= vMin (and deducts potential energy!), else bounces back!
   for (const p of state.track.platforms) {
     if (p.kind === "ramp" || p.kind === "ice_ramp" || p.kind === "cloud") continue;
+    if (b.vy <= 0 && b.previousBottom >= platformFloor(p, b.x, b.z).y - 0.02) continue;
+    // Authored v3 docks overlap continuous approach ribbons. Their side boxes
+    // must not turn the rising ribbon underneath into an invisible curb.
+    if (p.role && b.supportRoute && state.track.worldType) continue;
     if (b.grounded && b.supportPlatform === p) continue;
     const surfaceY = platformFloor(p, b.x, b.z).y;
     const stepH = surfaceY - (b.y - b.r);
@@ -1117,10 +1182,10 @@ function updatePhysics(dt) {
     const impactVy = -b.vy;
     const wasRamp = b.surfaceKind === "ramp" || b.surfaceKind === "ice_ramp";
     b.y = surf.y + b.r;
-    if (!b.grounded && !wasRamp && impactVy > 15.0) {
+    if (!b.grounded && !wasRamp && impactVy > 15.0 && !b.launchLanding) {
       triggerBubblePop("💥 摔太狠啦！魔法泡泡碎了！");
       return;
-    } else if (!b.grounded && !wasRamp && impactVy > 9.6) {
+    } else if (!b.grounded && !wasRamp && impactVy > 9.6 && !b.launchLanding) {
       b.dizzyTimer = 1.35 / catStats.dizzyResist;
       sfx.playDizzy();
       showToast("💫 摔晕啦！小猫头顶冒金星！");
@@ -1131,6 +1196,8 @@ function updatePhysics(dt) {
     b.grounded = true;
     b.surfaceKind = surf.kind;
     b.supportPlatform = surf.platform || null;
+    b.supportRoute = surf.route || null;
+    if (surf.route) b.routeTangent = { x: surf.tx, z: surf.tz };
     // True rolling-sphere gravity along ramp: a = (5/7) * g * sin(theta) — coasting downhill genuinely accelerates!
     if (surf.slopeX !== 0 || surf.slopeZ !== 0) {
       const isIceSlope = surf.kind === "ice_ramp";
@@ -1138,7 +1205,7 @@ function updatePhysics(dt) {
       const sinX = surf.slopeX / Math.hypot(1, surf.slopeX);
       const sinZ = surf.slopeZ / Math.hypot(1, surf.slopeZ);
       b.vx -= sinX * gSlope * dt;
-      b.vz += sinZ * gSlope * dt;
+      b.vz += sinZ * gSlope * dt * (surf.route ? -1 : 1);
     }
     // Rotating Gear tangential carry!
     if (surf.gearVx || surf.gearVz) {
@@ -1153,7 +1220,11 @@ function updatePhysics(dt) {
   } else {
     b.grounded = false;
     b.supportPlatform = null;
+    b.supportRoute = null;
   }
+
+  updateFairytalePhysics(state.track, b, state.elapsed, dt, showFairytaleEvent);
+  if (b.launchAssist) return;
 
   // Stage 01 Interactive Tutorial Zone Tips!
   if (state.track.tips && state.track.tips.length > 0) {
@@ -1299,9 +1370,16 @@ function updatePhysics(dt) {
   for (const m of dynamicMeshes.mushrooms) {
     const d = Math.hypot(b.x - m.def.x, b.z - m.def.z);
     if (d < m.def.r + b.r * 0.5 && Math.abs(b.y - m.def.y) < 1.35 && b.vy <= 2) {
-      b.vy = m.def.vy;
-      b.vz += m.def.vz;
+      if (m.def.target) {
+        b.x = m.def.x; b.y = m.def.y + b.r; b.z = m.def.z;
+        launchBall(b, m.def);
+      } else {
+        b.vy = m.def.vy;
+        b.vx += m.def.vx || 0;
+        b.vz += m.def.vz;
+      }
       b.grounded = false;
+      if (state.director) triggerSetpiece(state.director, 1.2);
       m.bounceAnim = 1.0;
       sfx.playBoing();
       showToast("🍄 弹跳蘑菇起飞！");
@@ -1324,7 +1402,7 @@ function updatePhysics(dt) {
   state.track.checkpoints.forEach((cp, idx) => {
     if (idx > state.checkpointIdx && Math.hypot(b.x - cp.x, b.z - cp.z) < 2.8 && Math.abs(b.y - cp.y) < 1.8) {
       state.checkpointIdx = idx;
-      state.checkpoint = { x: cp.x, y: cp.y + 0.8, z: cp.z };
+      state.checkpoint = { x: cp.x, y: cp.y, z: cp.z };
       sfx.playCheckpoint();
       showToast("🚩 已激活魔法检查点！");
     }
@@ -1534,45 +1612,29 @@ function updateVisuals(dt) {
   }
   attr.needsUpdate = true;
 
-  // Dynamic Hamsterball Camera — vertical undulation on slopes/jumps, velocity look-ahead, landing spring dip & corner banking!
-  const isPortrait = window.innerHeight > window.innerWidth * 1.05;
-  const distScale = isPortrait ? 1.22 : 1.0;
-  const slopeZ = surf ? surf.slopeZ : 0;
-  const airHeight = !b.grounded ? Math.max(0, b.y - (surf ? surf.y : b.y - 2.2)) : 0;
-  const speedPull = Math.min(2.4, spdNorm * 2.1);
-  // Downhill (slopeZ < 0) lifts camera to reveal drop ahead; uphill lowers slightly for dramatic climb; airborne lifts dynamically!
-  const dynHeight = (8.8 - slopeZ * 4.2 + airHeight * 0.65 + speedPull * 0.55) * distScale + state.camSpringY;
-  const dynBack = (10.2 + speedPull * 1.15 + airHeight * 0.45) * distScale;
-  const dynSide = (6.4 + Math.max(-2.6, Math.min(2.6, -b.vx * 0.22))) * distScale;
-
-  const desired = new THREE.Vector3(
-    b.x + dynSide,
-    Math.max(b.y + dynHeight, 3.6),
-    b.z + dynBack
-  );
-  state.camPos.lerp(desired, Math.min(1, dt * 5.2));
-  camera.position.copy(state.camPos);
-
-  // Velocity Look-Ahead focus so the camera breathes & previews upcoming turns/drops!
-  const lookTarget = new THREE.Vector3(
-    b.x + Math.max(-3.2, Math.min(3.2, b.vx * 0.26)),
-    b.y - 0.35 + Math.max(-1.6, Math.min(1.6, b.vy * 0.12)) + state.camSpringY * 0.35,
-    b.z - 1.9 + Math.max(-3.6, Math.min(2.2, b.vz * 0.26))
-  );
-  state.camLook.lerp(lookTarget, Math.min(1, dt * 7.5));
-  camera.lookAt(state.camLook);
-
-  // Dynamic FOV widening on sprint & jumps + subtle playful roll on turns!
-  const baseFov = isPortrait ? 53 : 42;
-  const targetFov = baseFov + Math.min(8.5, spdNorm * 6.2 + airHeight * 1.2 + (b.boostFlash > 0 ? 3.5 : 0));
-  state.camFov += (targetFov - state.camFov) * Math.min(1, dt * 5.0);
-  if (Math.abs(camera.fov - state.camFov) > 0.05) {
-    camera.fov = state.camFov;
+  // Director pose and the actual rendered yaw are also the movement basis.
+  const inp = state.input;
+  const keyOrbit = (inp.keys.has('KeyE') ? 1 : 0) - (inp.keys.has('KeyQ') ? 1 : 0);
+  const pose = updateDirector(state.director, { ball: b, track: state.track, dt,
+    elapsed: state.elapsed, aspect: camera.aspect,
+    manualDelta: (inp.orbitX || 0) + keyOrbit * dt * 1.5,
+    pitchDelta: inp.orbitY || 0, zoomDelta: inp.zoomDelta || 0,
+    orbitHeld: inp.orbitPointer != null || !!keyOrbit });
+  inp.orbitX = 0; inp.orbitY = 0; inp.zoomDelta = 0;
+  camera.position.set(pose.x, pose.y, pose.z);
+  camera.lookAt(pose.lookX, pose.lookY, pose.lookZ);
+  state.viewYaw = Math.atan2(pose.x - pose.lookX, pose.z - pose.lookZ);
+  state.camFov = pose.fov;
+  if (Math.abs(camera.fov - pose.fov) > 0.05) {
+    camera.fov = pose.fov;
     camera.updateProjectionMatrix();
   }
-  const targetRoll = Math.max(-0.045, Math.min(0.045, -b.vx * 0.0032));
-  state.camRoll += (targetRoll - state.camRoll) * Math.min(1, dt * 5.5);
-  camera.rotation.z += state.camRoll;
+  animateFairytaleScenery(dynamicMeshes, state.elapsed, dt);
+  const sky = dynamicMeshes.sky;
+  if (sky) sky.position.set(b.x, b.y, b.z);
+  const orbitHint = document.getElementById('camera-hint');
+  orbitHint.hidden = state.director.mode !== CAMERA_MODES.MANUAL_ORBIT;
+  document.getElementById('hud').dataset.cameraMode = state.director.mode;
 }
 
 function syncHud() {
@@ -1593,43 +1655,72 @@ function syncHud() {
               : "🐾 全速滚动中";
 }
 
-// ===== AUTHENTIC HAMSTERBALL CONTROLS (Pointer Lock Mouse + WASD + Mobile Touch Swipe!) =====
-canvas.addEventListener("click", () => {
-  if (state && state.phase === "playing" && canvas.requestPointerLock) {
-    canvas.requestPointerLock();
-  }
-});
-window.addEventListener("mousemove", (e) => {
-  if (!state || state.phase !== "playing") return;
-  if (document.pointerLockElement === canvas) {
-    state.input.mouseAccX = Math.max(-28, Math.min(28, state.input.mouseAccX + e.movementX * 0.42 * save.mouseSens));
-    state.input.mouseAccZ = Math.max(-28, Math.min(28, state.input.mouseAccZ + e.movementY * 0.42 * save.mouseSens));
-  }
-});
-canvas.addEventListener("pointerdown", (e) => {
-  if (!state || state.phase !== "playing") return;
+// ===== CAMERA-RELATIVE CONTROLS: left joystick + independent right-hand orbit =====
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => {
+  if (!state || state.phase !== 'playing') return;
   sfx.unlock();
-  if (e.pointerType !== "mouse") {
-    state.input.touchActive = true;
-    state.input.lx = e.clientX;
-    state.input.ly = e.clientY;
+  const inp = state.input;
+  const touch = e.pointerType !== 'mouse';
+  const isOrbit = !touch || e.clientX > window.innerWidth * 0.5;
+  if (isOrbit && inp.orbitPointer == null) {
+    inp.orbitPointer = e.pointerId;
+    inp.orbitLastX = e.clientX; inp.orbitLastY = e.clientY;
+  } else if (!isOrbit && inp.movePointer == null) {
+    inp.movePointer = e.pointerId;
+    inp.joyX = e.clientX; inp.joyY = e.clientY;
+    inp.touchActive = true;
+    const joy = document.getElementById('touch-joystick');
+    joy.hidden = false; joy.style.left = `${e.clientX}px`; joy.style.top = `${e.clientY}px`;
+  }
+  canvas.setPointerCapture?.(e.pointerId);
+});
+window.addEventListener('pointermove', e => {
+  if (!state || state.phase !== 'playing') return;
+  const inp = state.input;
+  if (inp.orbitPointer === e.pointerId) {
+    inp.orbitX = (inp.orbitX || 0) - (e.clientX - inp.orbitLastX) * 0.006 * (save.mouseSens || 1);
+    inp.orbitY = (inp.orbitY || 0) + (e.clientY - inp.orbitLastY) * 0.004 * (save.mouseSens || 1);
+    inp.orbitLastX = e.clientX; inp.orbitLastY = e.clientY;
+  }
+  if (inp.movePointer === e.pointerId) {
+    const dx = e.clientX - inp.joyX, dy = e.clientY - inp.joyY;
+    const scale = Math.max(1, Math.hypot(dx, dy) / 52);
+    inp.ix = dx / scale / 52; inp.iz = dy / scale / 52;
+    const knob = document.getElementById('joystick-knob');
+    knob.style.transform = `translate(${dx / scale}px, ${dy / scale}px)`;
   }
 });
-window.addEventListener("pointermove", (e) => {
-  if (!state || state.phase !== "playing" || !state.input.touchActive) return;
-  const dx = e.clientX - state.input.lx;
-  const dy = e.clientY - state.input.ly;
-  state.input.lx = e.clientX;
-  state.input.ly = e.clientY;
-  state.input.mouseAccX = Math.max(-26, Math.min(26, state.input.mouseAccX + dx * 0.65));
-  state.input.mouseAccZ = Math.max(-26, Math.min(26, state.input.mouseAccZ + dy * 0.65));
-});
-window.addEventListener("pointerup", () => {
-  if (state) state.input.touchActive = false;
+function releaseControlPointer(e) {
+  if (!state) return;
+  const inp = state.input;
+  if (inp.orbitPointer === e.pointerId) inp.orbitPointer = null;
+  if (inp.movePointer === e.pointerId) {
+    inp.movePointer = null; inp.touchActive = false; inp.ix = 0; inp.iz = 0;
+    document.getElementById('touch-joystick').hidden = true;
+  }
+}
+window.addEventListener('pointerup', releaseControlPointer);
+window.addEventListener('pointercancel', releaseControlPointer);
+canvas.addEventListener('lostpointercapture', releaseControlPointer);
+canvas.addEventListener('wheel', e => {
+  if (!state || state.phase !== 'playing') return;
+  e.preventDefault();
+  state.input.zoomDelta = (state.input.zoomDelta || 0) + Math.sign(e.deltaY) * 0.07;
+}, { passive: false });
+window.addEventListener('blur', () => {
+  if (!state) return;
+  state.input.keys.clear(); state.input.ix = 0; state.input.iz = 0;
+  state.input.movePointer = null; state.input.orbitPointer = null;
+  document.getElementById('touch-joystick').hidden = true;
+  if (state.phase === 'playing') openPause();
 });
 function openPause() {
   if (!state || state.phase !== "playing") return;
   state.phase = "paused";
+  state.input.keys.clear(); state.input.ix = 0; state.input.iz = 0;
+  state.input.orbitPointer = null; state.input.movePointer = null;
+  document.getElementById("touch-joystick").hidden = true;
   sfx.setPaused(true);
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   document.getElementById("sens-slider").value = String(save.mouseSens || 1.0);
@@ -1649,7 +1740,10 @@ window.addEventListener("keydown", (e) => {
     else if (state?.phase === "paused") closePause();
     return;
   }
-  if (state && state.phase === "playing") state.input.keys.add(e.code);
+  if (state && state.phase === "playing") {
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+    state.input.keys.add(e.code);
+  }
 });
 window.addEventListener("keyup", (e) => {
   if (state) state.input.keys.delete(e.code);
