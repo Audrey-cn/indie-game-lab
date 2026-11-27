@@ -9,6 +9,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, DEFAULT_SAVE, TRACKS } from "./config.mjs";
 import { sfx } from "./audio.mjs";
 import { buildTrackScene, createKittyBall, createRainbowRibbon } from "./cel-builder.mjs";
+import { generateClearPoster } from "./poster.mjs";
 import { GLB_MODELS } from "./models/manifest.mjs";
 import coverUrl from "./assets/cover.webp";
 
@@ -64,9 +65,13 @@ const canvas = document.getElementById("gl-canvas");
 const lobbyScreen = document.getElementById("lobby-screen");
 const pauseScreen = document.getElementById("pause-screen");
 const resultScreen = document.getElementById("result-screen");
+const posterModal = document.getElementById("poster-modal");
 const hudEl = document.getElementById("hud");
 const toastEl = document.getElementById("toast");
 lobbyScreen.style.backgroundImage = `url("${coverUrl}")`;
+let previewCatId = save.selectedCat;
+let lastPoster = null;
+let lastResultCtx = null;
 
 let toastTimer = null;
 function showToast(msg) {
@@ -79,7 +84,7 @@ function showToast(msg) {
 }
 
 // ===== THREE.JS CEL-SHADED + ACES FILMIC + PMREM + BLOOM RENDERER =====
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -144,10 +149,25 @@ let trailMesh = null;
 
 function isCatUnlocked(cat) {
   if (cat.unlockedByDefault || save.unlockedCats.includes(cat.id)) return true;
-  if (cat.unlockReq?.type === "clear" && save.clearedTracks.includes(cat.unlockReq.track)) return true;
-  if (cat.unlockReq?.type === "stars" && save.totalStars >= cat.unlockReq.count) return true;
-  if (cat.unlockReq?.type === "time" && save.bestTourneyTime >= cat.unlockReq.seconds) return true;
+  const req = cat.unlockReq;
+  if (!req) return false;
+  if (req.type === "clear" && save.clearedTracks.includes(req.track)) return true;
+  if (req.type === "stars" && (save.totalStars || 0) >= req.count) return true;
+  if (req.type === "share" && (save.sharedCount || 0) >= req.count) return true;
+  if (req.type === "secret" && (save.secretsFound || 0) >= req.count) return true;
+  if (req.type === "nopop" && (save.noPopClears || 0) >= req.count) return true;
+  if (req.type === "fast" && Math.max(save.bestSingleRemain || 0, save.bestTourneyTime || 0) >= req.seconds) return true;
+  if (req.type === "time" && (save.bestTourneyTime || 0) >= req.seconds) return true;
   return false;
+}
+
+function getCatProgressText(cat) {
+  if (isCatUnlocked(cat)) return "✅ 已解锁 · 点击即可换装出战！";
+  const req = cat.unlockReq;
+  if (!req) return `🔒 ${cat.unlockText}`;
+  if (req.type === "stars") return `🔒 ${cat.unlockText}（当前 ${save.totalStars || 0}/${req.count} ⭐）`;
+  if (req.type === "fast") return `🔒 ${cat.unlockText}（当前最佳 ${Math.max(save.bestSingleRemain || 0, save.bestTourneyTime || 0).toFixed(1)}s）`;
+  return `🔒 ${cat.unlockText}`;
 }
 
 function getSelectedCat() {
@@ -254,24 +274,28 @@ function renderLobby() {
     cardsEl.appendChild(card);
   });
 
-  // Cat Wardrobe Grid + 4 Visual Stat Bars
+  // Rich 9-Cat Wardrobe Grid + Rarity Badges + Live Unlock Progress + 4 Visual Stat Bars
   const catGrid = document.getElementById("cat-grid");
   catGrid.innerHTML = "";
-  const catIcons = { witch_hat: "🧙‍♀️", scarf: "🧣", ribbon: "🎀", bell: "🔔", goggles: "🥽", crown: "👑" };
   let ownedCount = 0;
   for (const cat of CATS) {
     const unlocked = isCatUnlocked(cat);
     if (unlocked) ownedCount++;
+    const isSel = save.selectedCat === cat.id;
+    const isPrev = previewCatId === cat.id;
     const btn = document.createElement("button");
-    btn.className = `cat-btn ${save.selectedCat === cat.id ? "active" : ""} ${unlocked ? "" : "locked"}`;
+    btn.className = `cat-btn ${isSel || isPrev ? "active" : ""} ${unlocked ? "" : "locked"}`;
     const hex = `#${cat.bubbleColor.toString(16).padStart(6, "0")}`;
     btn.innerHTML = `
-      <div class="cat-dot" style="background:${hex}">${unlocked ? (catIcons[cat.acc] || "🐱") : "🔒"}</div>
+      <span class="cat-rar ${cat.rarity || "R"}">${cat.rarity || "R"}</span>
+      <div class="cat-dot" style="background:${hex}">${unlocked ? (cat.emoji || "🐱") : "🔒"}</div>
       <div class="cat-name">${cat.name}</div>
     `;
     btn.onclick = () => {
+      previewCatId = cat.id;
       if (!unlocked) {
-        showToast(`🔒 ${cat.unlockText}`);
+        showToast(getCatProgressText(cat));
+        renderLobby();
         return;
       }
       save.selectedCat = cat.id;
@@ -281,17 +305,23 @@ function renderLobby() {
     catGrid.appendChild(btn);
   }
   document.getElementById("cat-count").textContent = `${ownedCount}/${CATS.length}`;
-  const activeCat = getSelectedCat();
-  document.getElementById("cat-desc").textContent = `${activeCat.name}（${activeCat.title}）· ${activeCat.desc}`;
+  const shownCat = CATS.find((c) => c.id === previewCatId) || getSelectedCat();
+  document.getElementById("cat-desc").textContent = `${shownCat.emoji || "🐱"} ${shownCat.name} [${shownCat.rarity || "R"}] · ${shownCat.desc}`;
+  document.getElementById("cat-unlock-hint").textContent = getCatProgressText(shownCat);
   const barDefs = [
-    ["加速", activeCat.stats.accel / 1.15],
-    ["极速", activeCat.stats.topSpeed / 1.15],
-    ["抓地", activeCat.stats.grip / 1.25],
-    ["抗晕", activeCat.stats.dizzyResist / 1.5],
+    ["加速", shownCat.stats.accel / 1.15],
+    ["极速", shownCat.stats.topSpeed / 1.15],
+    ["抓地", shownCat.stats.grip / 1.25],
+    ["抗晕", shownCat.stats.dizzyResist / 1.5],
   ];
   document.getElementById("cat-bars").innerHTML = barDefs
     .map(([k, pct]) => `<div class="sbar-row"><span>${k}</span><div class="sbar-track"><div class="sbar-fill" style="width:${Math.min(100, Math.round(pct * 100))}%"></div></div></div>`)
     .join("");
+  const catGoBtn = document.getElementById("btn-cat-go");
+  if (catGoBtn) {
+    const activeCat = getSelectedCat();
+    catGoBtn.textContent = `🎯 带【${activeCat.name}】出战第 ${selectedPracticeTrack + 1} 关！`;
+  }
 }
 
 // ===== TRACK LOADER & 3D SCENE SETUP =====
@@ -345,7 +375,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   scene.add(kittyRig.root);
   scene.add(kittyRig.shadow);
   // Auto-mount external AI-generated 3D .glb kitten + automatic AnimationMixer for rigged GLBs!
-  const glbKey = cat.id === "ginger_scarf" ? "cat-ginger" : "cat-witch";
+  const glbKey = cat.glbKey || (cat.id === "ginger_scarf" ? "cat-ginger" : "cat-witch");
   loadGlbModel(glbKey, (model, animations) => {
     if (!kittyRig) return;
     kittyRig.mountExternalModel(model, 0.72);
@@ -495,49 +525,91 @@ function finishStage(cleared) {
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   hudEl.hidden = true;
 
+  const unlockedBefore = new Set(CATS.filter((c) => isCatUnlocked(c)).map((c) => c.id));
+  const isFinalTourney = state.mode === "tourney" && state.trackIndex === TRACKS.length - 1;
+  const hasNextStage = state.trackIndex < TRACKS.length - 1;
+
   if (cleared) {
     sfx.playFinish();
     if (!save.clearedTracks.includes(state.trackIndex)) save.clearedTracks.push(state.trackIndex);
     if (!save.bestTrackTimes) save.bestTrackTimes = {};
     const prevBest = save.bestTrackTimes[state.track.id] || 0;
     if (state.timeLeft > prevBest) save.bestTrackTimes[state.track.id] = state.timeLeft;
+    if (state.timeLeft > (save.bestSingleRemain || 0)) save.bestSingleRemain = state.timeLeft;
+    if (state.pops === 0) save.noPopClears = (save.noPopClears || 0) + 1;
+    if (state.secretFound) save.secretsFound = (save.secretsFound || 0) + 1;
     save.totalStars += state.stars;
-    const isFinalTourney = state.mode === "tourney" && state.trackIndex === TRACKS.length - 1;
     if (isFinalTourney && state.timeLeft > save.bestTourneyTime) {
       save.bestTourneyTime = state.timeLeft;
     }
     writeSave(save);
 
+    const newlyUnlocked = CATS.filter((c) => isCatUnlocked(c) && !unlockedBefore.has(c.id));
+    const unlockBox = document.getElementById("res-unlock");
+    if (newlyUnlocked.length > 0) {
+      const firstNew = newlyUnlocked[0];
+      unlockBox.hidden = false;
+      document.getElementById("res-unlock-text").textContent = `🎁 解锁新猫球：${firstNew.emoji} ${firstNew.name}！`;
+      document.getElementById("btn-res-equip").onclick = () => {
+        save.selectedCat = firstNew.id;
+        previewCatId = firstNew.id;
+        writeSave(save);
+        showToast(`✨ 已换上【${firstNew.name}】！下一关立刻生效！`);
+        unlockBox.hidden = true;
+      };
+    } else {
+      unlockBox.hidden = true;
+    }
+
     document.getElementById("res-tag").textContent = isFinalTourney ? "🏆 TOURNAMENT CHAMPION!" : "✨ STAGE CLEAR!";
     document.getElementById("res-title").textContent = isFinalTourney ? "🎉 3 关锦标赛全通！" : `✅ 通过 ${state.track.name}`;
     document.getElementById("res-sub").textContent =
-      state.mode === "tourney" && !isFinalTourney
-        ? `剩余 ${state.timeLeft.toFixed(1)}s 已结转！下一关再奖 +${TRACKS[state.trackIndex + 1].bonusTime}s！`
-        : isFinalTourney
-          ? `最终结转总剩余 ${state.timeLeft.toFixed(1)} 秒！快去大厅解锁新萌猫！`
-          : "单关冲刺完成！挑战 3 关锦标赛赢取更多时间结转！";
+      state.mode === "tourney" && hasNextStage
+        ? `剩余 ${state.timeLeft.toFixed(1)}s 已全额结转！下一关再奖 +${TRACKS[state.trackIndex + 1].bonusTime}s！`
+        : hasNextStage
+          ? `下一关【${TRACKS[state.trackIndex + 1].name}】已解锁！点击下方直接冲刺！`
+          : isFinalTourney
+            ? `最终结转总剩余 ${state.timeLeft.toFixed(1)} 秒！快生成战报海报炫耀一下！`
+            : "全关卡通关！生成战报海报还能额外解锁【幻梦星铃猫】！";
     document.getElementById("res-time").textContent = `${state.timeLeft.toFixed(1)}s`;
     document.getElementById("res-stars").textContent = `⭐ ${state.stars} / 💥 ${state.pops}`;
 
     const nextBtn = document.getElementById("btn-res-next");
-    if (state.mode === "tourney" && !isFinalTourney) {
-      nextBtn.textContent = `下一关：${TRACKS[state.trackIndex + 1].name.split("·")[1].trim()} →`;
-      nextBtn.onclick = () => loadTrack(state.trackIndex + 1, "tourney", state.timeLeft);
+    if (hasNextStage) {
+      const nextName = TRACKS[state.trackIndex + 1].name.split("·")[1].trim();
+      nextBtn.textContent = `➡️ 直接进入下一关：${nextName}`;
+      nextBtn.onclick = () => {
+        selectedPracticeTrack = state.trackIndex + 1;
+        loadTrack(state.trackIndex + 1, state.mode, state.mode === "tourney" ? state.timeLeft : 0);
+      };
     } else {
-      nextBtn.textContent = "🔄 再跑一局";
-      nextBtn.onclick = () => loadTrack(state.mode === "tourney" ? 0 : state.trackIndex, state.mode, 0);
+      nextBtn.textContent = "🏆 再冲一轮 3 关锦标赛";
+      nextBtn.onclick = () => loadTrack(0, "tourney", 0);
     }
   } else {
     sfx.playPop();
+    document.getElementById("res-unlock").hidden = true;
     document.getElementById("res-tag").textContent = "⏰ TIME UP";
     document.getElementById("res-title").textContent = "😿 时间耗尽啦！";
     document.getElementById("res-sub").textContent = "小猫跑累了…试试发现隐藏云朵捷径省时间！";
     document.getElementById("res-time").textContent = "0.0s";
     document.getElementById("res-stars").textContent = `⭐ ${state.stars} / 💥 ${state.pops}`;
     const nextBtn = document.getElementById("btn-res-next");
-    nextBtn.textContent = "🔄 重新挑战";
-    nextBtn.onclick = () => loadTrack(state.mode === "tourney" ? 0 : state.trackIndex, state.mode, 0);
+    nextBtn.textContent = "🔄 重新挑战本关";
+    nextBtn.onclick = () => loadTrack(state.trackIndex, state.mode, 0);
   }
+
+  document.getElementById("btn-res-retry").onclick = () => loadTrack(state.trackIndex, state.mode, 0);
+  lastResultCtx = {
+    track: state.track,
+    cat: state.cat,
+    timeLeft: state.timeLeft,
+    stars: state.stars,
+    pops: state.pops,
+    secretFound: state.secretFound,
+    isFinalTourney,
+    cleared,
+  };
   resultScreen.hidden = false;
 }
 
@@ -1115,6 +1187,53 @@ document.querySelectorAll(".htab").forEach((b) => {
 });
 document.getElementById("btn-tourney").onclick = () => loadTrack(0, "tourney", 0);
 document.getElementById("btn-practice").onclick = () => loadTrack(selectedPracticeTrack, "practice", 0);
+document.getElementById("btn-cat-go").onclick = () => loadTrack(selectedPracticeTrack, "practice", 0);
+document.getElementById("btn-res-share").onclick = async () => {
+  if (!lastResultCtx) return;
+  showToast("📸 正在生成高清通关战报海报…");
+  const hadShareCat = isCatUnlocked(CATS.find((c) => c.id === "starbell_dream"));
+  lastPoster = await generateClearPoster({ glCanvas: canvas, ...lastResultCtx });
+  document.getElementById("poster-img").src = lastPoster.dataUrl;
+  posterModal.hidden = false;
+  save.sharedCount = (save.sharedCount || 0) + 1;
+  writeSave(save);
+  if (!hadShareCat) {
+    showToast("🦋 首次生成海报！已解锁限定 SR【幻梦星铃猫】！");
+  }
+};
+document.getElementById("btn-poster-share").onclick = async () => {
+  if (!lastPoster) return;
+  const shareText = `我在《魔女猫球》冲过了${lastResultCtx?.track?.name || "魔法赛道"}，评级 ${lastPoster.grade}！来试试手机陀螺仪推球！`;
+  try {
+    if (navigator.share && lastPoster.file && navigator.canShare && navigator.canShare({ files: [lastPoster.file] })) {
+      await navigator.share({ title: "魔女猫球 · 通关战报", text: shareText, files: [lastPoster.file] });
+      showToast("✅ 已调起系统分享！");
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({ title: "魔女猫球 · 通关战报", text: shareText, url: location.href });
+      showToast("✅ 已调起系统分享！");
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+  }
+  // Fallback: trigger PNG download
+  document.getElementById("btn-poster-save").click();
+};
+document.getElementById("btn-poster-save").onclick = () => {
+  if (!lastPoster) return;
+  const a = document.createElement("a");
+  a.href = lastPoster.dataUrl;
+  a.download = `meowball-${lastResultCtx?.track?.id || "clear"}-${lastPoster.grade}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast("💾 高清战报海报已保存！");
+};
+document.getElementById("btn-poster-close").onclick = () => {
+  posterModal.hidden = true;
+};
 document.getElementById("btn-pause").onclick = openPause;
 document.getElementById("btn-resume").onclick = closePause;
 document.getElementById("btn-restart-stage").onclick = () => {

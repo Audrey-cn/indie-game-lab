@@ -165,23 +165,33 @@
     .tcard-diff { font-size: 12px; color: #f59e0b; letter-spacing: 1px; }
     .tcard-best { font-size: 10px; font-weight: 900; color: #10b981; margin-top: 2px; }
 
-    /* Cat Wardrobe Grid + 4 Stat Bars */
-    .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+    /* Cat Wardrobe Grid + Rarity Badges + 4 Stat Bars */
+    .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; max-height: 204px; overflow-y: auto; padding-right: 2px; }
     .cat-btn {
+      position: relative;
       background: #fff; border: 2.5px solid #d9cbe8; border-radius: 14px;
-      padding: 7px 5px; cursor: pointer; text-align: center; color: var(--ink);
+      padding: 7px 4px 6px; cursor: pointer; text-align: center; color: var(--ink);
     }
     .cat-btn.active { border-color: var(--violet); background: #f3e8ff; box-shadow: 0 3px 0 var(--violet); }
-    .cat-btn.locked { opacity: 0.55; background: #ede7f3; }
-    .cat-dot {
-      width: 32px; height: 32px; border-radius: 50%; margin: 0 auto 4px;
-      border: 2.5px solid var(--ink); display: flex; align-items: center; justify-content: center; font-size: 16px;
+    .cat-btn.locked { opacity: 0.6; background: #ede7f3; }
+    .cat-rar {
+      position: absolute; top: 4px; right: 4px;
+      font-size: 9px; font-weight: 900; padding: 1px 5px; border-radius: 999px;
+      color: #fff; background: #94a3b8;
     }
-    .cat-name { font-size: 11px; font-weight: 900; }
+    .cat-rar.SR { background: linear-gradient(90deg, #8b5cf6, #ec4899); }
+    .cat-rar.SSR { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+    .cat-dot {
+      width: 34px; height: 34px; border-radius: 50%; margin: 2px auto 4px;
+      border: 2.5px solid var(--ink); display: flex; align-items: center; justify-content: center; font-size: 17px;
+      box-shadow: inset 0 -4px 0 rgba(0,0,0,0.14);
+    }
+    .cat-name { font-size: 10.5px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .cat-stats-card {
       margin-top: 8px; background: #f6effc; border: 2px solid #d9cbe8;
       border-radius: 14px; padding: 8px 10px;
     }
+    .cat-unlock-hint { font-size: 11px; font-weight: 800; color: #c026d3; margin-top: 3px; }
     .stat-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 6px; }
     .sbar-row { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 900; color: #5b4375; }
     .sbar-track { flex: 1; height: 7px; background: #e2d5f0; border-radius: 999px; overflow: hidden; }
@@ -196,7 +206,21 @@
     .gbtn:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--ink); }
     .gbtn-play { background: linear-gradient(180deg, #6ef2a9, #10b981); color: #072b1f; }
     .gbtn-gold { background: linear-gradient(180deg, #ffe26a, #f59e0b); color: #2b1800; }
+    .gbtn-pink { background: linear-gradient(180deg, #ff85c0, #ec4899); color: #fff; }
     .gbtn-dark { background: #2b1e3a; color: #fff; }
+
+    .res-unlock {
+      margin-top: 10px; background: linear-gradient(90deg, #fef3c7, #fce7f3);
+      border: 2.5px solid #f59e0b; border-radius: 14px; padding: 8px 10px;
+      font-size: 12px; font-weight: 900; color: #7c2d12;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .res-unlock[hidden] { display: none; }
+    .poster-preview-img {
+      width: 100%; max-height: 58vh; object-fit: contain;
+      border-radius: 18px; border: 3px solid var(--ink);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35); margin: 10px 0 4px; background: #1b122b;
+    }
 
     /* Center Modal (Pause & Result) */
     .center-overlay {
@@ -278,7 +302,7 @@
       <div class="lobby-drawer">
         <div class="hub-tabs">
           <button class="htab active" data-tab="tracks">🗺️ 渐进闯关地图</button>
-          <button class="htab" data-tab="cats">🐱 猫球衣橱 (<span id="cat-count">1/6</span>)</button>
+          <button class="htab" data-tab="cats">🐱 猫球衣橱 (<span id="cat-count">1/9</span>)</button>
         </div>
 
         <!-- Tab 1: Progressive Track Cards -->
@@ -290,12 +314,16 @@
           </div>
         </div>
 
-        <!-- Tab 2: Cat Wardrobe with Stat Bars -->
+        <!-- Tab 2: Rich 9-Cat Wardrobe with Stat Bars & Quick Launch -->
         <div class="tab-pane" id="pane-cats" hidden>
           <div class="cat-grid" id="cat-grid"></div>
           <div class="cat-stats-card">
             <div style="font-size:12px;font-weight:900" id="cat-desc">见习小黑猫 · 均衡全能</div>
+            <div class="cat-unlock-hint" id="cat-unlock-hint">✅ 已拥有 · 点击即可换装出战</div>
             <div class="stat-bars" id="cat-bars"></div>
+          </div>
+          <div class="cta-row">
+            <button class="gbtn gbtn-play" id="btn-cat-go">🎯 带这只猫球出战！</button>
           </div>
         </div>
       </div>
@@ -324,15 +352,38 @@
     <div class="overlay center-overlay" id="result-screen" hidden style="z-index:42">
       <div class="modal-box">
         <div class="badge-tag" id="res-tag">STAGE CLEAR</div>
-        <h2 id="res-title" style="font-size:25px;font-weight:900;margin-top:8px">🎉 冲过魔法传送门！</h2>
+        <h2 id="res-title" style="font-size:24px;font-weight:900;margin-top:8px">🎉 冲过魔法传送门！</h2>
         <p id="res-sub" style="font-size:12.5px;font-weight:800;color:#6b5582;margin-top:4px">剩余时间已全额结转至下一关！</p>
+        <div class="res-unlock" id="res-unlock" hidden>
+          <span id="res-unlock-text">🎁 解锁新猫球！</span>
+          <button class="hud-btn" id="btn-res-equip" style="height:30px;font-size:11px;background:#8b5cf6">立即换上</button>
+        </div>
         <div class="res-stats">
           <div class="res-stat"><div class="k">剩余时间</div><div class="v" id="res-time">32.4s</div></div>
           <div class="res-stat"><div class="k">本局星糖 / 破球</div><div class="v" id="res-stars">⭐ 4 / 💥 0</div></div>
         </div>
-        <div class="cta-row">
-          <button class="gbtn gbtn-play" id="btn-res-next">下一关 →</button>
-          <button class="gbtn gbtn-dark" id="btn-res-lobby" style="flex:0.65">大厅</button>
+        <div class="cta-row" style="flex-direction:column;gap:8px;margin-top:6px">
+          <button class="gbtn gbtn-play" id="btn-res-next">➡️ 直接进入下一关</button>
+          <button class="gbtn gbtn-pink" id="btn-res-share">📸 生成 / 分享通关海报</button>
+          <div class="cta-row" style="margin-top:0">
+            <button class="gbtn gbtn-gold" id="btn-res-retry">🔄 重刷本关</button>
+            <button class="gbtn gbtn-dark" id="btn-res-lobby">🏠 大厅</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shareable 9:16 Clear Poster Preview Modal -->
+    <div class="overlay center-overlay" id="poster-modal" hidden style="z-index:50">
+      <div class="modal-box" style="padding:14px">
+        <div class="badge-tag">📸 专属通关战报海报</div>
+        <img id="poster-img" class="poster-preview-img" alt="通关海报">
+        <div class="cta-row" style="margin-top:8px">
+          <button class="gbtn gbtn-pink" id="btn-poster-share">📤 分享给好友</button>
+          <button class="gbtn gbtn-gold" id="btn-poster-save">💾 保存图片</button>
+        </div>
+        <div class="cta-row" style="margin-top:8px">
+          <button class="gbtn gbtn-dark" id="btn-poster-close" style="padding:9px">关闭返回</button>
         </div>
       </div>
     </div>

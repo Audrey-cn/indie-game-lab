@@ -429,11 +429,20 @@ export function createKittyBall(catDef) {
   root.add(bubbleMesh);
 
   const band = new THREE.Mesh(
-    new THREE.TorusGeometry(0.58, 0.016, 8, 28),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.38 })
+    new THREE.TorusGeometry(0.58, 0.018, 8, 28),
+    new THREE.MeshBasicMaterial({ color: catDef.trailColor || 0xffffff, transparent: true, opacity: 0.55 })
   );
   band.rotation.x = Math.PI / 2;
   bubbleMesh.add(band);
+
+  // Distinctive Magic Halo Ring inside the bubble (unique color per cat rarity!)
+  const auraRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.42, 0.016, 8, 24),
+    new THREE.MeshBasicMaterial({ color: catDef.bubbleColor, transparent: true, opacity: 0.72 })
+  );
+  auraRing.rotation.x = Math.PI / 2;
+  auraRing.position.y = -0.26;
+  root.add(auraRing);
 
   // Inner Kitty Container (supports swapping in an external .glb 3D model via rig.mountExternalModel!)
   const kitty = new THREE.Group();
@@ -595,6 +604,9 @@ export function createKittyBall(catDef) {
       animUniforms.uMinY.value = minY;
       animUniforms.uInvH.value = 1.0 / (maxY - minY);
     }
+    const tintCol = new THREE.Color(catDef.bodyColor);
+    const auraCol = new THREE.Color(catDef.bubbleColor);
+    const tintMix = catDef.tintMix || 0;
     const patchedMats = new Set();
     gltfScene.traverse((obj) => {
       if (obj.isMesh) {
@@ -606,6 +618,11 @@ export function createKittyBall(catDef) {
           if (obj.material.isMeshStandardMaterial) {
             obj.material.roughness = 0.65;
             obj.material.metalness = 0.04;
+            if (tintMix > 0) {
+              obj.material.color.lerp(tintCol, tintMix);
+              obj.material.emissive.copy(auraCol);
+              obj.material.emissiveIntensity = 0.14;
+            }
           }
           obj.material.onBeforeCompile = (shader) => {
             Object.assign(shader.uniforms, animUniforms);
