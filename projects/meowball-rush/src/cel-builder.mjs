@@ -757,18 +757,18 @@ export function buildTrackScene(track) {
     grassEdge: toonMat(0x67cc5e),
     grassDirt: toonMat(0x9a6d52),
     stoneCurb: toonMat(0xe5dfd3),
-    wood: toonMat(0xffffff, 0x000000, 0, woodTex),
-    woodPlank: toonMat(0xd4924c),
+    wood: Object.assign(toonMat(0xffffff, 0x000000, 0, woodTex), { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
+    woodPlank: Object.assign(toonMat(0xd4924c), { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
     woodPost: toonMat(0x824c27),
     rope: toonMat(0xd6b078),
     brass: toonMat(0xffffff, 0x000000, 0, brassTex),
     brassDark: toonMat(0x8c5c20),
     cloud: new THREE.MeshToonMaterial({ color: 0xffffff, gradientMap: getToonGradient(), transparent: true, opacity: 0.74 }),
-    ice: new THREE.MeshToonMaterial({ color: 0xffffff, map: iceTex, gradientMap: getToonGradient(), emissive: 0x165e8a, emissiveIntensity: 0.25 }),
-    neon: new THREE.MeshToonMaterial({ color: 0xff6ee6, gradientMap: getToonGradient(), emissive: 0xff2eb3, emissiveIntensity: 0.5, transparent: true, opacity: 0.86 }),
+    ice: new THREE.MeshToonMaterial({ color: 0xffffff, map: iceTex, gradientMap: getToonGradient(), emissive: 0x165e8a, emissiveIntensity: 0.25, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
+    neon: new THREE.MeshToonMaterial({ color: 0xff6ee6, gradientMap: getToonGradient(), emissive: 0xff2eb3, emissiveIntensity: 0.5, transparent: true, opacity: 0.86, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
     crystal: toonMat(0x52398e, 0x2a1860, 0.35),
-    mud: new THREE.MeshToonMaterial({ color: 0xffffff, map: mudTex, gradientMap: getToonGradient(), emissive: 0x78350f, emissiveIntensity: 0.16 }),
-    rainbow: new THREE.MeshBasicMaterial({ map: rainbowTex, transparent: true, opacity: 0.94 }),
+    mud: new THREE.MeshToonMaterial({ color: 0xffffff, map: mudTex, gradientMap: getToonGradient(), emissive: 0x78350f, emissiveIntensity: 0.16, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 }),
+    rainbow: new THREE.MeshBasicMaterial({ map: rainbowTex, transparent: true, opacity: 0.94, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
   };
 
   const flowerCols = [0xff85c0, 0xffe066, 0xffffff, 0x93c5fd];
@@ -881,9 +881,11 @@ export function buildTrackScene(track) {
                 : p.kind === "crystal" ? mats.crystal
                   : mats.brass;
       const isRounded = p.kind === "brass" || p.kind === "crystal" || p.kind === "ice" || p.kind === "mud";
+      // Deterministic micro Y-layering eliminates coplanar Z-fighting flicker at platform seams!
+      const yLayer = p.kind === "mud" ? -0.016 : p.kind === "ice" ? 0.008 : p.kind === "neon" ? 0.014 : 0;
       const geo = isRounded ? createRoundedSlabGeo(p.w, p.d, p.h, Math.min(p.w, p.d) * 0.2, 0.12) : new THREE.BoxGeometry(p.w, p.h, p.d);
       const mesh = castRec(new THREE.Mesh(geo, topMat), false, true);
-      mesh.position.set(p.x, isRounded ? p.y - 0.12 : p.y - p.h / 2, p.z);
+      mesh.position.set(p.x, (isRounded ? p.y - 0.12 : p.y - p.h / 2) + yLayer, p.z);
       if (p.kind !== "cloud" && p.kind !== "neon") addOutline(mesh, 1.015);
       group.add(mesh);
 
@@ -911,16 +913,17 @@ export function buildTrackScene(track) {
     }
   }
 
-  // 2. Rotating Interlocking Brass Gears!
+  // 2. Rotating Interlocking Brass Gears (Recessed -0.07m below adjoining deck with inset teeth -> ZERO clipping or Z-fighting!)
   for (const g of track.gears) {
     const gGroup = new THREE.Group();
-    gGroup.position.set(g.x, g.y - g.h / 2, g.z);
-    gGroup.add(castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(g.r, g.r, g.h, 24), mats.brass), 1.022)));
-    gGroup.add(castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(g.r * 0.32, g.r * 0.32, g.h + 0.18, 12), mats.brassDark), 1.04)));
+    const diskR = Math.max(1.2, g.r - 0.22);
+    gGroup.position.set(g.x, g.y - 0.07 - g.h / 2, g.z);
+    gGroup.add(castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(diskR, diskR, g.h, 28), mats.brass), 1.018)));
+    gGroup.add(castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(diskR * 0.3, diskR * 0.3, g.h + 0.12, 14), mats.brassDark), 1.03)));
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2;
-      const tooth = castRec(addOutline(new THREE.Mesh(new THREE.BoxGeometry(0.62, g.h * 0.85, 0.72), mats.brass), 1.04));
-      tooth.position.set(Math.cos(a) * (g.r + 0.2), 0, Math.sin(a) * (g.r + 0.2));
+      const tooth = castRec(addOutline(new THREE.Mesh(new THREE.BoxGeometry(0.46, g.h * 0.62, 0.56), mats.brassDark), 1.03));
+      tooth.position.set(Math.cos(a) * (diskR + 0.12), -0.05, Math.sin(a) * (diskR + 0.12));
       tooth.rotation.y = -a;
       gGroup.add(tooth);
     }

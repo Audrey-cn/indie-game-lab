@@ -68,10 +68,30 @@ const resultScreen = document.getElementById("result-screen");
 const posterModal = document.getElementById("poster-modal");
 const hudEl = document.getElementById("hud");
 const toastEl = document.getElementById("toast");
-lobbyScreen.style.backgroundImage = `url("${coverUrl}")`;
+const starPopEl = document.getElementById("star-pop");
 let previewCatId = save.selectedCat;
 let lastPoster = null;
 let lastResultCtx = null;
+let lobbyShowcaseRig = null;
+let lobbyShowcaseCatId = null;
+
+// Start warm Lobby BGM on first user gesture anywhere in the lobby!
+window.addEventListener("pointerdown", () => {
+  if (!lobbyScreen.hidden && sfx.activeMode === "none") {
+    sfx.playLobbyBgm();
+  }
+}, { passive: true });
+
+let starPopTimer = null;
+function showStarPop(msg) {
+  if (!starPopEl) return;
+  starPopEl.textContent = msg;
+  starPopEl.classList.remove("show");
+  void starPopEl.offsetWidth;
+  starPopEl.classList.add("show");
+  clearTimeout(starPopTimer);
+  starPopTimer = setTimeout(() => starPopEl.classList.remove("show"), 950);
+}
 
 let toastTimer = null;
 function showToast(msg) {
@@ -233,10 +253,36 @@ window.addEventListener("deviceorientation", (e) => {
   gyroTiltZ = gz * save.mouseSens;
 });
 
+function syncLobbyShowcase(cat) {
+  if (!cat) return;
+  if (lobbyShowcaseRig && lobbyShowcaseCatId === cat.id) {
+    lobbyShowcaseRig.root.visible = !lobbyScreen.hidden;
+    return;
+  }
+  if (lobbyShowcaseRig) {
+    scene.remove(lobbyShowcaseRig.root);
+    lobbyShowcaseRig = null;
+  }
+  lobbyShowcaseCatId = cat.id;
+  lobbyShowcaseRig = createKittyBall(cat);
+  lobbyShowcaseRig.root.position.set(0, 9.8, 0);
+  lobbyShowcaseRig.root.scale.setScalar(1.45);
+  lobbyShowcaseRig.root.visible = !lobbyScreen.hidden;
+  scene.add(lobbyShowcaseRig.root);
+  const glbKey = cat.glbKey || "cat-witch";
+  const targetRig = lobbyShowcaseRig;
+  loadGlbModel(glbKey, (model) => {
+    if (lobbyShowcaseRig !== targetRig) return;
+    targetRig.mountExternalModel(model, 0.74);
+  });
+}
+
 function renderLobby() {
   document.getElementById("lobby-stars").textContent = `⭐ ${save.totalStars}`;
   document.getElementById("lobby-best").textContent = save.bestTourneyTime > 0 ? `🏆 ${save.bestTourneyTime.toFixed(1)}s` : "🏆 --";
   updateGyroUI();
+  const shownCatFor3D = CATS.find((c) => c.id === previewCatId) || getSelectedCat();
+  syncLobbyShowcase(shownCatFor3D);
 
   document.querySelectorAll(".htab").forEach((b) => b.classList.toggle("active", b.dataset.tab === currentHubTab));
   document.getElementById("pane-tracks").hidden = currentHubTab !== "tracks";
@@ -331,6 +377,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   const cat = getSelectedCat();
 
   if (trackRoot) scene.remove(trackRoot);
+  if (lobbyShowcaseRig) lobbyShowcaseRig.root.visible = false;
   if (kittyRig) {
     scene.remove(kittyRig.root);
     scene.remove(kittyRig.shadow);
@@ -524,7 +571,8 @@ function triggerBubblePop(reason = "💥 砰！猫球破啦！") {
 
 function finishStage(cleared) {
   state.phase = "ended";
-  sfx.stopBgm();
+  // Gently duck music instead of cutting off abruptly so transitioning to Next Stage stays seamless!
+  sfx.duckForResult();
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   hudEl.hidden = true;
 
@@ -637,9 +685,31 @@ function tick(ts) {
     updateVisuals(dt);
     syncHud();
   } else if (trackRoot) {
-    // Gentle idle turntable preview behind Lobby!
-    camera.position.set(Math.sin(ts * 0.0003) * 14, 14, Math.cos(ts * 0.0003) * 14 - 8);
-    camera.lookAt(0, 5, -14);
+    // Live 3D Lobby & Cat Wardrobe Showcase Turntable!
+    const tSec = ts * 0.001;
+    if (lobbyShowcaseRig && !lobbyScreen.hidden) {
+      lobbyShowcaseRig.root.visible = true;
+      lobbyShowcaseRig.root.position.set(0, 9.75 + Math.sin(tSec * 2.4) * 0.14, 0);
+      lobbyShowcaseRig.kitty.rotation.y = tSec * 0.9;
+      lobbyShowcaseRig.bubbleMat.uniforms.uTime.value = tSec;
+      if (lobbyShowcaseRig.animUniforms) {
+        lobbyShowcaseRig.animUniforms.uTime.value = tSec;
+        lobbyShowcaseRig.animUniforms.uPhase.value = tSec * 4.2;
+        lobbyShowcaseRig.animUniforms.uSpeed.value = 0.25 + 0.15 * Math.sin(tSec * 1.8);
+        lobbyShowcaseRig.animUniforms.uTurn.value = Math.sin(tSec * 1.4) * 0.35;
+        lobbyShowcaseRig.animUniforms.uSquash.value = Math.sin(tSec * 3.0) * 0.08;
+      }
+      const inWardrobe = currentHubTab === "cats";
+      const isPortrait = window.innerHeight > window.innerWidth * 1.05;
+      const dist = inWardrobe ? (isPortrait ? 4.4 : 3.6) : (isPortrait ? 6.4 : 5.4);
+      const camY = inWardrobe ? 10.3 : 11.2;
+      const lookY = inWardrobe ? 8.85 : 9.1;
+      camera.position.lerp(new THREE.Vector3(Math.sin(tSec * 0.22) * 1.2, camY, dist), Math.min(1, dt * 4.5));
+      camera.lookAt(0, lookY, 0);
+    } else {
+      camera.position.set(Math.sin(ts * 0.0003) * 14, 14, Math.cos(ts * 0.0003) * 14 - 8);
+      camera.lookAt(0, 5, -14);
+    }
   }
 
   composer.render();
@@ -942,16 +1012,32 @@ function updatePhysics(dt) {
     }
   });
 
-  // Magic Star Candy Pickups!
+  // High-Dopamine Magic Star Candy Pickups (+2.0s Time, Speed Burst, Rising Combo Pitch & All-Stars Bonus!)
   for (const st of dynamicMeshes.stars) {
     if (st.collected) continue;
-    if (Math.hypot(b.x - st.def.x, b.y - st.def.y, b.z - st.def.z) < b.r + 0.85) {
+    if (Math.hypot(b.x - st.def.x, b.y - st.def.y, b.z - st.def.z) < b.r + 0.9) {
       st.collected = true;
       st.mesh.visible = false;
       state.stars += 1;
-      state.timeLeft += 1.5; // Each star candy adds +1.5s bonus time!
-      sfx.playStar();
-      showToast("⭐ 吃到魔法星糖！时间 +1.5s");
+      state.timeLeft += 2.0;
+      // Instant rewarding speed kick + rainbow flash + elastic joy hop!
+      const curS = Math.hypot(b.vx, b.vz);
+      if (curS > 0.5) {
+        b.vx *= 1.15;
+        b.vz *= 1.15;
+      }
+      b.boostFlash = Math.max(b.boostFlash, 0.45);
+      state.squashVel += 4.2;
+      sfx.playStar(state.stars);
+      const totalInTrack = dynamicMeshes.stars.length;
+      if (state.stars >= totalInTrack && totalInTrack > 0) {
+        state.timeLeft += 5.0;
+        sfx.playFinish();
+        showStarPop(`🌟 全星完美！+5.0s`);
+        showToast(`🌟 本关星糖全收集！额外奖励 +5.0 秒！`);
+      } else {
+        showStarPop(`⭐ +2.0s  COMBO ×${state.stars}`);
+      }
     }
   }
 
@@ -1301,7 +1387,7 @@ document.getElementById("sens-slider").oninput = (e) => {
 };
 document.getElementById("btn-pause-lobby").onclick = () => {
   if (state) state.phase = "ended";
-  sfx.stopBgm();
+  sfx.playLobbyBgm();
   pauseScreen.hidden = true;
   hudEl.hidden = true;
   resultScreen.hidden = true;
@@ -1309,6 +1395,7 @@ document.getElementById("btn-pause-lobby").onclick = () => {
   renderLobby();
 };
 document.getElementById("btn-res-lobby").onclick = () => {
+  sfx.playLobbyBgm();
   resultScreen.hidden = true;
   lobbyScreen.hidden = false;
   renderLobby();

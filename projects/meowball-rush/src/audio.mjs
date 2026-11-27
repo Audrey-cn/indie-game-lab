@@ -1,5 +1,6 @@
-// Meowball Rush v0.7.0 — Upbeat CC0 Bouncy Hamster BGM (Smooth Fade-In/Out + Pause Duck + Speed Tempo) + Reverb Foley SFX
-import bgmUrl from "./assets/bgm-bouncy.m4a";
+// Meowball Rush v1.1.0 — Dual BGM (Warm Lobby Sunflower Valley + Upbeat Gameplay Bouncy Hamster) with Crossfade & Combo Star Chimes
+import gameBgmUrl from "./assets/bgm-bouncy.m4a";
+import lobbyBgmUrl from "./assets/bgm-lobby.m4a";
 
 class MeowAudio {
   constructor() {
@@ -7,9 +8,10 @@ class MeowAudio {
     this.master = null;
     this.reverbSend = null;
     this.muted = false;
-    this.bgmAudio = null;
-    this.bgmTargetVol = 0.34;
-    this.bgmFadeRaf = 0;
+    this.gameAudio = null;
+    this.lobbyAudio = null;
+    this.activeMode = "none"; // "lobby" | "game" | "none"
+    this.fades = new Map();
     this.trackIndex = 0;
     this.paused = false;
   }
@@ -29,7 +31,6 @@ class MeowAudio {
       this.master.connect(comp);
       comp.connect(this.ctx.destination);
 
-      // Warm Fairy-Tale Hall Reverb
       const rev = this.ctx.createConvolver();
       const len = Math.floor(this.ctx.sampleRate * 1.1);
       const ir = this.ctx.createBuffer(2, len, this.ctx.sampleRate);
@@ -46,47 +47,109 @@ class MeowAudio {
     if (this.ctx && this.ctx.state === "suspended") this.ctx.resume();
   }
 
-  _fadeBgm(targetVol, durationMs = 900, onDone = null) {
-    if (!this.bgmAudio) return;
-    if (this.bgmFadeRaf) cancelAnimationFrame(this.bgmFadeRaf);
-    const startVol = this.bgmAudio.volume;
+  _ensureAudios() {
+    if (!this.lobbyAudio) {
+      this.lobbyAudio = new Audio(lobbyBgmUrl);
+      this.lobbyAudio.loop = true;
+      this.lobbyAudio.volume = 0.001;
+    }
+    if (!this.gameAudio) {
+      this.gameAudio = new Audio(gameBgmUrl);
+      this.gameAudio.loop = true;
+      this.gameAudio.volume = 0.001;
+    }
+  }
+
+  _fadeAudio(audioEl, targetVol, durationMs = 1100, pauseAtZero = false) {
+    if (!audioEl) return;
+    const prevRaf = this.fades.get(audioEl);
+    if (prevRaf) cancelAnimationFrame(prevRaf);
+    const startVol = audioEl.volume;
     const endVol = this.muted ? 0 : Math.max(0, Math.min(1, targetVol));
     const startTs = performance.now();
     const step = (now) => {
-      if (!this.bgmAudio) return;
       const t = Math.min(1, (now - startTs) / Math.max(16, durationMs));
       const ease = t * (2 - t);
-      this.bgmAudio.volume = Math.max(0, Math.min(1, startVol + (endVol - startVol) * ease));
+      audioEl.volume = Math.max(0, Math.min(1, startVol + (endVol - startVol) * ease));
       if (t < 1) {
-        this.bgmFadeRaf = requestAnimationFrame(step);
+        this.fades.set(audioEl, requestAnimationFrame(step));
       } else {
-        this.bgmFadeRaf = 0;
-        if (onDone) onDone();
+        this.fades.delete(audioEl);
+        if (pauseAtZero && audioEl.volume <= 0.008) audioEl.pause();
       }
     };
-    this.bgmFadeRaf = requestAnimationFrame(step);
+    this.fades.set(audioEl, requestAnimationFrame(step));
   }
 
   setMuted(flag) {
     this.muted = flag;
     if (this.master && this.ctx) this.master.gain.setTargetAtTime(flag ? 0 : 0.42, this.ctx.currentTime, 0.03);
-    if (this.bgmAudio) this._fadeBgm(flag ? 0 : (this.paused ? 0.11 : this.bgmTargetVol), 240);
+    if (this.activeMode === "lobby" && this.lobbyAudio) {
+      this._fadeAudio(this.lobbyAudio, flag ? 0 : 0.30, 300);
+    } else if (this.activeMode === "game" && this.gameAudio) {
+      this._fadeAudio(this.gameAudio, flag ? 0 : (this.paused ? 0.12 : 0.34), 300);
+    }
+  }
+
+  // Warm Storybook Lobby BGM (Crossfades smoothly from Game BGM!)
+  playLobbyBgm() {
+    this.unlock();
+    this._ensureAudios();
+    this.activeMode = "lobby";
+    this.paused = false;
+    if (this.gameAudio && !this.gameAudio.paused) {
+      this._fadeAudio(this.gameAudio, 0, 1400, true);
+    }
+    if (this.lobbyAudio.paused) {
+      this.lobbyAudio.volume = 0.001;
+      this.lobbyAudio.play().catch(() => {});
+    }
+    this._fadeAudio(this.lobbyAudio, 0.30, 1400, false);
+  }
+
+  // Upbeat Gameplay BGM (Seamless swell between stages — never abruptly cuts!)
+  startBgm(trackIndex = 0) {
+    this.unlock();
+    this._ensureAudios();
+    this.trackIndex = trackIndex;
+    this.activeMode = "game";
+    this.paused = false;
+    if (this.lobbyAudio && !this.lobbyAudio.paused) {
+      this._fadeAudio(this.lobbyAudio, 0, 1100, true);
+    }
+    const baseRate = trackIndex >= 7 ? 1.04 : trackIndex >= 4 ? 1.02 : 1.0;
+    this.gameAudio.playbackRate = baseRate;
+    const wasPaused = this.gameAudio.paused;
+    if (wasPaused) {
+      this.gameAudio.volume = 0.001;
+      this.gameAudio.play().catch(() => {});
+    }
+    this._fadeAudio(this.gameAudio, 0.34, wasPaused ? 1200 : 800, false);
+  }
+
+  // Gentle Volume Ducking on Stage Clear (keeps musical flow alive into Next Stage!)
+  duckForResult() {
+    if (!this.gameAudio || this.gameAudio.paused) return;
+    this._fadeAudio(this.gameAudio, 0.14, 900, false);
   }
 
   setPaused(flag) {
     this.paused = flag;
-    if (!this.bgmAudio) return;
-    this._fadeBgm(flag ? 0.11 : this.bgmTargetVol, 350);
+    if (!this.gameAudio || this.activeMode !== "game") return;
+    this._fadeAudio(this.gameAudio, flag ? 0.11 : 0.34, 420, false);
   }
 
   updateSpeed(speedRatio = 0) {
-    if (!this.bgmAudio || this.paused) return;
-    const base = this.trackIndex === 2 ? 1.04 : this.trackIndex === 1 ? 1.02 : 1.0;
+    if (!this.gameAudio || this.paused || this.activeMode !== "game") return;
+    const base = this.trackIndex >= 7 ? 1.04 : this.trackIndex >= 4 ? 1.02 : 1.0;
     const targetRate = base + Math.min(0.06, Math.max(0, speedRatio) * 0.06);
-    this.bgmAudio.playbackRate += (targetRate - this.bgmAudio.playbackRate) * 0.08;
+    this.gameAudio.playbackRate += (targetRate - this.gameAudio.playbackRate) * 0.08;
   }
 
-  // Dreamy WitchSpring Celesta / Music-Box Bell Voice
+  stopBgm() {
+    if (this.gameAudio) this._fadeAudio(this.gameAudio, 0, 1000, true);
+  }
+
   bell(freq, dur = 0.55, vol = 0.08, delay = 0) {
     if (!this.ctx || this.muted) return;
     const now = this.ctx.currentTime + delay;
@@ -131,34 +194,13 @@ class MeowAudio {
     osc.stop(now + dur + 0.03);
   }
 
-  startBgm(trackIndex = 0) {
-    this.unlock();
-    this.trackIndex = trackIndex;
-    this.paused = false;
-    if (!this.bgmAudio) {
-      this.bgmAudio = new Audio(bgmUrl);
-      this.bgmAudio.loop = true;
-      this.bgmAudio.volume = 0.001;
-    }
-    this.bgmAudio.playbackRate = trackIndex === 2 ? 1.04 : trackIndex === 1 ? 1.02 : 1.0;
-    const wasPaused = this.bgmAudio.paused;
-    if (wasPaused) this.bgmAudio.volume = 0.001;
-    this.bgmAudio.play().catch(() => {});
-    // Smooth 1.2s fade-in so music never starts abruptly!
-    this._fadeBgm(this.bgmTargetVol, wasPaused ? 1200 : 450);
-  }
-
-  stopBgm() {
-    if (!this.bgmAudio) return;
-    this.paused = false;
-    this._fadeBgm(0, 420, () => {
-      if (this.bgmAudio && this.bgmAudio.volume <= 0.01) this.bgmAudio.pause();
-    });
-  }
-
-  playStar() {
-    this.bell(1046.5, 0.25, 0.11);
-    this.bell(1567.98, 0.32, 0.1, 0.05);
+  // Rising Pentatonic Combo Star Chime!
+  playStar(combo = 1) {
+    const scale = [1046.5, 1174.66, 1318.51, 1567.98, 1760.0, 2093.0];
+    const root = scale[Math.min(scale.length - 1, Math.max(0, combo - 1))];
+    this.bell(root, 0.28, 0.12);
+    this.bell(root * 1.25, 0.36, 0.11, 0.045);
+    this.bell(root * 1.5, 0.42, 0.09, 0.09);
   }
 
   playBoost() {
