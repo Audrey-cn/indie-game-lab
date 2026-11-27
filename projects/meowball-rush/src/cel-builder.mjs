@@ -3,6 +3,28 @@
 // Slatted Rope-Wood Bridges, Stylized Cel-Shaded Trees & Wildflowers, Layered Cloud Sea,
 // Drifting Magic Petals, Real-Time Soft Shadows & Hand-Painted Anime Kitten Face!
 import * as THREE from "three";
+import cobblePathTexUrl from "./assets/textures/tex-cobble-path.webp";
+import meadowGrassTexUrl from "./assets/textures/tex-meadow-grass.webp";
+import cliffRockTexUrl from "./assets/textures/tex-cliff-rock.webp";
+import honeyAmberTexUrl from "./assets/textures/tex-honey-amber.webp";
+
+const _texLoader = new THREE.TextureLoader();
+function loadHandPaintedTex(key, url, rx = 1, ry = 1) {
+  if (TEX_CACHE[key]) return TEX_CACHE[key];
+  if (typeof Image === "undefined") {
+    const dt = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+    dt.needsUpdate = true;
+    TEX_CACHE[key] = dt;
+    return dt;
+  }
+  const tex = _texLoader.load(url);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(rx, ry);
+  TEX_CACHE[key] = tex;
+  return tex;
+}
 
 let toonGradient = null;
 function getToonGradient() {
@@ -90,77 +112,15 @@ function makeTex(key, w, h, drawFn, rx = 1, ry = 1) {
 }
 
 function getCobbleGrassTex() {
-  return makeTex("cobble_v3", 256, 256, (g, w, h) => {
-    const bg = g.createLinearGradient(0, 0, w, h);
-    bg.addColorStop(0, "#86e374");
-    bg.addColorStop(1, "#63c95b");
-    g.fillStyle = bg;
-    g.fillRect(0, 0, w, h);
-    g.strokeStyle = "rgba(46, 122, 52, 0.28)";
-    g.lineWidth = 2;
-    for (let i = 0; i < 60; i++) {
-      const gx = (i * 47) % w;
-      const gy = (i * 89) % h;
-      g.beginPath();
-      g.moveTo(gx, gy);
-      g.lineTo(gx - 3, gy - 7);
-      g.moveTo(gx, gy);
-      g.lineTo(gx + 3, gy - 6);
-      g.stroke();
-    }
-    // Organic irregular hand-painted stepping stones (just like the poster!)
-    const stones = [
-      [34, 34, 44, 32], [96, 28, 52, 38], [166, 36, 48, 34], [228, 32, 34, 32],
-      [26, 94, 50, 36], [94, 92, 46, 38], [162, 96, 54, 40], [230, 94, 38, 36],
-      [38, 158, 48, 36], [108, 156, 54, 40], [180, 160, 48, 34], [236, 158, 34, 34],
-      [28, 220, 48, 36], [98, 220, 50, 36], [168, 222, 50, 34], [232, 220, 36, 34],
-    ];
-    for (let i = 0; i < stones.length; i++) {
-      const [sx, sy, sw, sh] = stones[i];
-      g.fillStyle = i % 3 === 0 ? "#e2dcd0" : i % 3 === 1 ? "#cfc9bc" : "#ebe4d6";
-      g.strokeStyle = "#5c6858";
-      g.lineWidth = 2.6;
-      g.beginPath();
-      g.roundRect(sx - sw / 2, sy - sh / 2, sw, sh, 12);
-      g.fill();
-      g.stroke();
-      g.fillStyle = "rgba(255,255,248,0.48)";
-      g.beginPath();
-      g.roundRect(sx - sw / 2 + 5, sy - sh / 2 + 4, sw - 12, sh * 0.32, 6);
-      g.fill();
-    }
-  });
+  return loadHandPaintedTex("hp_cobble_v1", cobblePathTexUrl, 1.4, 1.4);
+}
+
+function getMeadowGrassTex() {
+  return loadHandPaintedTex("hp_meadow_v1", meadowGrassTexUrl, 2.0, 2.0);
 }
 
 function getCliffSideTex() {
-  return makeTex("cliff_v3", 256, 128, (g, w, h) => {
-    // Top overhanging lush grass lip + warm painted cliff rock below (ZERO texture stretching!)
-    g.fillStyle = "#9e7256";
-    g.fillRect(0, 0, w, h);
-    // Faceted rock strata shading
-    g.fillStyle = "#855c43";
-    g.fillRect(0, h * 0.52, w, h * 0.48);
-    g.fillStyle = "#b58768";
-    for (let x = 0; x < w; x += 48) {
-      g.beginPath();
-      g.roundRect(x + 4, 28, 38, 32, 8);
-      g.fill();
-    }
-    // Scalloped hanging grass edge along the top!
-    g.fillStyle = "#68cc5e";
-    g.fillRect(0, 0, w, 20);
-    for (let x = 0; x < w; x += 24) {
-      g.beginPath();
-      g.arc(x + 12, 20, 13, 0, Math.PI);
-      g.fill();
-    }
-    g.strokeStyle = "#3a6b38";
-    g.lineWidth = 2.5;
-    g.beginPath();
-    g.moveTo(0, 22);
-    g.lineTo(w, 22);
-    g.stroke();
-  });
+  return loadHandPaintedTex("hp_cliff_v1", cliffRockTexUrl, 1.5, 1.0);
 }
 
 function getWoodPlankTex() {
@@ -253,30 +213,9 @@ function getIceCrystalTex() {
   });
 }
 
-// Sticky Honey-Caramel Mud Slowdown Trap Texture!
+// Sticky Honey-Caramel Mud Slowdown Trap Hand-Painted Seamless Texture!
 function getHoneyMudTex() {
-  return makeTex("mud_v1", 256, 256, (g, w, h) => {
-    const grad = g.createRadialGradient(w / 2, h / 2, 18, w / 2, h / 2, w * 0.65);
-    grad.addColorStop(0, "#b45309");
-    grad.addColorStop(0.6, "#92400e");
-    grad.addColorStop(1, "#6b2f0b");
-    g.fillStyle = grad;
-    g.fillRect(0, 0, w, h);
-    // Sticky honey-mud ripples & bubbles
-    for (let i = 0; i < 18; i++) {
-      const bx = (i * 59 + 23) % w;
-      const by = (i * 83 + 17) % h;
-      const br = 8 + (i % 4) * 5;
-      g.fillStyle = i % 2 === 0 ? "rgba(251, 191, 36, 0.34)" : "rgba(69, 26, 3, 0.32)";
-      g.beginPath();
-      g.arc(bx, by, br, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = "rgba(255, 245, 200, 0.45)";
-      g.beginPath();
-      g.arc(bx - br * 0.3, by - br * 0.3, br * 0.25, 0, Math.PI * 2);
-      g.fill();
-    }
-  });
+  return loadHandPaintedTex("hp_honey_v1", honeyAmberTexUrl, 1.5, 1.5);
 }
 
 // Hand-Painted Expressive Anime Kitten Face Texture (replaces raw sphere dots!)
