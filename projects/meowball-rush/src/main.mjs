@@ -268,6 +268,29 @@ window.addEventListener("deviceorientation", (e) => {
   gyroTiltZ = gz * save.mouseSens;
 });
 
+function attachCatAnimations(targetRig, model, animations, initialClip = "Idle") {
+  if (!animations || animations.length === 0) return;
+  const mixer = new THREE.AnimationMixer(model);
+  const actions = {};
+  for (const clip of animations) {
+    actions[clip.name] = mixer.clipAction(clip);
+  }
+  const fallback = actions.Run || actions.Idle || mixer.clipAction(animations[0]);
+  let active = actions[initialClip] || fallback;
+  active.play();
+  targetRig.mixer = mixer;
+  targetRig.animActions = actions;
+  targetRig.activeAnimName = active.getClip().name;
+  targetRig.setAnim = (name, fadeSec = 0.22) => {
+    const next = actions[name] || fallback;
+    if (!next || next === active) return;
+    next.reset().setEffectiveWeight(1).play();
+    active.crossFadeTo(next, fadeSec, false);
+    active = next;
+    targetRig.activeAnimName = next.getClip().name;
+  };
+}
+
 function syncLobbyShowcase(cat) {
   if (!cat) return;
   if (lobbyShowcaseRig && lobbyShowcaseCatId === cat.id) {
@@ -289,12 +312,7 @@ function syncLobbyShowcase(cat) {
   loadGlbModel(glbKey, (model, animations) => {
     if (lobbyShowcaseRig !== targetRig) return;
     targetRig.mountExternalModel(model, 0.74);
-    if (animations && animations.length > 0) {
-      const mixer = new THREE.AnimationMixer(model);
-      const action = mixer.clipAction(animations[0]);
-      action.play();
-      targetRig.mixer = mixer;
-    }
+    attachCatAnimations(targetRig, model, animations, "Idle");
   });
 }
 
@@ -486,12 +504,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   loadGlbModel(glbKey, (model, animations) => {
     if (kittyRig !== targetRig) return;
     targetRig.mountExternalModel(model, 0.72);
-    if (animations && animations.length > 0) {
-      const mixer = new THREE.AnimationMixer(model);
-      const action = mixer.clipAction(animations[0]);
-      action.play();
-      targetRig.mixer = mixer;
-    }
+    attachCatAnimations(targetRig, model, animations, "Idle");
   });
 
   // Lush Pastel Rainbow Speed Ribbon Trail!
@@ -700,6 +713,7 @@ function finishStage(cleared) {
 
   if (cleared) {
     sfx.playFinish();
+    if (kittyRig?.setAnim) kittyRig.setAnim("Victory", 0.18);
     if (!save.clearedTracks.includes(state.trackIndex)) save.clearedTracks.push(state.trackIndex);
     if (!save.bestTrackTimes) save.bestTrackTimes = {};
     const prevBest = save.bestTrackTimes[state.track.id] || 0;
@@ -1238,7 +1252,10 @@ function updateVisuals(dt) {
   b.pawCycle += (3.0 + spd * 2.8) * dt;
   sfx.updateSpeed(Math.min(1, spd / 16));
   if (kittyRig.mixer) {
-    kittyRig.mixer.update(dt * (0.4 + spd * 0.25));
+    if (kittyRig.setAnim) {
+      kittyRig.setAnim(spd > 0.7 ? "Run" : "Idle", 0.2);
+    }
+    kittyRig.mixer.update(dt * (spd > 0.7 ? 0.5 + spd * 0.22 : 0.85));
   } else if (kittyRig.isExternal && kittyRig.isExternal()) {
     const u = kittyRig.animUniforms;
     if (u) {
