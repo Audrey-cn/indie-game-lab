@@ -1,6 +1,7 @@
 // Meowball Rush v1.3.0 — Storybook sky valleys, banked troughs and magic elevators.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -20,7 +21,7 @@ function loadGlbModel(key, onReady) {
   const url = GLB_MODELS[key];
   if (!url) return;
   if (loadedGlbCache[key]) {
-    onReady(loadedGlbCache[key].scene.clone(true), loadedGlbCache[key].animations);
+    onReady(SkeletonUtils.clone(loadedGlbCache[key].scene), loadedGlbCache[key].animations);
     return;
   }
   if (pendingGlbLoads.has(key)) {
@@ -44,7 +45,7 @@ function loadGlbModel(key, onReady) {
     loadedGlbCache[key] = { scene: wrapper, animations: gltf.animations || [] };
     const callbacks = pendingGlbLoads.get(key);
     pendingGlbLoads.delete(key);
-    for (const ready of callbacks) ready(wrapper.clone(true), gltf.animations || []);
+    for (const ready of callbacks) ready(SkeletonUtils.clone(wrapper), gltf.animations || []);
   }, undefined, (error) => {
     pendingGlbLoads.delete(key);
     console.warn(`Unable to load GLB model: ${key}`, error);
@@ -285,9 +286,15 @@ function syncLobbyShowcase(cat) {
   scene.add(lobbyShowcaseRig.root);
   const glbKey = cat.glbKey || "cat-witch";
   const targetRig = lobbyShowcaseRig;
-  loadGlbModel(glbKey, (model) => {
+  loadGlbModel(glbKey, (model, animations) => {
     if (lobbyShowcaseRig !== targetRig) return;
     targetRig.mountExternalModel(model, 0.74);
+    if (animations && animations.length > 0) {
+      const mixer = new THREE.AnimationMixer(model);
+      const action = mixer.clipAction(animations[0]);
+      action.play();
+      targetRig.mixer = mixer;
+    }
   });
 }
 
@@ -804,7 +811,9 @@ function tick(ts) {
       lobbyShowcaseRig.kitty.rotation.y = tSec * 0.9;
       lobbyShowcaseRig.bubbleMat.uniforms.uTime.value = tSec;
       lobbyShowcaseRig.updateAccessories(tSec);
-      if (lobbyShowcaseRig.animUniforms) {
+      if (lobbyShowcaseRig.mixer) {
+        lobbyShowcaseRig.mixer.update(dt * 0.75);
+      } else if (lobbyShowcaseRig.animUniforms) {
         lobbyShowcaseRig.animUniforms.uTime.value = tSec;
         lobbyShowcaseRig.animUniforms.uPhase.value = tSec * 4.2;
         lobbyShowcaseRig.animUniforms.uSpeed.value = 0.25 + 0.15 * Math.sin(tSec * 1.8);

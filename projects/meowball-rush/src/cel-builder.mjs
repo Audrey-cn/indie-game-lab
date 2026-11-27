@@ -812,6 +812,7 @@ export function createKittyBall(catDef) {
       if (obj.isMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
+        obj.frustumCulled = false; // Prevent SkinnedMesh bounding-box culling during skeletal animation!
         if (obj.material && !patchedMats.has(obj.material)) {
           obj.material = obj.material.clone();
           patchedMats.add(obj.material);
@@ -824,58 +825,52 @@ export function createKittyBall(catDef) {
               obj.material.emissiveIntensity = 0.14;
             }
           }
-          obj.material.onBeforeCompile = (shader) => {
-            Object.assign(shader.uniforms, animUniforms);
-            shader.vertexShader = shader.vertexShader.replace(
-              "#include <common>",
-              `#include <common>
-              uniform float uPhase;
-              uniform float uSpeed;
-              uniform float uTurn;
-              uniform float uSquash;
-              uniform float uTime;
-              uniform float uMinY;
-              uniform float uInvH;`
-            );
-            shader.vertexShader = shader.vertexShader.replace(
-              "#include <begin_vertex>",
-              `#include <begin_vertex>
-              float h01 = clamp((transformed.y - uMinY) * uInvH, 0.0, 1.0);
-              // 1. Alternating left/right paw stride on lower body
-              float pawMask = smoothstep(0.44, 0.06, h01);
-              float side = transformed.x >= 0.0 ? 1.0 : -1.0;
-              float stride = sin(uPhase + side * 1.5708);
-              float lift = max(0.0, cos(uPhase + side * 1.5708));
-              transformed.z += stride * 0.14 * uSpeed * pawMask;
-              transformed.y += lift * 0.11 * uSpeed * pawMask;
-
-              // 2. Torso gallop arch & idle breathing
-              float bodyMask = sin(h01 * 3.14159);
-              transformed.y += sin(uPhase * 2.0) * 0.045 * uSpeed * bodyMask;
-              transformed.z -= sin(uPhase * 2.0) * 0.04 * uSpeed * bodyMask;
-              float breath = 1.0 + sin(uTime * 3.4) * 0.025 * bodyMask;
-              transformed.x *= breath;
-              transformed.z *= breath;
-
-              // 3. Head, ears & witch hat follow-through whip on turns & speed
-              float headMask = smoothstep(0.52, 1.0, h01);
-              transformed.y += sin(uPhase * 2.0 - 0.65) * 0.05 * uSpeed * headMask;
-              transformed.x += uTurn * 0.16 * headMask * headMask;
-              transformed.z -= uSpeed * 0.09 * headMask * headMask;
-
-              // 4. Tail / cape lively wag behind body
-              float tailMask = smoothstep(0.06, 0.42, -transformed.z) * smoothstep(0.08, 0.62, h01);
-              transformed.x += sin(uTime * 8.5 + uPhase * 1.35) * (0.035 + 0.085 * uSpeed) * tailMask;
-
-              // 5. Elastic jelly squash-and-stretch on landing / jumps
-              float sqY = 1.0 + uSquash * 0.22;
-              float sqXZ = 1.0 / sqrt(max(0.55, sqY));
-              transformed.y = uMinY + (transformed.y - uMinY) * sqY;
-              transformed.x *= sqXZ;
-              transformed.z *= sqXZ;`
-            );
-          };
-          obj.material.customProgramCacheKey = () => "meow_vertex_run_v1";
+          // Only attach procedural vertex-shader stride to static (non-skinned) meshes; rigged SkinnedMeshes use real Blender bones!
+          if (!obj.isSkinnedMesh) {
+            obj.material.onBeforeCompile = (shader) => {
+              Object.assign(shader.uniforms, animUniforms);
+              shader.vertexShader = shader.vertexShader.replace(
+                "#include <common>",
+                `#include <common>
+                uniform float uPhase;
+                uniform float uSpeed;
+                uniform float uTurn;
+                uniform float uSquash;
+                uniform float uTime;
+                uniform float uMinY;
+                uniform float uInvH;`
+              );
+              shader.vertexShader = shader.vertexShader.replace(
+                "#include <begin_vertex>",
+                `#include <begin_vertex>
+                float h01 = clamp((transformed.y - uMinY) * uInvH, 0.0, 1.0);
+                float pawMask = smoothstep(0.44, 0.06, h01);
+                float side = transformed.x >= 0.0 ? 1.0 : -1.0;
+                float stride = sin(uPhase + side * 1.5708);
+                float lift = max(0.0, cos(uPhase + side * 1.5708));
+                transformed.z += stride * 0.14 * uSpeed * pawMask;
+                transformed.y += lift * 0.11 * uSpeed * pawMask;
+                float bodyMask = sin(h01 * 3.14159);
+                transformed.y += sin(uPhase * 2.0) * 0.045 * uSpeed * bodyMask;
+                transformed.z -= sin(uPhase * 2.0) * 0.04 * uSpeed * bodyMask;
+                float breath = 1.0 + sin(uTime * 3.4) * 0.025 * bodyMask;
+                transformed.x *= breath;
+                transformed.z *= breath;
+                float headMask = smoothstep(0.52, 1.0, h01);
+                transformed.y += sin(uPhase * 2.0 - 0.65) * 0.05 * uSpeed * headMask;
+                transformed.x += uTurn * 0.16 * headMask * headMask;
+                transformed.z -= uSpeed * 0.09 * headMask * headMask;
+                float tailMask = smoothstep(0.06, 0.42, -transformed.z) * smoothstep(0.08, 0.62, h01);
+                transformed.x += sin(uTime * 8.5 + uPhase * 1.35) * (0.035 + 0.085 * uSpeed) * tailMask;
+                float sqY = 1.0 + uSquash * 0.22;
+                float sqXZ = 1.0 / sqrt(max(0.55, sqY));
+                transformed.y = uMinY + (transformed.y - uMinY) * sqY;
+                transformed.x *= sqXZ;
+                transformed.z *= sqXZ;`
+              );
+            };
+            obj.material.customProgramCacheKey = () => "meow_vertex_run_v1";
+          }
           obj.material.needsUpdate = true;
         }
       }
