@@ -1,4 +1,4 @@
-// Meowball Rush v1.0.0 — 9 Collectible WitchSpring Kittens + 10 Progressive Courses (Tutorial -> Grand Finale)
+// Meowball Rush v2.0.0 — 9 Collectible WitchSpring Kittens + 10 Progressive Courses (Tutorial -> Grand Finale)
 
 export const CATS = [
   {
@@ -36,7 +36,7 @@ export const CATS = [
     acc: "scarf",
     stats: { accel: 1.05, topSpeed: 1.04, grip: 0.96, dizzyResist: 1.2 },
     desc: "大橘为重 · 陡坡冲刺更快，抗砸抗摔！",
-    unlockText: "通关第 1 关【新手草坪学院】解锁",
+    unlockText: "通关第 1 关【晨曦草坪学院】解锁",
     unlockReq: { type: "clear", track: 0 },
   },
   {
@@ -93,7 +93,7 @@ export const CATS = [
     acc: "bell",
     stats: { accel: 1.08, topSpeed: 1.01, grip: 1.24, dizzyResist: 1.05 },
     desc: "急停之王 · 超强抓地力，冰面窄桥稳如老狗！",
-    unlockText: "通关第 4 关【蘑菇云梯峡谷】解锁",
+    unlockText: "通关第 4 关【巨伞蘑菇云谷】解锁",
     unlockReq: { type: "clear", track: 3 },
   },
   {
@@ -150,7 +150,7 @@ export const CATS = [
     acc: "goggles",
     stats: { accel: 1.12, topSpeed: 1.15, grip: 0.98, dizzyResist: 1.1 },
     desc: "竞速神车 · 全场最高极速突破，抢榜必备！",
-    unlockText: "通关第 7 关【双轮蒸汽飞跃】解锁",
+    unlockText: "通关第 7 关【熔金蒸汽熔炉】解锁",
     unlockReq: { type: "clear", track: 6 },
   },
   {
@@ -169,7 +169,7 @@ export const CATS = [
     acc: "crown",
     stats: { accel: 1.13, topSpeed: 1.13, grip: 1.18, dizzyResist: 1.45 },
     desc: "隐藏传说 · 全属性天花板，极光尾迹闪耀天际！",
-    unlockText: "通关第 10 关【魔女苍穹终章】解锁",
+    unlockText: "通关第 10 关【魔女苍穹圣殿】解锁",
     unlockReq: { type: "clear", track: 9 },
   },
 ];
@@ -183,8 +183,8 @@ export const TRACKS = [
   // ===== STAGE 01: FRIENDLY TUTORIAL ACADEMY (Zero traps that launch you off!) =====
   {
     id: "academy",
-    name: "01 · 新手草坪学院",
-    subtitle: "教学引导 · 缓坡重力 · 彩虹加速 · 蜂蜜减速 · 弹跳蘑菇",
+    name: "01 · 晨曦草坪学院",
+    subtitle: "草坪缓坡教学 · 彩虹加速 · 蜂蜜减速 · 蘑菇弹跳",
     diff: 1,
     ...SKY_GARDEN,
     bonusTime: 60,
@@ -233,8 +233,8 @@ export const TRACKS = [
   // ===== STAGE 02: BREEZY GARDEN CURVES & FIRST CLOUD SHORTCUT =====
   {
     id: "garden",
-    name: "02 · 微风石阶花园",
-    subtitle: "重力下坡 · 弧槽滑行 · 隐藏云朵捷径",
+    name: "02 · 溪谷水车栈道",
+    subtitle: "木栈道转弯 · 重力下坡 · 弧槽滑行 · 云朵捷径",
     diff: 1,
     ...SKY_GARDEN,
     bonusTime: 52,
@@ -278,8 +278,8 @@ export const TRACKS = [
   // ===== STAGE 03: HONEY MUD COURTYARD & FIRST SLOW HAMMER =====
   {
     id: "honey",
-    name: "03 · 蜂蜜果酱庭院",
-    subtitle: "减速泥沼博弈 · 冲刺破泥 · 初遇慢速木摆锤",
+    name: "03 · 蜜糖烘焙庭院",
+    subtitle: "蜜糖减速庭院 · 横滚擀面杖 · 窄桥慢摆锤",
     diff: 2,
     ...SKY_GARDEN,
     bonusTime: 48,
@@ -300,6 +300,10 @@ export const TRACKS = [
     ],
     mushrooms: [],
     gears: [],
+    // Cylinder center sits one radius above the deck; both side lanes stay open.
+    rollingPins: [
+      { x: 0, y: 8.48, z: -13.0, ampZ: 0.9, speed: 1.15, phase: 0.7, width: 2.0 },
+    ],
     hammers: [
       { x: 0, y: 8.6, z: -34.6, len: 3.2, speed: 1.8, amp: 1.0, phase: 0, axis: "z" },
     ],
@@ -316,8 +320,8 @@ export const TRACKS = [
   // ===== STAGE 04: MUSHROOM STEP CANYON (Vertical Platforming) =====
   {
     id: "mushroom_canyon",
-    name: "04 · 蘑菇云梯峡谷",
-    subtitle: "连续弹跳高台 · 刚体台阶跨越 · 立体浮空",
+    name: "04 · 巨伞蘑菇云谷",
+    subtitle: "巨伞蘑菇连跳 · 云谷高台 · 弧槽摆锤",
     diff: 2,
     ...SKY_GARDEN,
     bonusTime: 48,
@@ -358,8 +362,8 @@ export const TRACKS = [
   // ===== STAGE 05: CLOCKWORK GEAR OUTPOST =====
   {
     id: "gear_outpost",
-    name: "05 · 黄昏齿轮前哨",
-    subtitle: "初遇黄金齿轮 · 切向带动力 · 黄昏升降台",
+    name: "05 · 夕阳齿轮钟楼",
+    subtitle: "夕阳齿轮转盘 · 蒸汽助推 · 钟楼升降台",
     diff: 3,
     ...CLOCKWORK,
     bonusTime: 52,
@@ -369,7 +373,7 @@ export const TRACKS = [
       { z: -46.8, msg: "🛗 前方升降台：在宽平台等候最低点，登台停稳，升到高处再从另一端驶出！" },
     ],
     platforms: [
-      { kind: "brass", x: 0, y: 8.0, z: 0, w: 6.4, d: 6.2, h: 1.2 },
+      { kind: "brass", x: 0, y: 8.0, z: 0, w: 6.4, d: 6.2, h: 1.2, walls: true },
       { kind: "brass", x: 0, y: 8.0, z: -16.8, w: 6.2, d: 6.0, h: 1.2 },
       { kind: "ramp", x: 0, y: 6.5, z: -23.4, w: 4.2, d: 7.8, h: 0.8, yStart: 8.0, yEnd: 5.0, dir: "-z" },
       { kind: "brass", x: 0, y: 5.0, z: -30.2, w: 6.0, d: 6.0, h: 1.2 },
@@ -387,6 +391,10 @@ export const TRACKS = [
     mushrooms: [],
     boosts: [],
     hammers: [],
+    // A gentle, optional push on the safe entry pad before the first gear.
+    steamVents: [
+      { x: 0, y: 8.0, z: -0.6, r: 0.72, period: 4.6, duty: 0.42, vy: 4.0, vz: -6.0 },
+    ],
     checkpoints: [{ x: 0, y: 8.0, z: -16.8 }, { x: 0, y: 5.0, z: -30.2 }, { x: 0, y: 5.0, z: -48.0 }],
     stars: [
       { x: 0, y: 8.8, z: -8.4 },
@@ -400,8 +408,8 @@ export const TRACKS = [
   // ===== STAGE 06: PENDULUM BELFRY CORRIDOR =====
   {
     id: "belfry",
-    name: "06 · 摆锤钟楼长廊",
-    subtitle: "交替双摆锤 · 蜂蜜缓冲带 · 节拍控速",
+    name: "06 · 摆锤古堡长廊",
+    subtitle: "木桥交替摆锤 · 星晶链枷 · 蜂蜜控速",
     diff: 3,
     ...CLOCKWORK,
     bonusTime: 42,
@@ -421,9 +429,9 @@ export const TRACKS = [
     boosts: [{ x: 0, y: 8.05, z: -16.2, w: 2.0, d: 2.4, fx: 0, fz: -16 }],
     hammers: [
       { x: 0, y: 11.4, z: -6.2, len: 3.2, speed: 2.2, amp: 1.05, phase: 0, axis: "z" },
-      { x: 0, y: 11.4, z: -10.2, len: 3.2, speed: 2.2, amp: 1.05, phase: Math.PI, axis: "z" },
+      { x: 0, y: 11.4, z: -10.2, len: 3.2, speed: 2.2, amp: 1.05, phase: Math.PI, axis: "z", variant: "flail" },
       { x: 0, y: 11.4, z: -22.2, len: 3.2, speed: 2.5, amp: 1.08, phase: 0.6, axis: "z" },
-      { x: 0, y: 11.4, z: -26.6, len: 3.2, speed: 2.5, amp: 1.08, phase: 0.6 + Math.PI, axis: "z" },
+      { x: 0, y: 11.4, z: -26.6, len: 3.2, speed: 2.5, amp: 1.08, phase: 0.6 + Math.PI, axis: "z", variant: "flail" },
     ],
     checkpoints: [{ x: 0, y: 8.0, z: -16.2 }, { x: 0, y: 8.0, z: -32.6 }],
     stars: [
@@ -437,8 +445,8 @@ export const TRACKS = [
   // ===== STAGE 07: DUAL-GEAR STEAM LEAP (Classic Clockwork Synthesis) =====
   {
     id: "clockwork",
-    name: "07 · 双轮蒸汽飞跃",
-    subtitle: "齿轮转盘 · 雕花摆锤 · 弹跳蘑菇综合试炼",
+    name: "07 · 熔金蒸汽熔炉",
+    subtitle: "熔金双齿轮 · 滚杖摆锤 · 蒸汽助推 · 蘑菇飞跃",
     diff: 4,
     ...CLOCKWORK,
     bonusTime: 40,
@@ -448,9 +456,9 @@ export const TRACKS = [
       { kind: "brass", x: 0, y: 8.0, z: 0, w: 6.0, d: 6.0, h: 1.2 },
       { kind: "wood", x: 0, y: 8.0, z: -7.5, w: 2.2, d: 9.4, h: 0.55 },
       { kind: "brass", x: 0, y: 8.0, z: -14.8, w: 5.6, d: 5.6, h: 1.2 },
-      { kind: "brass", x: 0, y: 9.2, z: -23.4, w: 5.6, d: 5.4, h: 1.2 },
+      { kind: "brass", x: 0, y: 9.2, z: -23.4, w: 6.8, d: 5.4, h: 1.2, walls: true },
       { kind: "ramp", x: 0, y: 7.1, z: -29.8, w: 3.6, d: 7.6, h: 0.75, yStart: 9.2, yEnd: 5.0, dir: "-z" },
-      { kind: "brass", x: 0, y: 5.0, z: -35.8, w: 5.4, d: 5.0, h: 1.2 },
+      { kind: "brass", x: 0, y: 5.0, z: -35.8, w: 5.4, d: 5.0, h: 1.2, walls: true },
       { kind: "wood", x: 0, y: 5.0, z: -53.2, w: 2.5, d: 7.4, h: 0.55 },
       { kind: "brass", x: 0, y: 5.0, z: -60.4, w: 7.4, d: 8.0, h: 1.2 },
     ],
@@ -463,6 +471,13 @@ export const TRACKS = [
     ],
     boosts: [
       { x: 0, y: 5.05, z: -52.6, w: 2.0, d: 2.8, fx: 0, fz: -12 },
+    ],
+    // Keep the upper checkpoint clear, with room to dodge either end of the pin.
+    rollingPins: [
+      { x: 0, y: 9.68, z: -24.9, ampZ: 0.35, speed: 1.45, phase: 1.2, width: 2.0 },
+    ],
+    steamVents: [
+      { x: 0, y: 5.0, z: -34.9, r: 0.7, period: 4.2, duty: 0.42, vy: 4.0, vz: -6.0 },
     ],
     hammers: [
       { x: 0, y: 11.4, z: -6.0, len: 3.2, speed: 2.4, amp: 1.08, phase: 0, axis: "z" },
@@ -486,8 +501,8 @@ export const TRACKS = [
   // ===== STAGE 08: FROST CRYSTAL SLIDE (Intro to Low-Friction Ice — Wide Drift Catch Basin!) =====
   {
     id: "frost_slide",
-    name: "08 · 寒霜冰晶滑道",
-    subtitle: "初遇低摩擦冰面 · 宽阔冰晶漂移 · 弧槽摆锤",
+    name: "08 · 极光冰晶峡湾",
+    subtitle: "极光冰面下坡 · 宽阔冰晶漂移 · 弧槽摆锤",
     diff: 4,
     ...AURORA,
     bonusTime: 44,
@@ -522,8 +537,8 @@ export const TRACKS = [
   // ===== STAGE 09: NEON GLASS LABYRINTH (Balanced Hairpin & Fair 2.5m Neon Walkway!) =====
   {
     id: "aurora",
-    name: "09 · 霓虹玻璃迷廊",
-    subtitle: "冰面发卡弯 · 霓虹玻璃窄路 · 高空云朵捷径",
+    name: "09 · 星镜霓虹迷廊",
+    subtitle: "冰面发卡弯 · 星晶弹力柱 · 霓虹窄路与隐藏捷径",
     diff: 5,
     ...AURORA,
     bonusTime: 44,
@@ -536,9 +551,9 @@ export const TRACKS = [
       { kind: "ice", x: 0, y: 7.2, z: -16.8, w: 8.8, d: 8.8, h: 1.0 },
       { kind: "crystal", x: 0, y: 7.2, z: -22.2, w: 8.8, d: 2.6, h: 1.0 },
       { kind: "ice", x: 7.0, y: 7.2, z: -17.6, w: 7.6, d: 6.4, h: 0.85 },
-      { kind: "crystal", x: 12.6, y: 7.2, z: -16.8, w: 6.4, d: 6.4, h: 1.0 },
+      { kind: "crystal", x: 12.6, y: 7.2, z: -16.8, w: 8.6, d: 6.4, h: 1.0, walls: true, endWalls: true },
       { kind: "neon", x: 12.6, y: 7.2, z: -25.4, w: 2.5, d: 12.0, h: 0.45 },
-      { kind: "crystal", x: 12.6, y: 7.2, z: -34.2, w: 6.2, d: 6.2, h: 1.1 },
+      { kind: "crystal", x: 12.6, y: 7.2, z: -34.2, w: 8.6, d: 6.2, h: 1.1, walls: true, endWalls: true },
       { kind: "neon", x: 6.4, y: 5.7, z: -39.8, w: 2.4, d: 10.6, h: 0.45, secret: true },
       { kind: "ice", x: 5.6, y: 7.2, z: -34.2, w: 8.6, d: 3.4, h: 0.65 },
       { kind: "crystal", x: 0, y: 7.2, z: -34.2, w: 5.8, d: 5.8, h: 1.1 },
@@ -550,6 +565,11 @@ export const TRACKS = [
     boosts: [
       { x: 12.6, y: 7.25, z: -23.0, w: 2.0, d: 3.0, fx: 0, fz: -16 },
       { x: 6.4, y: 5.75, z: -39.8, w: 2.0, d: 3.0, fx: -10, fz: -18 },
+    ],
+    // Offset from the route and checkpoint on broad, railed crystal plazas.
+    bumpers: [
+      { x: 14.6, y: 7.2, z: -16.8, r: 0.6, bounce: 6.0 },
+      { x: 10.6, y: 7.2, z: -34.2, r: 0.6, bounce: 6.0 },
     ],
     hammers: [
       { x: 12.6, y: 10.6, z: -27.2, len: 3.2, speed: 2.5, amp: 1.04, phase: 0.5, axis: "z" },
@@ -569,8 +589,8 @@ export const TRACKS = [
   // ===== STAGE 10: GRAND WITCH SKY FINALE (All Mechanics Combined!) =====
   {
     id: "sky_finale",
-    name: "10 · 魔女苍穹终章",
-    subtitle: "全机制大满贯 · 弹跳双齿轮 · 摆锤冲刺 · 苍穹升降台",
+    name: "10 · 魔女苍穹圣殿",
+    subtitle: "蘑菇双齿轮 · 星晶弹力柱与链枷 · 苍穹升降台",
     diff: 5,
     ...AURORA,
     bonusTime: 54,
@@ -585,11 +605,11 @@ export const TRACKS = [
       { kind: "ice_ramp", x: 0, y: 9.0, z: -7.4, w: 4.0, d: 9.0, h: 0.75, yStart: 11.0, yEnd: 7.0, dir: "-z" },
       { kind: "mud", x: 0, y: 7.0, z: -14.8, w: 6.0, d: 6.0, h: 1.1 },
       // Mushroom Vault over gap onto High Crystal Island (+1.4m)
-      { kind: "crystal", x: 0, y: 8.4, z: -24.2, w: 5.8, d: 5.8, h: 1.2 },
+      { kind: "crystal", x: 0, y: 8.4, z: -24.2, w: 8.6, d: 5.8, h: 1.2, walls: true, endWalls: true },
       // Twin High-Speed Gears -> Neon Hammer Sprint -> Elevator Sky Finale!
       { kind: "crystal", x: 0, y: 8.4, z: -42.2, w: 5.6, d: 5.4, h: 1.2 },
       { kind: "neon", x: 0, y: 8.4, z: -51.0, w: 1.9, d: 12.6, h: 0.45 },
-      { kind: "crystal", x: 0, y: 8.4, z: -60.6, w: 7.8, d: 7.6, h: 1.4, walls: true },
+      { kind: "crystal", x: 0, y: 8.4, z: -60.6, w: 8.6, d: 7.6, h: 1.4, walls: true, endWalls: true },
       // Opposite-end docks abut the slab: entry z=-64.4, high exit z=-70.8.
       { kind: "elevator", x: 0, y: 8.4, z: -67.6, w: 6.4, d: 6.4, h: 1.2, yMin: 8.4, yMax: 10.6, speed: 0.85, phase: -Math.PI / 2, walls: true },
       { kind: "crystal", x: 0, y: 10.6, z: -74.6, w: 7.8, d: 7.6, h: 1.4, walls: true },
@@ -604,9 +624,13 @@ export const TRACKS = [
     boosts: [
       { x: 0, y: 8.45, z: -48.0, w: 1.7, d: 3.0, fx: 0, fz: -24 },
     ],
+    bumpers: [
+      { x: 2.0, y: 8.4, z: -24.2, r: 0.6, bounce: 6.0 },
+      { x: -2.0, y: 8.4, z: -60.6, r: 0.6, bounce: 6.0 },
+    ],
     hammers: [
       { x: 0, y: 11.8, z: -49.2, len: 3.2, speed: 2.9, amp: 1.08, phase: 0, axis: "z" },
-      { x: 0, y: 11.8, z: -53.4, len: 3.2, speed: 3.1, amp: 1.1, phase: Math.PI, axis: "z" },
+      { x: 0, y: 11.8, z: -53.4, len: 3.2, speed: 3.1, amp: 1.1, phase: Math.PI, axis: "z", variant: "flail" },
     ],
     checkpoints: [
       { x: 0, y: 8.4, z: -24.2 },

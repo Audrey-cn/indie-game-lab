@@ -25,7 +25,8 @@ const visible = () => ({ visible: true, rotation: { y: 0 } });
 function makeHarness(track, cat = CATS[0]) {
   const b = { ...track.start, vx: 0, vy: 0, vz: 0, r: 0.62,
     grounded: false, surfaceKind: 'grass', dizzyTimer: 0, popTimer: 0,
-    hammerHitCd: 0, boostFlash: 0, burstTimer: 0, supportPlatform: null };
+    hammerHitCd: 0, rollingPinHitCd: 0, bumperHitCd: 0,
+    boostFlash: 0, burstTimer: 0, supportPlatform: null };
   const state = { track, cat, phase: 'playing', elapsed: 0, timeLeft: track.bonusTime || 180,
     ball: b, pops: 0, stars: 0, squashVel: 0, checkpoint: { ...track.start },
     checkpointIdx: -1, shownTips: new Set(), secretFound: false,
@@ -36,12 +37,18 @@ function makeHarness(track, cat = CATS[0]) {
     mushrooms: track.mushrooms.map(def => ({ def, bounceAnim: 0 })),
     stars: track.stars.map(def => ({ def, collected: false, mesh: { visible: true } })),
     elevators: track.platforms.filter(p => p.kind === 'elevator').map(def => ({ def, mesh: { position: new Vector3() } })),
+    rollingPins: (track.rollingPins || []).map(def => ({ def,
+      mesh: { position: new Vector3(def.x, def.y, def.z), rotation: { x: 0, y: 0, z: 0 } },
+      roller: { rotation: { x: 0, y: 0, z: 0 } } })),
+    bumpers: (track.bumpers || []).map(def => ({ def, pulse: 0 })),
+    steamVents: (track.steamVents || []).map(def => ({ def, active: false, touching: false })),
   };
   const events = [];
   const context = vm.createContext({
     THREE: { Vector3 }, state, dynamicMeshes,
     CATS, TRACKS, Math, console,
     getSideWallOpenings: (...args) => trackBuilder.getSideWallOpenings(...args),
+    getEndWallOpenings: (...args) => trackBuilder.getEndWallOpenings(...args),
     gyroEnabled: false, gyroTiltX: 0, gyroTiltZ: 0,
     sfx: new Proxy({}, { get: () => noop }),
     kittyRig: { bubbleMesh: visible(), kitty: visible(), accGroup: visible(), dizzyHalo: visible(), furball: visible() },
@@ -54,7 +61,7 @@ function makeHarness(track, cat = CATS[0]) {
     if (b.popTimer <= 0) events.push({ type: 'pop', reason, time: state.elapsed, x: b.x, y: b.y, z: b.z });
     actualPop(reason);
   };
-  return { state, b, events, context, step(dt, driveX = 0, driveZ = 0) {
+  return { state, b, events, context, dynamicMeshes, step(dt, driveX = 0, driveZ = 0) {
     // Inverse of the game's screen-to-world camera yaw transform.
     const c = Math.cos(0.58), s = Math.sin(0.58);
     state.input.mouseAccX = driveX * c - driveZ * s;
@@ -70,6 +77,7 @@ function makeHarness(track, cat = CATS[0]) {
 function testTrack(platforms, overrides = {}) {
   return { id: 'test', start: { x: 0, y: 8.62, z: 0 }, deathY: -30,
     platforms, boosts: [], mushrooms: [], gears: [], hammers: [], stars: [], checkpoints: [],
+    rollingPins: [], bumpers: [], steamVents: [],
     finish: { x: 10000, y: 8, z: 10000 }, ...overrides };
 }
 const flat = { kind: 'grass', x: 0, y: 8, z: 0, w: 600, d: 600, h: 1 };
@@ -78,6 +86,178 @@ function check(name, fn) {
   try { const receipt = fn(); checks.push({ name, pass: true, ...receipt }); }
   catch (error) { checks.push({ name, pass: false, error: error.message }); }
 }
+
+check('v2 hazards remain on supported course plazas', () => {
+  const expected = [
+    ['honey', 'rollingPins', 1], ['clockwork', 'rollingPins', 1],
+    ['gear_outpost', 'steamVents', 1], ['clockwork', 'steamVents', 1],
+    ['aurora', 'bumpers', 2], ['sky_finale', 'bumpers', 2],
+  ];
+  for (const [id, key, count] of expected) {
+    const track = TRACKS.find(t => t.id === id);
+    assert.equal(track?.[key]?.length, count, `${id}: missing ${key} course lesson`);
+    for (const def of track[key]) {
+      const pad = track.platforms.find(p => p.walls && p.y === (key === 'rollingPins' ? def.y - 0.48 : def.y)
+        && Math.abs(def.x - p.x) + (key === 'rollingPins' ? def.width / 2 : def.r) <= p.w / 2
+        && Math.abs(def.z - p.z) + (key === 'rollingPins' ? def.ampZ + 0.48 : def.r) <= p.d / 2);
+      assert(pad, `${id}: ${key} at (${def.x},${def.z}) lacks a supporting walled plaza`);
+    }
+  }
+  for (const id of ['belfry', 'sky_finale']) assert(TRACKS.find(t => t.id === id).hammers.some(h => h.variant === 'flail'), `${id}: missing flail lesson`);
+  return { courseLessons: expected.length };
+});
+
+check('rolling pin elastic rebound and contact cooldown', () => {
+  const receipts = [];
+  for (const dt of [1 / 120, 1 / 60, 0.04]) {
+    const pin = { x: 0, y: 8.55, z: 0, width: 4, r: 0.48, speed: 1.3, phase: 0, ampZ: 0 };
+    const fixture = testTrack([flat], { start: { x: 0, y: 8.62, z: 0.85 }, rollingPins: [pin] });
+    const hit = makeHarness(fixture);
+    hit.b.vz = -4;
+    hit.step(dt);
+    assert(hit.b.vz > 2, `dt=${dt}: pin did not reverse incoming velocity: ${hit.b.vz}`);
+    assert(hit.b.rollingPinHitCd > 0.1, `dt=${dt}: pin contact has no cooldown`);
+    assert.equal(hit.state.pops, 0, `dt=${dt}: pin contact popped the bubble`);
+    assert(Math.hypot(hit.b.vx, hit.b.vz) <= 15.21, `dt=${dt}: pin bypassed burst speed cap`);
+    const protectedContact = makeHarness(fixture);
+    protectedContact.b.vz = -4;
+    protectedContact.b.rollingPinHitCd = 0.2;
+    protectedContact.step(dt);
+    assert(protectedContact.b.vz < -3, `dt=${dt}: pin reapplied impulse during cooldown`);
+    assert(Math.abs(protectedContact.b.rollingPinHitCd - (0.2 - dt)) < 1e-8, `dt=${dt}: pin cooldown does not count down in seconds`);
+    const readyContact = makeHarness(fixture);
+    readyContact.b.vz = -4; readyContact.b.rollingPinHitCd = dt * 0.5; readyContact.step(dt);
+    assert(readyContact.b.vz > 2, `dt=${dt}: expired pin cooldown still blocks collision`);
+    const miss = makeHarness(testTrack([flat], { start: { x: 3.5, y: 8.62, z: 0.85 }, rollingPins: [pin] }));
+    miss.b.vz = -4; miss.step(dt);
+    assert(miss.b.vz < -3 && miss.b.rollingPinHitCd === 0, `dt=${dt}: pin hits outside its cylinder span`);
+    receipts.push({ dt, reboundVz: +hit.b.vz.toFixed(4), cooldown: +hit.b.rollingPinHitCd.toFixed(4) });
+  }
+  return { receipts };
+});
+
+check('rolling pin collider follows its animated body', () => {
+  const pin = { x: 0, y: 8.55, z: -2, width: 4, speed: 1.3, phase: 0.2, ampZ: 1.1 };
+  const h = makeHarness(testTrack([flat], { start: { x: 5, y: 8.62, z: 0 }, rollingPins: [pin] }));
+  h.state.elapsed = 0.5;
+  h.step(1 / 60);
+  const expectedZ = -2 + Math.sin((0.5 + 1 / 60) * 1.3 + 0.2) * 1.1;
+  assert(Math.abs(h.dynamicMeshes.rollingPins[0].mesh.position.z - expectedZ) < 1e-8,
+    'Rolling pin body does not follow the level sine movement');
+  const contact = makeHarness(testTrack([flat], { start: { x: 0, y: 8.62, z: expectedZ + 0.85 }, rollingPins: [pin] }));
+  contact.state.elapsed = 0.5; contact.b.vz = -4; contact.step(1 / 60);
+  assert(contact.b.vz > 2 && contact.b.rollingPinHitCd > 0, 'Rolling pin collision stayed at its original definition instead of following animation');
+  return { animatedZ: +h.dynamicMeshes.rollingPins[0].mesh.position.z.toFixed(4), reboundVz: +contact.b.vz.toFixed(4) };
+});
+
+check('rolling pin finite endcaps leave the visible side lane clear', () => {
+  const pin = { x: 0, y: 8.55, z: 0, width: 4, speed: 1.3, phase: 0, ampZ: 0 };
+  const clear = makeHarness(testTrack([flat], { start: { x: 2.64, y: 8.62, z: 0 }, rollingPins: [pin] }));
+  clear.step(1 / 60);
+  assert.equal(clear.b.rollingPinHitCd, 0, 'Pin collider extends past finite barrel endcap into the side lane');
+  assert(Math.hypot(clear.b.vx, clear.b.vz) < 0.001, 'Pin knocks a ball outside its finite endcap');
+  const hit = makeHarness(testTrack([flat], { start: { x: 2.5, y: 8.62, z: 0 }, rollingPins: [pin] }));
+  hit.b.vx = -3; hit.step(1 / 60);
+  assert(hit.b.vx > 0 && hit.b.rollingPinHitCd > 0, 'Finite barrel endcap fails to rebound an overlapping ball');
+  return { clearanceX: clear.b.x, endcapRebound: +hit.b.vx.toFixed(4) };
+});
+
+check('bumper radial elastic rebound and contact cooldown', () => {
+  const receipts = [];
+  for (const dt of [1 / 120, 1 / 60, 0.04]) for (const side of [-1, 1]) {
+    const bumper = { x: 0, y: 8, z: 0, r: 0.9, bounce: 6 };
+    const fixture = testTrack([flat], { start: { x: side * 1.3, y: 8.62, z: 0 }, bumpers: [bumper] });
+    const hit = makeHarness(fixture);
+    hit.b.vx = -side * 4;
+    hit.step(dt);
+    assert(side * hit.b.vx > 3, `dt=${dt} side=${side}: bumper did not bounce radially: ${hit.b.vx}`);
+    assert(Math.abs(hit.b.vz) < 0.1, `dt=${dt} side=${side}: radial impact adds unrelated sideways force`);
+    assert(hit.b.bumperHitCd > 0.1, `dt=${dt}: bumper contact has no cooldown`);
+    assert.equal(hit.state.pops, 0);
+    const protectedContact = makeHarness(fixture);
+    protectedContact.b.vx = -side * 4;
+    protectedContact.b.bumperHitCd = 0.2;
+    protectedContact.step(dt);
+    assert(side * protectedContact.b.vx < -3, `dt=${dt}: bumper reapplied impulse during cooldown`);
+    assert(Math.abs(protectedContact.b.bumperHitCd - (0.2 - dt)) < 1e-8, `dt=${dt}: bumper cooldown does not count down in seconds`);
+    const readyContact = makeHarness(fixture);
+    readyContact.b.vx = -side * 4; readyContact.b.bumperHitCd = dt * 0.5; readyContact.step(dt);
+    assert(side * readyContact.b.vx > 3, `dt=${dt}: expired bumper cooldown still blocks collision`);
+    receipts.push({ dt, side, reboundVx: +hit.b.vx.toFixed(4), cooldown: +hit.b.bumperHitCd.toFixed(4) });
+  }
+  return { receipts };
+});
+
+check('configured bumper plazas contain eight ricochet directions', () => {
+  const receipts = [];
+  const failures = [];
+  for (const track of TRACKS) for (const bumper of track.bumpers || []) {
+    const pad = track.platforms.find(p => p.y === bumper.y && Math.abs(p.x - bumper.x) < p.w / 2 && Math.abs(p.z - bumper.z) < p.d / 2);
+    assert(pad, `${track.id}: bumper has no supporting plaza`);
+    for (const dt of [1 / 120, 1 / 60, 0.04]) for (let compass = 0; compass < 8; compass++) {
+      const nx = Math.sin(compass * Math.PI / 4), nz = Math.cos(compass * Math.PI / 4);
+      const h = makeHarness({ ...track, start: { x: bumper.x + nx * (bumper.r + 0.6), y: bumper.y + 0.62, z: bumper.z + nz * (bumper.r + 0.6) } });
+      h.b.vx = -nx * 3; h.b.vz = -nz * 3;
+      h.b.grounded = true; h.b.surfaceKind = pad.kind; h.b.supportPlatform = pad;
+      let leftFloor = false, hits = 0, wasHit = false;
+      for (let t = 0; t < 1.5; t += dt) {
+        h.step(dt);
+        if (h.b.bumperHitCd > 0 && !wasHit) hits++;
+        wasHit = h.b.bumperHitCd > 0;
+        // Project onto actual platform/gear heights so a valid lower connector
+        // counts as supported, while a ball above open sky fails before deathY.
+        const overFloor = track.platforms.some(p => h.context.sampleTrackSurface(h.b.x,
+          h.context.platformFloor(p, h.b.x, h.b.z).y + h.b.r, h.b.z, h.b.r))
+          || track.gears.some(g => h.context.sampleTrackSurface(h.b.x, g.y + h.b.r, h.b.z, h.b.r));
+        if (!overFloor) leftFloor = true;
+      }
+      const receipt = { track: track.id, bumperX: bumper.x, bumperZ: bumper.z, dt, compass, hits,
+        pops: h.state.pops, leftFloor, endX: +h.b.x.toFixed(3), endZ: +h.b.z.toFixed(3) };
+      receipts.push(receipt);
+      if (!hits || h.state.pops || leftFloor) failures.push(receipt);
+    }
+  }
+  assert.equal(receipts.length, 96, 'Safety test must exercise four bumpers, eight directions, and three frame rates');
+  assert.equal(failures.length, 0, `Unsafe configured bumper ricochets: ${JSON.stringify(failures)}`);
+  return { ricochets: receipts.length, pops: 0, leftFloor: false };
+});
+
+check('steam vent active and inactive phases with smooth acceleration', () => {
+  const receipts = [];
+  for (const dt of [1 / 120, 1 / 60, 0.04]) {
+    const vent = { x: 0, y: 8, z: 0, r: 1.1, period: 3, duty: 0.5, vy: 7.5, vz: -6 };
+    const fixture = testTrack([flat], { steamVents: [vent] });
+    const active = makeHarness(fixture);
+    active.step(dt);
+    const firstVy = active.b.vy;
+    assert(active.b.vy > 0 && active.b.vy <= 44 * dt + 1e-8, `dt=${dt}: active vent must accelerate smoothly, vy=${active.b.vy}`);
+    assert(active.b.vz < 0 && Math.abs(active.b.vz) <= 20 * dt + 1e-8, `dt=${dt}: active vent forward boost is an instant kick: ${active.b.vz}`);
+    assert(!active.b.grounded, `dt=${dt}: active vent did not lift the ball`);
+    assert(active.dynamicMeshes.steamVents[0].active, `dt=${dt}: active plume state not updated by physics`);
+    let peakVy = active.b.vy;
+    for (let t = dt; t < 0.45; t += dt) {
+      active.step(dt);
+      peakVy = Math.max(peakVy, active.b.vy);
+      assert(active.b.vy <= vent.vy + 1e-8, `dt=${dt}: vent stacks vertical impulses above target`);
+    }
+    assert(peakVy > 3 && active.b.z < -0.5, `dt=${dt}: active vent provides no sustained lift and forward motion`);
+    assert.equal(active.state.pops, 0);
+    const inactive = makeHarness(fixture);
+    inactive.state.elapsed = 2;
+    for (let t = 0; t < 0.3; t += dt) inactive.step(dt);
+    assert(inactive.b.grounded && Math.abs(inactive.b.y - 8.62) < 0.001, `dt=${dt}: inactive vent lifts the ball`);
+    assert(Math.hypot(inactive.b.vx, inactive.b.vz) < 0.001 && inactive.b.boostFlash === 0, `dt=${dt}: inactive vent boosts the ball`);
+    assert(!inactive.dynamicMeshes.steamVents[0].active);
+    const fast = makeHarness(fixture);
+    fast.b.vz = -9; fast.step(dt);
+    assert(fast.b.vz < -8.8, `dt=${dt}: vent brakes faster forward travel`);
+    const overhead = makeHarness(testTrack([flat], { start: { x: 0, y: 12.62, z: 0 }, steamVents: [vent] }));
+    overhead.step(dt);
+    assert(overhead.b.vy < 0 && Math.abs(overhead.b.vz) < 0.001, `dt=${dt}: plume boosts ball outside its height range`);
+    receipts.push({ dt, firstVy: +firstVy.toFixed(4), peakVy: +peakVy.toFixed(4), forwardZ: +active.b.z.toFixed(4) });
+  }
+  return { receipts };
+});
 
 check('flat speed under sustained drive', () => {
   const receipts = [];
@@ -262,19 +442,19 @@ check('raised elevator blocks entering underneath from low dock', () => {
 const routePoints = {
   academy: [[0, -29], [0, -43.4]],
   garden: [[0, -13.4], [-10.4, -13.4], [-10.4, -26.2], [0, -26.2], [0, -42.2]],
-  honey: [[0, -43.5]],
+  honey: [[0, -10.5], [2.3, -11, 0.25], [2.3, -15.6, 0.3], [0, -18.5], [0, -43.5]],
   mushroom_canyon: [[0, -9.4], [0, -18.8], [0, -34], [0, -49.2]],
   gear_outpost: [[0, -16.8], [0, -30.2], [-1.6, -36.2], [1.6, -42], [0, -48]],
   belfry: [[0, -16.2], [0, -32.6], [0, -47.4]],
-  clockwork: [[0, -14.8], [0, -23.4], [0, -35.8], [-1.8, -41.4], [1.8, -47], [0, -60.8]],
+  clockwork: [[0, -14.8], [0, -22.5, 0.3], [2.5, -22.5, 0.2], [2.5, -25.6, 0.2], [0, -28.4], [0, -35.8], [-1.8, -41.4], [1.8, -47], [0, -60.8]],
   frost_slide: [[0, -15.6], [13.4, -15.6], [13.4, -33.6]],
-  aurora: [[0, -16.8], [12.6, -16.8], [12.6, -34.2], [0, -34.2], [0, -52.4]],
-  sky_finale: [[0, -24.2], [-1.8, -30.2], [1.8, -36.2], [0, -42.2], [0, -60.6]],
+  aurora: [[0, -16.8], [12.6, -16.8], [12.6, -32.5, 0.25], [9, -32.5, 0.25], [8.2, -34.2, 0.3], [0, -34.2], [0, -52.4]],
+  sky_finale: [[0, -24.2], [-1.8, -25.3, 0.2], [-1.8, -30.2], [1.8, -36.2], [0, -42.2], [0, -60.6]],
   elevator_connection: [[0, 0]],
 };
 function runRoute(track, { dt = 1 / 120, speed = 5.5, maxTime = 90, startWait = 0, stopAfterPop = false } = {}) {
   const h = makeHarness(track);
-  const points = routePoints[track.id].map(([x, z]) => ({ x, z }));
+  const points = routePoints[track.id].map(([x, z, radius = 0.9]) => ({ x, z, radius }));
   const elevator = track.platforms.find(p => p.kind === 'elevator');
   if (elevator) {
     points[points.length - 1].wait = 'low';
@@ -292,7 +472,7 @@ function runRoute(track, { dt = 1 / 120, speed = 5.5, maxTime = 90, startWait = 
       const ascending = Math.cos(h.state.elapsed * elevator.speed + elevator.phase) > 0;
       canLeave = points[target].wait === 'low' ? (y < elevator.yMin + 0.25 && !ascending) : (y > elevator.yMax - 0.25 && ascending);
     }
-    if (h.state.elapsed >= startWait && distance < 0.9 && canLeave && target < points.length - 1) {
+    if (h.state.elapsed >= startWait && distance < (points[target].radius ?? 0.9) && canLeave && target < points.length - 1) {
       target++;
       ({ x: tx, z: tz } = points[target]); dx = tx - h.b.x; dz = tz - h.b.z; distance = Math.hypot(dx, dz);
     }
@@ -322,6 +502,7 @@ function runRoute(track, { dt = 1 / 120, speed = 5.5, maxTime = 90, startWait = 
   return { h, receipt: { track: track.id, cleared: !!h.state.cleared, seconds: +h.state.elapsed.toFixed(3),
     pops: h.state.pops, waypoint: target, speed, startWait, peakSpeed: +peakSpeed.toFixed(3), minY: +minY.toFixed(3),
     groundedSeconds: +groundedTime.toFixed(3), elevatorGroundedSeconds: +elevatorGroundedTime.toFixed(3), elevatorError: +elevatorError.toFixed(6),
+    hz: +(1 / dt).toFixed(3),
     end: { x: +h.b.x.toFixed(2), y: +h.b.y.toFixed(2), z: +h.b.z.toFixed(2) } } };
 }
 check('elevator boarding and dismount through real input', () => {
@@ -341,15 +522,23 @@ check('elevator boarding and dismount through real input', () => {
 
 const routeStrategies = {
   belfry: { speed: 7.5, startWait: 2.3 },
-  clockwork: { speed: 7.5, startWait: 2 },
+  clockwork: { speed: 7.5, startWait: 3.3 },
   aurora: { speed: 7.5 },
-  sky_finale: { speed: 7.5 },
+  sky_finale: { speed: 7.5, startWait: 0.1 },
 };
+// Optional extra real-frame-rate runs: --route-hz=60 or --route-hz=25.
+const routeHz = Number(process.argv.find(arg => arg.startsWith('--route-hz='))?.split('=')[1] || 120);
+assert(Number.isFinite(routeHz) && routeHz >= 25 && routeHz <= 240, 'Route rate must be 25..240 Hz');
+// The coarse-frame driver waits for a different safe hammer interval. These
+// fixtures change input timing only; hazard motion and collisions stay live.
+const waitsAt25Hz = { belfry: 1, aurora: 0.9 };
 for (const track of TRACKS) check(`input-only route: ${track.id}`, () => {
-  let result = runRoute(track, routeStrategies[track.id]);
+  const strategy = { ...routeStrategies[track.id], dt: 1 / routeHz };
+  if (routeHz === 25 && track.id in waitsAt25Hz) strategy.startWait = waitsAt25Hz[track.id];
+  let result = runRoute(track, strategy);
   if (process.argv.includes('--search') && (!result.receipt.cleared || result.receipt.pops > 0)) {
     outer: for (const speed of [7.5, 9.5, 8.5, 6.5, 4.5, 3.5]) for (let wait = 0; wait < 4; wait += 0.1) {
-      const candidate = runRoute(track, { speed, startWait: +wait.toFixed(2), stopAfterPop: true });
+      const candidate = runRoute(track, { speed, startWait: +wait.toFixed(2), stopAfterPop: true, dt: 1 / routeHz });
       if (candidate.receipt.cleared) { result = candidate; break outer; }
     }
   }

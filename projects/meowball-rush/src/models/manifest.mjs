@@ -5,8 +5,13 @@ import m2 from "./cat-ragdoll.glb";
 import m3 from "./cat-witch.glb";
 import m4 from "./fence.glb";
 import m5 from "./fountain-center.glb";
-import m6 from "./portal.glb";
-import m7 from "./tree.glb";
+import m6 from "./hazard-bumper.glb";
+import m7 from "./hazard-flail.glb";
+import m8 from "./hazard-rolling-pin.glb";
+import m9 from "./hazard-seesaw.glb";
+import m10 from "./hazard-vent.glb";
+import m11 from "./portal.glb";
+import m12 from "./tree.glb";
 export const GLB_MODELS = {
   "banner-red": m0,
   "cat-ginger": m1,
@@ -14,6 +19,11 @@ export const GLB_MODELS = {
   "cat-witch": m3,
   "fence": m4,
   "fountain-center": m5,
-  "portal": m6,
-  "tree": m7,
+  "hazard-bumper": m6,
+  "hazard-flail": m7,
+  "hazard-rolling-pin": m8,
+  "hazard-seesaw": m9,
+  "hazard-vent": m10,
+  "portal": m11,
+  "tree": m12,
 };

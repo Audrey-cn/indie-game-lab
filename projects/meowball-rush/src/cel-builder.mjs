@@ -938,6 +938,37 @@ export function getSideWallOpenings(p, platforms, side) {
   return openings.sort((a, b) => a[0] - b[0]);
 }
 
+// Z-end curbs share their world-X doorways with physics. Narrow passages retain
+// the center route while the bumper plazas catch outward diagonal ricochets.
+export function getEndWallOpenings(p, platforms, side, gears = []) {
+  const rotate = (q) => {
+    const rotated = { ...q, x: q.z, z: q.x, w: q.d, d: q.w };
+    if (q.kind === "ramp" || q.kind === "ice_ramp") {
+      rotated.dir = q.dir === "-z" ? "+x" : "-z";
+      rotated.yStart = q.yEnd;
+      rotated.yEnd = q.yStart;
+    }
+    return rotated;
+  };
+  const rotatedPad = rotate(p);
+  const openings = getSideWallOpenings(rotatedPad,
+    platforms.map(q => q === p ? rotatedPad : rotate(q)), side);
+  const edgeZ = p.z + side * p.d / 2;
+  for (const gear of gears) {
+    if (Math.abs(gear.y - p.y) > 0.3 || (gear.z + side * gear.r - edgeZ) * side < 0.12) continue;
+    const dz = edgeZ - gear.z;
+    if (Math.abs(dz) >= gear.r) continue;
+    const halfChord = Math.sqrt(gear.r * gear.r - dz * dz);
+    const lo = Math.max(p.x - p.w / 2, gear.x - halfChord);
+    const hi = Math.min(p.x + p.w / 2, gear.x + halfChord);
+    if (hi > lo) openings.push([lo - 0.2, hi + 0.2]);
+  }
+  return openings.map(([lo, hi]) => {
+    const center = (lo + hi) / 2;
+    return [Math.max(lo, center - 1.25), Math.min(hi, center + 1.25)];
+  }).sort((a, b) => a[0] - b[0]);
+}
+
 function extrudeChannelSection(shape, length) {
   const geometry = new THREE.ExtrudeGeometry(shape, { depth: length, bevelEnabled: false, curveSegments: 8, steps: 1 });
   geometry.translate(0, 0, -length / 2);
@@ -947,7 +978,7 @@ function extrudeChannelSection(shape, length) {
 // Build Poster-Grade Natural Storybook 3D Scene!
 export function buildTrackScene(track) {
   const group = new THREE.Group();
-  const dynamicMeshes = { gears: [], hammers: [], stars: [], boosts: [], mushrooms: [], elevators: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], petals: null };
+  const dynamicMeshes = { gears: [], hammers: [], rollingPins: [], bumpers: [], steamVents: [], stars: [], boosts: [], mushrooms: [], elevators: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], petals: null };
 
   group.add(createSkyDome(track));
 
@@ -1042,6 +1073,38 @@ export function buildTrackScene(track) {
     }
   }
 
+  // A detached workshop display beside the lower dock. It is scenery only;
+  // keeping it out of track.platforms leaves a visible gap beside the route.
+  if (track.id === "gear_outpost") {
+    const display = { kind: "brass", x: 8.6, y: 5, z: -48, w: 5.5, d: 6, h: 0.8 };
+    const ledge = castRec(addOutline(new THREE.Mesh(createRoundedSlabGeo(display.w, display.d, display.h, 0.85, 0.12), mats.brassDark), 1.012));
+    ledge.name = "seesaw-scenery-ledge";
+    ledge.position.set(display.x, display.y - 0.12, display.z);
+    group.add(ledge);
+    const anchor = new THREE.Group();
+    anchor.name = "seesaw-scenery-anchor";
+    anchor.position.set(display.x, display.y, display.z);
+    group.add(anchor);
+    const fallback = new THREE.Group();
+    fallback.name = "seesaw-fallback";
+    const fulcrum = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.9, 12), mats.brass), 1.035));
+    fulcrum.rotation.z = Math.PI / 2;
+    fulcrum.position.y = 0.56;
+    fallback.add(fulcrum);
+    const board = castRec(addOutline(new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.18, 4.4), mats.woodPlank), 1.025));
+    board.position.y = 1.12;
+    board.rotation.x = 0.16;
+    fallback.add(board);
+    for (const side of [-1, 1]) {
+      const endBand = castRec(new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.2, 0.12), mats.brassDark));
+      endBand.position.set(0, 1.12 - Math.sin(0.16) * side * 1.85, Math.cos(0.16) * side * 1.85);
+      endBand.rotation.x = 0.16;
+      fallback.add(endBand);
+    }
+    anchor.add(fallback);
+    dynamicMeshes.propSlots.push({ key: "hazard-seesaw", anchor, fallback, y: display.y, scale: 4.4, rotation: 0, maxFootprint: { x: 2.1, z: 4.8 }, platform: display, role: "scenery" });
+  }
+
   function addSideCurbs(p, parent = group, local = false) {
     for (const side of [-1, 1]) {
       const openings = getSideWallOpenings(p, track.platforms, side);
@@ -1066,6 +1129,33 @@ export function buildTrackScene(track) {
         timber.name = "side-curb-timber";
         timber.position.set(x, y + 0.495, z);
         parent.add(timber);
+      }
+    }
+  }
+
+  function addEndCurbs(p) {
+    for (const side of [-1, 1]) {
+      const openings = getEndWallOpenings(p, track.platforms, side, track.gears);
+      const segments = [];
+      let cursor = p.x - p.w / 2;
+      for (const [lo, hi] of openings) {
+        if (lo > cursor) segments.push([cursor, Math.min(lo, p.x + p.w / 2)]);
+        cursor = Math.max(cursor, hi);
+      }
+      if (cursor < p.x + p.w / 2) segments.push([cursor, p.x + p.w / 2]);
+      for (const [lo, hi] of segments) {
+        if (hi - lo < 0.08) continue;
+        const length = hi - lo;
+        const x = (lo + hi) / 2;
+        const z = p.z + side * (p.d / 2 + 0.12);
+        const stone = castRec(new THREE.Mesh(new THREE.BoxGeometry(length, 0.44, 0.24), mats.stoneCurb));
+        stone.name = "end-curb-stone";
+        stone.position.set(x, p.y + 0.22, z);
+        group.add(stone);
+        const timber = castRec(new THREE.Mesh(new THREE.BoxGeometry(length, 0.11, 0.24), mats.woodPlank));
+        timber.name = "end-curb-timber";
+        timber.position.set(x, p.y + 0.495, z);
+        group.add(timber);
       }
     }
   }
@@ -1309,6 +1399,7 @@ export function buildTrackScene(track) {
     if (p.walls && p.kind !== "trough" && p.kind !== "elevator" && p.kind !== "ramp" && p.kind !== "ice_ramp") {
       addSideCurbs(p);
     }
+    if (p.endWalls) addEndCurbs(p);
   }
 
   // 2. Rotating Interlocking Brass Gears (Recessed -0.07m below adjoining deck with inset teeth -> ZERO clipping or Z-fighting!)
@@ -1342,19 +1433,152 @@ export function buildTrackScene(track) {
     const rod = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, hm.len, 8), mats.woodPlank), 1.08));
     rod.position.set(0, -hm.len / 2, 0);
     pivot.add(rod);
-    const head = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 1.55, 14), toonMat(0x9e542a)), 1.05));
-    head.rotation.z = Math.PI / 2;
+    const head = new THREE.Group();
+    head.name = hm.variant === "flail" ? "flail-head" : "hammer-head";
     head.position.set(0, -hm.len, 0);
     pivot.add(head);
-    for (const s of [-0.52, 0.52]) {
-      const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.59, 0.59, 0.14, 14), mats.brass);
-      ring.rotation.z = Math.PI / 2;
-      ring.position.set(s, -hm.len, 0);
-      pivot.add(ring);
+    const headFallback = new THREE.Group();
+    headFallback.name = `${head.name}-fallback`;
+    head.add(headFallback);
+    const modelAnchor = new THREE.Group();
+    modelAnchor.name = `${head.name}-model-anchor`;
+    head.add(modelAnchor);
+    if (hm.variant === "flail") {
+      const crystalMat = toonMat(0xae72df, 0x613095, 0.3);
+      headFallback.add(castRec(addOutline(new THREE.Mesh(new THREE.OctahedronGeometry(0.59, 0), crystalMat), 1.045)));
+      const directions = [
+        [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+        [1, 1, 1], [-1, 1, 1], [1, -1, 1], [-1, -1, 1],
+        [1, 1, -1], [-1, 1, -1], [1, -1, -1], [-1, -1, -1],
+      ];
+      const up = new THREE.Vector3(0, 1, 0);
+      for (const coordinates of directions) {
+        const direction = new THREE.Vector3(...coordinates).normalize();
+        const spike = castRec(addOutline(new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), crystalMat), 1.04));
+        spike.scale.set(0.7, 1.6, 0.7);
+        spike.position.copy(direction).multiplyScalar(0.55);
+        spike.quaternion.setFromUnitVectors(up, direction);
+        headFallback.add(spike);
+      }
+    } else {
+      const barrel = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 1.55, 14), toonMat(0x9e542a)), 1.05));
+      barrel.rotation.z = Math.PI / 2;
+      headFallback.add(barrel);
+      for (const s of [-0.52, 0.52]) {
+        const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.59, 0.59, 0.14, 14), mats.brass);
+        ring.rotation.z = Math.PI / 2;
+        ring.position.x = s;
+        headFallback.add(ring);
+      }
     }
     arch.add(pivot);
     group.add(arch);
-    dynamicMeshes.hammers.push({ pivot, def: hm, worldHead: new THREE.Vector3(), velX: 0, velY: 0 });
+    dynamicMeshes.hammers.push({ pivot, def: hm, head, headFallback, modelAnchor, worldHead: new THREE.Vector3(), velX: 0, velY: 0 });
+  }
+
+  // Rolling pins move as a unit along Z; both visual sources spin around X.
+  for (const def of track.rollingPins || []) {
+    const mesh = new THREE.Group();
+    mesh.name = "rolling-pin";
+    mesh.position.set(def.x, def.y, def.z);
+    const roller = new THREE.Group();
+    roller.name = "rolling-pin-roller";
+    mesh.add(roller);
+    const fallback = new THREE.Group();
+    fallback.name = "rolling-pin-fallback";
+    roller.add(fallback);
+    const barrel = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, def.width, 18), mats.woodPlank), 1.025));
+    barrel.rotation.z = Math.PI / 2;
+    fallback.add(barrel);
+    for (const side of [-1, 1]) {
+      const band = castRec(new THREE.Mesh(new THREE.CylinderGeometry(0.485, 0.485, 0.075, 18), mats.brassDark));
+      band.rotation.z = Math.PI / 2;
+      band.position.x = side * (def.width / 2 - 0.12);
+      fallback.add(band);
+      const handle = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.28, 10), mats.woodPost), 1.04));
+      handle.rotation.z = Math.PI / 2;
+      handle.position.x = side * (def.width / 2 + 0.12);
+      fallback.add(handle);
+    }
+    const modelAnchor = new THREE.Group();
+    modelAnchor.name = "rolling-pin-model-anchor";
+    roller.add(modelAnchor);
+    group.add(mesh);
+    dynamicMeshes.rollingPins.push({ def, mesh, roller, fallback, modelAnchor });
+  }
+
+  // Spring bumpers are grounded at def.y and reserve def.r as their footprint.
+  for (const def of track.bumpers || []) {
+    const mesh = new THREE.Group();
+    mesh.name = "bumper";
+    mesh.position.set(def.x, def.y, def.z);
+    const fallback = new THREE.Group();
+    fallback.name = "bumper-fallback";
+    const base = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(def.r * 0.92, def.r * 0.98, def.r * 0.18, 18), mats.brassDark), 1.015));
+    base.position.y = def.r * 0.09;
+    fallback.add(base);
+    for (let i = 0; i < 3; i++) {
+      const coil = castRec(new THREE.Mesh(new THREE.TorusGeometry(def.r * 0.48, def.r * 0.055, 6, 18), mats.brass));
+      coil.rotation.x = Math.PI / 2;
+      coil.position.y = def.r * (0.23 + i * 0.1);
+      fallback.add(coil);
+    }
+    const cap = castRec(addOutline(new THREE.Mesh(new THREE.SphereGeometry(def.r * 0.91, 18, 12), toonMat(0xef76ad, 0xa82c79, 0.2)), 1.025));
+    cap.scale.y = 0.4;
+    cap.position.y = def.r * 0.68;
+    fallback.add(cap);
+    const rim = castRec(new THREE.Mesh(new THREE.TorusGeometry(def.r * 0.83, def.r * 0.075, 8, 20), mats.brass));
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = def.r * 0.62;
+    fallback.add(rim);
+    const star = castRec(new THREE.Mesh(new THREE.OctahedronGeometry(def.r * 0.18, 0), toonMat(0xffed90, 0xffd54a, 0.3)));
+    star.scale.y = 0.35;
+    star.position.y = def.r * 1.055;
+    fallback.add(star);
+    mesh.add(fallback);
+    const modelAnchor = new THREE.Group();
+    modelAnchor.name = "bumper-model-anchor";
+    mesh.add(modelAnchor);
+    group.add(mesh);
+    dynamicMeshes.bumpers.push({ def, mesh, fallback, modelAnchor, pulse: 0 });
+  }
+
+  // The translucent plume has its own sibling mount so replacing a grate with
+  // an imported vent never hides the timed warning and steam animation.
+  for (const def of track.steamVents || []) {
+    const mesh = new THREE.Group();
+    mesh.name = "steam-vent";
+    mesh.position.set(def.x, def.y, def.z);
+    const fallback = new THREE.Group();
+    fallback.name = "steam-vent-fallback";
+    const base = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(def.r * 0.88, def.r, 0.16, 18), mats.brassDark), 1.02));
+    base.position.y = 0.08;
+    fallback.add(base);
+    const ring = castRec(new THREE.Mesh(new THREE.TorusGeometry(def.r * 0.72, def.r * 0.12, 8, 20), mats.brass));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.18;
+    fallback.add(ring);
+    for (let i = -2; i <= 2; i++) {
+      const offset = i * def.r * 0.23;
+      const span = Math.sqrt(Math.max(0, (def.r * 0.66) ** 2 - offset ** 2));
+      const grate = castRec(new THREE.Mesh(new THREE.BoxGeometry(span * 2, 0.07, def.r * 0.07), mats.brassDark));
+      grate.position.set(0, 0.18, offset);
+      fallback.add(grate);
+    }
+    mesh.add(fallback);
+    const modelAnchor = new THREE.Group();
+    modelAnchor.name = "steam-vent-model-anchor";
+    mesh.add(modelAnchor);
+    const plumeGeometry = new THREE.ConeGeometry(def.r * 1.25, 2.8, 18, 1, true);
+    plumeGeometry.rotateX(Math.PI);
+    plumeGeometry.translate(0, 1.4, 0);
+    const plume = new THREE.Mesh(plumeGeometry, new THREE.MeshBasicMaterial({ color: 0x8ceaff, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
+    plume.name = "steam-vent-plume";
+    plume.position.y = 0.2;
+    plume.visible = false;
+    mesh.add(plume);
+    group.add(mesh);
+    dynamicMeshes.steamVents.push({ def, mesh, fallback, modelAnchor, plume, active: false });
   }
 
   // 4. Bouncy Red-Cap Spotted Mushrooms!

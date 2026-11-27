@@ -1,4 +1,4 @@
-// Meowball Rush v1.3.0 — Storybook sky valleys, banked troughs and magic elevators.
+// Meowball Rush v2.0.0 — Art Bible courses and sculpted magical contraptions.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -9,7 +9,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, DEFAULT_SAVE, TRACKS } from "./config.mjs";
 import { sfx } from "./audio.mjs";
-import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings } from "./cel-builder.mjs";
+import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings } from "./cel-builder.mjs";
 import { generateClearPoster } from "./poster.mjs";
 import { GLB_MODELS } from "./models/manifest.mjs";
 import coverUrl from "./assets/cover.webp";
@@ -439,7 +439,7 @@ function mountTrackModels(built) {
     });
   }
 
-  for (const key of ["banner-red", "fence", "fountain-center"]) {
+  for (const key of ["banner-red", "fence", "fountain-center", "hazard-seesaw"]) {
     const slots = (meshes.propSlots || []).filter((slot) => slot.key === key);
     if (!slots.length) continue;
     loadGlbModel(key, (prototype) => {
@@ -464,7 +464,48 @@ function mountTrackModels(built) {
         model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
         slot.anchor.clear();
         slot.anchor.add(model);
+        if (slot.fallback) slot.fallback.visible = false;
       }
+    });
+  }
+
+  // Anchors belong to the animated parts, so imported art and primitive
+  // fallbacks share the same motion and collision volume.
+  function mountHazards(key, slots, fit) {
+    if (!slots.length) return;
+    loadGlbModel(key, (prototype) => {
+      if (!isCurrentTrack()) return;
+      for (const slot of slots) {
+        const model = prototype.clone(true);
+        model.updateMatrixWorld(true);
+        const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+        fit(model, size, slot.def);
+        model.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        const grounded = key === "hazard-bumper" || key === "hazard-vent";
+        model.position.set(-center.x, grounded ? -box.min.y : -center.y, -center.z);
+        model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        slot.modelAnchor.clear();
+        slot.modelAnchor.add(model);
+        slot.fallback.visible = false;
+      }
+    });
+  }
+  mountHazards("hazard-rolling-pin", meshes.rollingPins || [], (model, size, def) => {
+    // This authored asset includes long handles: width describes the barrel,
+    // matching the primitive, not the full end-to-end decorative span.
+    const barrel = model.getObjectByName("Cylinder");
+    const barrelWidth = barrel ? new THREE.Box3().setFromObject(barrel).getSize(new THREE.Vector3()).x : size.x;
+    model.scale.set(def.width / barrelWidth, 0.96 / size.y, 0.96 / size.z);
+  });
+  mountHazards("hazard-flail", meshes.hammers.filter(hm => hm.def.variant === "flail")
+    .map(hm => ({ ...hm, fallback: hm.headFallback })), (model, size) => {
+    model.scale.setScalar(1.84 / Math.max(size.x, size.y, size.z));
+  });
+  for (const [key, slots] of [["hazard-bumper", meshes.bumpers], ["hazard-vent", meshes.steamVents]]) {
+    mountHazards(key, slots || [], (model, size, def) => {
+      model.scale.setScalar(2 * def.r / Math.max(size.x, size.z));
     });
   }
 }
@@ -542,6 +583,8 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
       dizzyTimer: 0,
       popTimer: 0,
       hammerHitCd: 0,
+      rollingPinHitCd: 0,
+      bumperHitCd: 0,
       facing: 0,
       pawCycle: 0,
       boostFlash: 0,
@@ -634,6 +677,28 @@ function collideSideRails(b, previousX, previousZ) {
       } else if (lateral < p.w * 0.5 + b.r && previousLateral >= p.w * 0.5 + b.r) {
         b.x = p.x + side * (p.w * 0.5 + b.r);
         if (b.vx * side < 0) b.vx = side * Math.abs(b.vx) * 0.3;
+      }
+    }
+  }
+  // Crystal plazas keep pinball ricochets inside their Z ends too. Narrow
+  // doorways preserve the route to the next bridge, gear or elevator.
+  for (const p of state.track.platforms) {
+    if (!p.endWalls) continue;
+    const floor = platformFloor(p, b.x, b.z).y;
+    if (b.y + b.r < floor - (p.h || 0.6) || (b.y - b.r > platformHeight(p) + 0.55 && b.supportPlatform !== p)) continue;
+    if (Math.abs(b.x - p.x) > p.w * 0.5 || Math.abs(previousX - p.x) > p.w * 0.5 + b.r) continue;
+    const limit = p.d * 0.5 - b.r;
+    for (const side of [-1, 1]) {
+      if (getEndWallOpenings(p, state.track.platforms, side, state.track.gears)
+        .some(([lo, hi]) => b.x > lo + b.r && b.x < hi - b.r)) continue;
+      const lateral = (b.z - p.z) * side;
+      const previousLateral = (previousZ - p.z) * side;
+      if (lateral > limit && (previousLateral <= p.d * 0.5 || b.supportPlatform === p)) {
+        b.z = p.z + side * limit;
+        if (b.vz * side > 0) b.vz = -side * Math.abs(b.vz) * 0.3;
+      } else if (lateral < p.d * 0.5 + b.r && previousLateral >= p.d * 0.5 + b.r) {
+        b.z = p.z + side * (p.d * 0.5 + b.r);
+        if (b.vz * side < 0) b.vz = side * Math.abs(b.vz) * 0.3;
       }
     }
   }
@@ -890,6 +955,16 @@ function updatePhysics(dt) {
     hm.velX = Math.cos(ang) * angVel * hm.def.len;
     hm.velY = Math.sin(ang) * angVel * hm.def.len;
   }
+  for (const pin of dynamicMeshes.rollingPins || []) {
+    const arg = state.elapsed * pin.def.speed + (pin.def.phase || 0);
+    const offset = Math.sin(arg) * pin.def.ampZ;
+    pin.mesh.position.z = pin.def.z + offset;
+    pin.roller.rotation.x = offset / 0.48;
+    pin.velZ = Math.cos(arg) * pin.def.ampZ * pin.def.speed;
+  }
+  for (const vent of dynamicMeshes.steamVents || []) {
+    vent.active = (state.elapsed % vent.def.period) / vent.def.period < vent.def.duty;
+  }
 
   // Handle Comical Popped Furball Respawn Timer (Clock keeps ticking — pure Hamsterball tension!)
   if (b.popTimer > 0) {
@@ -1036,7 +1111,9 @@ function updatePhysics(dt) {
 
   // Surface Collision & True Inclined-Plane Gravity Decomposition (a = 5/7 * g * sin(theta)!)
   const surf = sampleTrackSurface(b.x, b.y, b.z, b.r);
-  if (surf && b.vy <= 1.2) {
+  // A gently rising ball must leave the floor too (not only fast mushroom
+  // jumps); otherwise the surface snap cancels a vent's gradual lift.
+  if (surf && (b.vy <= 0 || (b.grounded && b.vy <= 1.2))) {
     const impactVy = -b.vy;
     const wasRamp = b.surfaceKind === "ramp" || b.surfaceKind === "ice_ramp";
     b.y = surf.y + b.r;
@@ -1130,6 +1207,92 @@ function updatePhysics(dt) {
         break;
       }
     }
+  }
+
+  // Enchanted rolling cylinders: use finite, flat endcaps so the sphere can
+  // pass the handles without an invisible full-radius capsule blocking it.
+  b.rollingPinHitCd = Math.max(0, (b.rollingPinHitCd || 0) - dt);
+  if (b.rollingPinHitCd <= 0) for (const pin of dynamicMeshes.rollingPins || []) {
+    const halfWidth = pin.def.width / 2;
+    const dx = b.x - pin.def.x, dy = b.y - pin.def.y, dz = b.z - pin.mesh.position.z;
+    const radial = Math.hypot(dy, dz);
+    const radialScale = radial > 0.48 ? 0.48 / radial : 1;
+    let px = pin.def.x + Math.max(-halfWidth, Math.min(halfWidth, dx));
+    let py = pin.def.y + dy * radialScale, pz = pin.mesh.position.z + dz * radialScale;
+    const distance = Math.hypot(b.x - px, b.y - py, b.z - pz);
+    if (distance >= b.r) continue;
+    let nx, ny, nz;
+    if (distance > 0.0001) {
+      nx = (b.x - px) / distance; ny = (b.y - py) / distance; nz = (b.z - pz) / distance;
+    } else if (halfWidth - Math.abs(dx) < 0.48 - radial) {
+      nx = Math.sign(dx || 1); ny = 0; nz = 0;
+      px = pin.def.x + nx * halfWidth;
+    } else {
+      nx = 0;
+      ny = radial > 0.0001 ? dy / radial : 0;
+      nz = radial > 0.0001 ? dz / radial : -Math.sign(b.vz - pin.velZ || 1);
+      py = pin.def.y + ny * 0.48; pz = pin.mesh.position.z + nz * 0.48;
+    }
+    const closing = b.vx * nx + b.vy * ny + (b.vz - pin.velZ) * nz;
+    const impulse = Math.max(4.8, -closing * 1.85);
+    b.x = px + nx * (b.r + 0.03);
+    b.y = py + ny * (b.r + 0.03);
+    b.z = pz + nz * (b.r + 0.03);
+    b.vx += nx * impulse;
+    b.vz += nz * impulse;
+    b.vy = Math.max(2.6, Math.min(4.2, b.vy + ny * impulse));
+    b.grounded = false;
+    b.supportPlatform = null;
+    b.rollingPinHitCd = 0.45;
+    b.boostFlash = Math.max(b.boostFlash, 0.35);
+    state.squashVel -= 4;
+    sfx.playHammerBonk(Math.min(1, impulse / 10));
+    showToast("🥖 哎呀！被魔法擀面杖弹开啦！");
+    break;
+  }
+
+  // Pinball crystals preserve tangential motion and add a bounded radial kick.
+  b.bumperHitCd = Math.max(0, (b.bumperHitCd || 0) - dt);
+  if (b.bumperHitCd <= 0) for (const bumper of dynamicMeshes.bumpers || []) {
+    const def = bumper.def, dx = b.x - def.x, dz = b.z - def.z;
+    const distance = Math.hypot(dx, dz), hitDist = def.r + b.r;
+    if (distance >= hitDist || b.y + b.r < def.y || b.y - b.r > def.y + 1.5) continue;
+    const speed = Math.hypot(b.vx, b.vz);
+    const nx = distance > 0.0001 ? dx / distance : speed > 0.001 ? -b.vx / speed : 0;
+    const nz = distance > 0.0001 ? dz / distance : speed > 0.001 ? -b.vz / speed : -1;
+    const inward = b.vx * nx + b.vz * nz;
+    const kick = Math.max(0, (def.bounce ?? 6) - inward);
+    b.x = def.x + nx * (hitDist + 0.03);
+    b.z = def.z + nz * (hitDist + 0.03);
+    b.vx += nx * kick;
+    b.vz += nz * kick;
+    b.bumperHitCd = 0.3;
+    b.boostFlash = Math.max(b.boostFlash, 0.45);
+    bumper.pulse = 1;
+    state.squashVel += 3.2;
+    sfx.playBoing();
+    showToast("💎 弹珠水晶加速弹射！");
+    break;
+  }
+
+  // Rune vents apply acceleration over time rather than an instant launch.
+  // A contact latch keeps the sound/toast from repeating every physics tick.
+  for (const vent of dynamicMeshes.steamVents || []) {
+    const def = vent.def;
+    const touching = vent.active && Math.hypot(b.x - def.x, b.z - def.z) < def.r + b.r * 0.35
+      && b.y - b.r >= def.y - 0.15 && b.y - b.r < def.y + 2.5;
+    if (touching) {
+      b.vy += Math.min(Math.max(0, def.vy - b.vy), 44 * dt);
+      b.vz -= Math.min(Math.max(0, b.vz - def.vz), 20 * dt);
+      b.grounded = false;
+      b.supportPlatform = null;
+      b.boostFlash = Math.max(b.boostFlash, 0.35);
+      if (!vent.touching) {
+        sfx.playBoost();
+        showToast("💨 蒸汽符文风柱起飞！");
+      }
+    }
+    vent.touching = touching;
   }
 
   // Bouncy Red Mushrooms!
@@ -1277,6 +1440,19 @@ function updateVisuals(dt) {
       p.mesh.position.z = p.baseZ + Math.cos(phase) * 0.08;
     });
     kittyRig.tail.rotation.z = Math.sin(state.elapsed * 9) * 0.35;
+  }
+
+  for (const bumper of dynamicMeshes.bumpers || []) {
+    bumper.pulse = Math.max(0, bumper.pulse - dt * 3.5);
+    const pulse = Math.sin(bumper.pulse * Math.PI) * 0.2;
+    bumper.mesh.scale.set(1 + pulse, 1 - pulse * 0.45, 1 + pulse);
+  }
+  for (const vent of dynamicMeshes.steamVents || []) {
+    const shimmer = 0.92 + Math.sin(state.elapsed * 9 + vent.def.z) * 0.08;
+    vent.plume.visible = vent.active;
+    vent.plume.scale.set(1, shimmer, 1);
+    vent.plume.material.opacity = vent.active ? 0.22 + shimmer * 0.1 : 0;
+    vent.plume.rotation.y += dt * 0.8;
   }
 
   // Dizzy Halo or Dynamic Turn Banking!

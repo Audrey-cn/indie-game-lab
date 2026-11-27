@@ -1,6 +1,6 @@
 {
   "name": "meowball-rush",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "WitchSpring cel-shaded 3D isometric Hamsterball physics arcade with adorable cats in magic bubbles",
@@ -8,6 +8,7 @@
     "build": "node scripts/build.mjs",
     "verify:physics": "node scripts/verify-physics.mjs",
     "verify:scenes": "node scripts/verify-scenes.mjs",
+    "verify:models": "node scripts/verify-models.mjs",
     "gen:3d": "node scripts/gen-3d-assets.mjs"
   },
   "dependencies": {
