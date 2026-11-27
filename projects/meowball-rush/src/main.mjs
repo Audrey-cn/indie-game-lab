@@ -768,7 +768,9 @@ function updatePhysics(dt) {
   for (const p of state.track.platforms) {
     if (p.kind === "ramp" || p.kind === "ice_ramp" || p.kind === "cloud") continue;
     const stepH = p.y - (b.y - b.r);
-    if (stepH > 0.08 && b.y + b.r > p.y - p.h) {
+    // Allow seamless exit from a ramp onto its adjoining flat platform without catching the seam lip!
+    const onRampSeam = (b.surfaceKind === "ramp" || b.surfaceKind === "ice_ramp") && stepH < 0.30;
+    if (!onRampSeam && stepH > 0.08 && b.y + b.r > p.y - p.h) {
       const hw = p.w * 0.5 + b.r;
       const hd = p.d * 0.5 + b.r;
       const dx = b.x - p.x;

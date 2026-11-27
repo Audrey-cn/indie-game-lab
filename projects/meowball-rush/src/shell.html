@@ -30,7 +30,16 @@
       padding: max(12px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
     }
     #hud[hidden] { display: none; }
-    .hud-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .hud-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; width: 100%; }
+    .hud-center { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .hud-pause-btn {
+      pointer-events: auto; cursor: pointer;
+      background: linear-gradient(180deg, #fff9ef, #fde6ba); color: var(--ink);
+      border: 2.5px solid var(--ink); border-radius: 14px;
+      height: 40px; padding: 0 12px; font-size: 13px; font-weight: 900;
+      box-shadow: 0 4px 0 var(--ink); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+    }
+    .hud-pause-btn:active { transform: translateY(2px); }
     .hud-pill {
       pointer-events: auto;
       background: rgba(43, 30, 58, 0.84); border: 2.5px solid rgba(255,255,255,0.85);
@@ -256,19 +265,23 @@
   <div id="app">
     <canvas id="gl-canvas"></canvas>
 
-    <!-- Responsive Arcade HUD with Explicit Pause & Gyro Toggle -->
+    <!-- Responsive Arcade HUD with Unmissable Top-Left Pause Button (Never Clipped on Portrait Phones!) -->
     <div id="hud" hidden>
       <div class="hud-top">
-        <div class="hud-pill" id="hud-track">🌸 01 · 空中花园</div>
-        <div class="timer-box" id="timer-box">
-          <div class="timer-lbl">TIME LEFT</div>
-          <div class="timer-val" id="hud-time">48.0</div>
+        <div class="hud-actions">
+          <button class="hud-pause-btn" id="btn-pause" title="暂停 (Esc)">⏸ 暂停</button>
+        </div>
+        <div class="hud-center">
+          <div class="timer-box" id="timer-box">
+            <div class="timer-lbl">TIME LEFT</div>
+            <div class="timer-val" id="hud-time">60.0</div>
+          </div>
+          <div class="hud-pill" id="hud-track" style="font-size:11px;padding:3px 10px">🌸 01 · 新手草坪学院</div>
         </div>
         <div class="hud-actions">
           <div class="hud-pill" id="hud-stars">⭐ 0</div>
           <button class="hud-btn" id="btn-hud-gyro" title="手机陀螺仪开关">📱</button>
           <button class="hud-btn" id="btn-mute" title="静音">🔊</button>
-          <button class="hud-btn" id="btn-pause" title="暂停 (Esc)">⏸</button>
         </div>
       </div>
 
