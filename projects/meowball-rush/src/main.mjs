@@ -1,6 +1,11 @@
 // Meowball Rush v0.1.0 — Authentic Hamsterball 3D Physics + WitchSpring Cel-Shading!
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, DEFAULT_SAVE, TRACKS } from "./config.mjs";
 import { sfx } from "./audio.mjs";
 import { buildTrackScene, createKittyBall, createRainbowRibbon } from "./cel-builder.mjs";
@@ -13,11 +18,10 @@ function loadGlbModel(key, onReady) {
   const url = GLB_MODELS[key];
   if (!url) return;
   if (loadedGlbCache[key]) {
-    onReady(loadedGlbCache[key].clone(true));
+    onReady(loadedGlbCache[key].scene.clone(true), loadedGlbCache[key].animations);
     return;
   }
   gltfLoader.load(url, (gltf) => {
-    // Auto-normalize size & center pivot so any Tripo3D / Hunyuan3D .glb fits seamlessly!
     const root = gltf.scene;
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3());
@@ -27,8 +31,8 @@ function loadGlbModel(key, onReady) {
     root.position.set(-center.x / maxDim, -center.y / maxDim, -center.z / maxDim);
     const wrapper = new THREE.Group();
     wrapper.add(root);
-    loadedGlbCache[key] = wrapper;
-    onReady(wrapper.clone(true));
+    loadedGlbCache[key] = { scene: wrapper, animations: gltf.animations || [] };
+    onReady(wrapper.clone(true), gltf.animations || []);
   });
 }
 
@@ -67,20 +71,34 @@ function showToast(msg) {
   }, 2600);
 }
 
-// ===== THREE.JS CEL-SHADED ISOMETRIC RENDERER =====
+// ===== THREE.JS CEL-SHADED + ACES FILMIC + PMREM + BLOOM RENDERER =====
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
+// Soft Luminous Studio Environment Reflections for Hunyuan 3D PBR Models!
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.65;
+
 const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 220);
 
+// Dreamy WitchSpring Bloom Post-Processing Pipeline!
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.26, 0.52, 0.84);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+
 // Warm WitchSpring Lighting + Soft Real-Time Sunlight Shadows!
-const hemiLight = new THREE.HemisphereLight(0xfffaf2, 0x8b74bd, 1.05);
+const hemiLight = new THREE.HemisphereLight(0xfffaf2, 0x8b74bd, 1.0);
 scene.add(hemiLight);
-const sunLight = new THREE.DirectionalLight(0xfff5d6, 1.35);
+const sunLight = new THREE.DirectionalLight(0xfff5d6, 1.4);
 sunLight.position.set(18, 36, 16);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(1024, 1024);
@@ -98,6 +116,8 @@ function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  bloomPass.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
@@ -215,10 +235,17 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   kittyRig = createKittyBall(cat);
   scene.add(kittyRig.root);
   scene.add(kittyRig.shadow);
-  // Auto-mount external AI-generated 3D .glb kitten bounded cleanly inside the bubble!
+  // Auto-mount external AI-generated 3D .glb kitten + automatic AnimationMixer for rigged GLBs!
   const glbKey = cat.id === "ginger_scarf" ? "cat-ginger" : "cat-witch";
-  loadGlbModel(glbKey, (model) => {
-    if (kittyRig) kittyRig.mountExternalModel(model, 0.72);
+  loadGlbModel(glbKey, (model, animations) => {
+    if (!kittyRig) return;
+    kittyRig.mountExternalModel(model, 0.72);
+    if (animations && animations.length > 0) {
+      const mixer = new THREE.AnimationMixer(model);
+      const action = mixer.clipAction(animations[0]);
+      action.play();
+      kittyRig.mixer = mixer;
+    }
   });
 
   // Lush Pastel Rainbow Speed Ribbon Trail!
@@ -418,7 +445,7 @@ function tick(ts) {
     camera.lookAt(0, 5, -14);
   }
 
-  renderer.render(scene, camera);
+  composer.render();
   requestAnimationFrame(tick);
 }
 
@@ -710,11 +737,16 @@ function updateVisuals(dt) {
     kittyRig.kitty.rotation.y = b.facing;
   }
 
-  // Adorable frantic paw cycling (or bouncy trotting bob for external GLB figurine!)
+  // Adorable frantic paw cycling (AnimationMixer if rigged GLB, or lively squash-and-hop for static GLB!)
   b.pawCycle += (2.5 + spd * 2.4) * dt;
-  if (kittyRig.isExternal && kittyRig.isExternal()) {
-    kittyRig.kitty.position.y = Math.abs(Math.sin(b.pawCycle * 0.65)) * Math.min(0.09, 0.02 + spd * 0.008);
-    kittyRig.kitty.rotation.x = Math.sin(b.pawCycle * 0.65) * Math.min(0.16, spd * 0.015);
+  if (kittyRig.mixer) {
+    kittyRig.mixer.update(dt * (0.4 + spd * 0.25));
+  } else if (kittyRig.isExternal && kittyRig.isExternal()) {
+    const hop = Math.abs(Math.sin(b.pawCycle * 0.7));
+    kittyRig.kitty.position.y = hop * Math.min(0.11, 0.02 + spd * 0.01);
+    kittyRig.kitty.rotation.x = Math.sin(b.pawCycle * 0.7) * Math.min(0.18, spd * 0.018);
+    const sq = 1 + (hop - 0.5) * Math.min(0.14, spd * 0.014);
+    kittyRig.kitty.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
   } else {
     kittyRig.paws.forEach((p, i) => {
       const phase = b.pawCycle + (i % 2 === 0 ? 0 : Math.PI);

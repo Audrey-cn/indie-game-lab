@@ -1,13 +1,13 @@
-// Meowball Rush v0.1.0 — WitchSpring Fairy-Tale Celesta & Reverb Audio Engine
+// Meowball Rush v0.5.0 — Real Studio Orchestral Fantasy BGM (CC0 TownTheme.mp3) + Reverb Foley SFX
+import bgmUrl from "./assets/bgm-fantasy.mp3";
+
 class MeowAudio {
   constructor() {
     this.ctx = null;
     this.master = null;
     this.reverbSend = null;
     this.muted = false;
-    this.bgmRunning = false;
-    this.bgmTimer = null;
-    this.step = 0;
+    this.bgmAudio = null;
     this.trackIndex = 0;
   }
 
@@ -46,6 +46,7 @@ class MeowAudio {
   setMuted(flag) {
     this.muted = flag;
     if (this.master && this.ctx) this.master.gain.setTargetAtTime(flag ? 0 : 0.42, this.ctx.currentTime, 0.02);
+    if (this.bgmAudio) this.bgmAudio.volume = flag ? 0 : 0.42;
   }
 
   // Dreamy WitchSpring Celesta / Music-Box Bell Voice
@@ -96,50 +97,19 @@ class MeowAudio {
   startBgm(trackIndex = 0) {
     this.unlock();
     this.trackIndex = trackIndex;
-    if (this.bgmRunning) return;
-    this.bgmRunning = true;
-    this.step = 0;
-    const tick = () => {
-      if (!this.bgmRunning) return;
-      const bpm = this.trackIndex === 2 ? 124 : this.trackIndex === 1 ? 118 : 114;
-      this.playStep(this.step);
-      this.step = (this.step + 1) % 64;
-      this.bgmTimer = setTimeout(tick, (60 / bpm / 4) * 1000);
-    };
-    tick();
+    if (!this.bgmAudio) {
+      this.bgmAudio = new Audio(bgmUrl);
+      this.bgmAudio.loop = true;
+    }
+    this.bgmAudio.volume = this.muted ? 0 : 0.42;
+    this.bgmAudio.playbackRate = trackIndex === 2 ? 1.06 : trackIndex === 1 ? 1.03 : 1.0;
+    this.bgmAudio.play().catch(() => {});
   }
 
   stopBgm() {
-    this.bgmRunning = false;
-    clearTimeout(this.bgmTimer);
-  }
-
-  playStep(s) {
-    if (this.muted || !this.ctx) return;
-    const bar = Math.floor(s / 16);
-    const sub = s % 16;
-    // Playful Waltzy WitchSpring Fantasy Progression (Fmaj7 -> G6 -> Em7 -> Am9)
-    const chords = [
-      [349.23, 440.0, 523.25],
-      [392.0, 493.88, 587.33],
-      [329.63, 392.0, 493.88],
-      [440.0, 523.25, 659.25],
-    ];
-    if (sub === 0) {
-      chords[bar].forEach((f, i) => this.bell(f, 0.9, 0.036, i * 0.025));
+    if (this.bgmAudio) {
+      this.bgmAudio.pause();
     }
-    // Soft Bouncy Kick & Pizzicato Bass
-    if (sub === 0 || sub === 8) this.tone(118, 42, 0.11, "sine", 0.14);
-    const roots = [174.61, 196.0, 164.81, 220.0];
-    if (sub === 0 || sub === 6 || sub === 10) this.tone(roots[bar], roots[bar] * 0.99, 0.15, "triangle", 0.075);
-
-    const mel = [
-      [523.25, 0, 659.25, 0, 783.99, 0, 659.25, 587.33, 523.25, 0, 440, 0, 523.25, 0, 0, 0],
-      [587.33, 0, 783.99, 0, 880, 0, 783.99, 659.25, 587.33, 0, 493.88, 0, 587.33, 0, 0, 0],
-      [659.25, 0, 783.99, 0, 987.77, 0, 880, 783.99, 659.25, 0, 523.25, 0, 659.25, 0, 0, 0],
-      [880, 0, 783.99, 0, 659.25, 0, 587.33, 523.25, 440, 0, 523.25, 0, 659.25, 0, 0, 0],
-    ][bar];
-    if (mel[sub] > 0) this.bell(mel[sub], 0.36, 0.052);
   }
 
   playStar() {

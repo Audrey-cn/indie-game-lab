@@ -36,6 +36,42 @@ function castRec(mesh, cast = true, receive = true) {
   return mesh;
 }
 
+// Organic Beveled Rounded-Corner Island Geometry (Eliminates flat boxy rectangles!)
+function createRoundedSlabGeo(w, d, h, radius = 0.9, bevel = 0.14) {
+  const hw = Math.max(0.2, w * 0.5 - bevel);
+  const hd = Math.max(0.2, d * 0.5 - bevel);
+  const r = Math.min(radius, hw * 0.85, hd * 0.85);
+  const s = new THREE.Shape();
+  s.moveTo(-hw + r, -hd);
+  s.lineTo(hw - r, -hd);
+  s.quadraticCurveTo(hw, -hd, hw, -hd + r);
+  s.lineTo(hw, hd - r);
+  s.quadraticCurveTo(hw, hd, hw - r, hd);
+  s.lineTo(-hw + r, hd);
+  s.quadraticCurveTo(-hw, hd, -hw, hd - r);
+  s.lineTo(-hw, -hd + r);
+  s.quadraticCurveTo(-hw, -hd, -hw + r, -hd);
+
+  const depth = Math.max(0.15, h - bevel * 2);
+  const geo = new THREE.ExtrudeGeometry(s, {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 3,
+    curveSegments: 8,
+  });
+  geo.rotateX(Math.PI / 2); // Extrude downward from y=0 to y=-depth
+  // Normalize planar top UVs so cobblestone/brass textures tile smoothly without distortion!
+  const pos = geo.attributes.position;
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < pos.count; i++) {
+    uv.setXY(i, (pos.getX(i) + w * 0.5) / 4.2, (pos.getZ(i) + d * 0.5) / 4.2);
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
+
 // ===== HAND-PAINTED STORYBOOK TEXTURES =====
 const TEX_CACHE = {};
 function makeTex(key, w, h, drawFn, rx = 1, ry = 1) {
@@ -657,46 +693,55 @@ export function buildTrackScene(track) {
         }
       }
     } else if (p.kind === "grass") {
-      // Multi-material Cliff + Cobblestone Terrace (ZERO stretched top texture on sides!)
-      const mesh = castRec(new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), grassBoxMats), false, true);
-      mesh.position.set(p.x, p.y - p.h / 2, p.z);
-      group.add(mesh);
+      // ORGANIC BEVELED ROUNDED FLOATING ISLAND (Eliminates rigid BoxGeometry!)
+      const topGeo = createRoundedSlabGeo(p.w, p.d, 0.55, Math.min(p.w, p.d) * 0.24, 0.14);
+      const topMesh = castRec(addOutline(new THREE.Mesh(topGeo, grassTopMat), 1.012), false, true);
+      topMesh.position.set(p.x, p.y - 0.14, p.z);
+      group.add(topMesh);
 
-      // Tapered Cliff Rock Island Underbelly
-      const rock = castRec(addOutline(new THREE.Mesh(new THREE.ConeGeometry(Math.min(p.w, p.d) * 0.62, 4.2, 8), mats.grassDirt), 1.025));
-      rock.rotation.x = Math.PI;
-      rock.position.set(p.x, p.y - p.h - 2.0, p.z);
-      group.add(rock);
+      // Sculpted Multi-Cluster Cliff Rock Underbelly (3 overlapping jagged storybook cliff cones!)
+      const baseR = Math.min(p.w, p.d) * 0.52;
+      const mainRock = castRec(addOutline(new THREE.Mesh(new THREE.ConeGeometry(baseR, 4.4, 7), mats.grassDirt), 1.022));
+      mainRock.rotation.x = Math.PI;
+      mainRock.position.set(p.x, p.y - 2.45, p.z);
+      group.add(mainRock);
+      for (const [ox, oz, sr, sh] of [[-0.28, 0.22, 0.58, 2.8], [0.3, -0.2, 0.52, 2.5], [0.18, 0.28, 0.45, 2.2]]) {
+        const sub = castRec(addOutline(new THREE.Mesh(new THREE.ConeGeometry(baseR * sr, sh, 6), toonMat(0x8a6047)), 1.025));
+        sub.rotation.x = Math.PI;
+        sub.position.set(p.x + p.w * ox, p.y - sh * 0.5 - 0.35, p.z + p.d * oz);
+        group.add(sub);
+      }
 
-      // 3D Carved Stone Curb Blocks along corners + Pastel Wildflowers + Storybook Trees!
+      // Stylized Rounded Stone Boulders & Wildflower Tufts along the Island Rim!
       for (const [cx, cz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-        const fx = p.x + cx * (p.w * 0.44);
-        const fz = p.z + cz * (p.d * 0.44);
-        const curb = castRec(addOutline(new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.24, 0.7), mats.stoneCurb), 1.04));
-        curb.position.set(fx, p.y + 0.08, fz);
-        group.add(curb);
-        const bush = castRec(new THREE.Mesh(new THREE.SphereGeometry(0.36, 8, 6), mats.grassEdge));
-        bush.scale.y = 0.62;
-        bush.position.set(fx - cx * 0.35, p.y + 0.14, fz - cz * 0.35);
+        const fx = p.x + cx * (p.w * 0.39);
+        const fz = p.z + cz * (p.d * 0.39);
+        const boulder = castRec(addOutline(new THREE.Mesh(new THREE.DodecahedronGeometry(0.38, 0), mats.stoneCurb), 1.05));
+        boulder.scale.set(1.2, 0.65, 1.0);
+        boulder.position.set(fx, p.y + 0.1, fz);
+        group.add(boulder);
+        const bush = castRec(new THREE.Mesh(new THREE.IcosahedronGeometry(0.36, 1), mats.grassEdge));
+        bush.scale.y = 0.68;
+        bush.position.set(fx - cx * 0.36, p.y + 0.14, fz - cz * 0.36);
         group.add(bush);
         for (let f = 0; f < 3; f++) {
           const fl = new THREE.Mesh(
             new THREE.SphereGeometry(0.11, 6, 6),
             toonMat(flowerCols[(Math.abs(Math.round(fx + fz)) + f) % flowerCols.length])
           );
-          fl.position.set(fx - cx * 0.35 + (f - 1) * 0.18, p.y + 0.34, fz - cz * 0.35 + (f % 2 === 0 ? 0.12 : -0.12));
+          fl.position.set(fx - cx * 0.36 + (f - 1) * 0.18, p.y + 0.34, fz - cz * 0.36 + (f % 2 === 0 ? 0.12 : -0.12));
           group.add(fl);
         }
       }
-      // Plant a lush Storybook Tree on a safe decorative corner of large terraces!
-      if (p.w >= 6.2) {
+      // Plant a real Sculpted Hunyuan 3D Storybook Tree on large terraces!
+      if (p.w >= 6.0) {
         const treeAnchor = new THREE.Group();
-        treeAnchor.position.set(p.x - p.w * 0.42, p.y, p.z + p.d * 0.38);
+        treeAnchor.position.set(p.x - p.w * 0.38, p.y, p.z + p.d * 0.34);
         const tree = createStorybookTree(p.z < -20 ? 0x7ae582 : 0x5cd666);
         tree.scale.setScalar(0.82);
         treeAnchor.add(tree);
         group.add(treeAnchor);
-        dynamicMeshes.treeSlots.push({ anchor: treeAnchor, scale: 2.8 });
+        dynamicMeshes.treeSlots.push({ anchor: treeAnchor, scale: 2.9 });
       }
     } else {
       const topMat =
@@ -705,10 +750,23 @@ export function buildTrackScene(track) {
             : p.kind === "neon" ? mats.neon
               : p.kind === "crystal" ? mats.crystal
                 : mats.brass;
-      const mesh = castRec(new THREE.Mesh(new THREE.BoxGeometry(p.w, p.h, p.d), topMat), false, true);
-      mesh.position.set(p.x, p.y - p.h / 2, p.z);
-      if (p.kind !== "cloud" && p.kind !== "neon") addOutline(mesh, 1.016);
+      const isRounded = p.kind === "brass" || p.kind === "crystal" || p.kind === "ice";
+      const geo = isRounded ? createRoundedSlabGeo(p.w, p.d, p.h, Math.min(p.w, p.d) * 0.2, 0.12) : new THREE.BoxGeometry(p.w, p.h, p.d);
+      const mesh = castRec(new THREE.Mesh(geo, topMat), false, true);
+      mesh.position.set(p.x, isRounded ? p.y - 0.12 : p.y - p.h / 2, p.z);
+      if (p.kind !== "cloud" && p.kind !== "neon") addOutline(mesh, 1.015);
       group.add(mesh);
+
+      // Glowing Crystal Spires poking out of Aurora Crystal Islands!
+      if (p.kind === "crystal" && p.w >= 5) {
+        for (const [cx, cz] of [[-1, -1], [1, 1]]) {
+          const spire = castRec(addOutline(new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0), mats.ice), 1.05));
+          spire.scale.set(0.65, 1.9, 0.65);
+          spire.rotation.z = cx * 0.25;
+          spire.position.set(p.x + cx * p.w * 0.44, p.y + 0.45, p.z + cz * p.d * 0.44);
+          group.add(spire);
+        }
+      }
 
       if (p.kind === "neon" && p.d >= 8) {
         for (let zOff = -3.2; zOff <= 3.2; zOff += 3.2) {
