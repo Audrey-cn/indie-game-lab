@@ -1,6 +1,6 @@
 // Three.js adapter. The mathematical sweep is shared with floor/rail collision.
 import * as THREE from 'three';
-import { getRouteRibbonRows, getChuteShellRows } from './course-math.mjs';
+import { getRouteRibbonRows, getChuteShellRows, getRibbonBoundarySegments } from './course-math.mjs';
 
 export function geometryFromRows(data) {
   const { rows, columns, distances } = data, positions = [], uv = [], indices = [];
@@ -37,8 +37,8 @@ export function routeBodyGeometry(route) {
     gilt_books:[[0,0],[0,.25],[.08,.25],[.08,.38],[.26,.38],[.26,.25],[.37,.25],[.37,-.3],[0,-.46]],
     royal_gold:[[0,0],[0,.27],[.08,.36],[.1,.49],[.22,.49],[.24,.36],[.34,.27],[.34,-.3],[0,-.48]],
   };
-  const profile = route.walls ? profiles[route.edgeStyle] || profiles.canal_stone
-    : [[0, 0], [.075, -.085], [.075, -.29], [0, -.42]];
+  const guardProfile=profiles[route.edgeStyle]||profiles.canal_stone;
+  const profile=[[0,0],[.075,-.085],[.075,-.29],[0,-.42]];
   const thickness = -profile.at(-1)[1], maxOffset = Math.max(...profile.map(p=>p[0]));
   const rings = rows.map((row, i) => {
     const f = frames[i], ring = [];
@@ -89,42 +89,108 @@ export function routeBodyGeometry(route) {
     for (const triangle of cap) indices.push(...triangle.map(v => start + v));
     endCaps.push({row:i,firstIndex,indexCount:indices.length-firstIndex});
   }
-  // Open mouths share only an edge with their neighbouring ribbon; no duplicate
-  // coplanar cap faces are inserted at a route seam.
+  // Raised curbs use exactly the finite exposed intervals used by collision.
+  // The underfloor shell stays continuous even where a branch opens a guard.
+  const guardSegments=route.walls?getRibbonBoundarySegments(route):[],guardCaps=[];
+  const raised=guardProfile.filter(p=>p[1]>=0);
+  if(raised.at(-1)[0]!==0)raised.push([raised.at(-1)[0],0]);
+  const guardRing=(segment,fraction,point)=>{
+    const i=segment.index,t=fraction,a=frames[i],b=frames[i+1],side=segment.side;
+    const nx=(a.nx*a.miter*(1-t)+b.nx*b.miter*t)*side,nz=(a.nz*a.miter*(1-t)+b.nz*b.miter*t)*side;
+    const widths=side>0?rightWidths:leftWidths,limits=side>0?rightLimits:leftLimits;
+    const max=Math.max(...guardProfile.map(p=>p[0]));
+    const available=k=>Number.isFinite(limits[k])?Math.max(.00001,(limits[k]-widths[k])*.5):max;
+    const scale=Math.min(1,(available(i)*(1-t)+available(i+1)*t)/max);
+    return raised.map(([offset,y])=>({x:point.x+nx*offset*scale,y:point.y+y,z:point.z+nz*offset*scale}));
+  };
+  const coincident=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z)<1e-5;
+  for(const segment of guardSegments){
+    const a=guardRing(segment,segment.start,segment.a),b=guardRing(segment,segment.end,segment.b),base=positions.length/3,n=a.length;
+    for(const ring of[a,b])for(const p of ring){positions.push(p.x,p.y,p.z);uv.push(0,0);}
+    for(let j=0;j<n;j++){const k=(j+1)%n;indices.push(base+j,base+n+j,base+k,base+k,base+n+j,base+n+k);}
+    for(const[ring,point,end]of[[a,segment.a,0],[b,segment.b,1]]){
+      if(guardSegments.some(other=>other!==segment&&other.side===segment.side&&coincident(end?other.a:other.b,point)))continue;
+      const contour=raised.map(([x,y])=>new THREE.Vector2(x,y)),triangles=THREE.ShapeUtils.triangulateShape(contour,[]),start=positions.length/3,firstIndex=indices.length;
+      for(const p of ring){positions.push(p.x,p.y,p.z);uv.push(0,0);}
+      for(const triangle of triangles)indices.push(...triangle.map(v=>start+v));
+      guardCaps.push({firstIndex,indexCount:indices.length-firstIndex,side:segment.side,point:{...point},row:end&&segment.index===rows.length-2&&segment.end===1?rows.length-1:!end&&segment.index===0&&segment.start===0?0:null});
+    }
+  }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geometry.setIndex(indices); geometry.computeVertexNormals();
-  geometry.userData.endCaps=endCaps;
+  geometry.userData.bodyEndCaps=endCaps;geometry.userData.endCaps=guardCaps;geometry.userData.guardSegments=guardSegments;
   geometry.userData.edgeProfile = route.walls ? route.edgeStyle || 'canal_stone' : 'open_bevel';
-  geometry.userData.profileSignature = profile.flat().join('/');
+  geometry.userData.profileSignature = (route.walls?guardProfile:profile).flat().join('/');
   geometry.userData.sweepStride = stride; geometry.userData.sweepRows = rows.length;
   return geometry;
 }
 
-export function boostRibbonGeometry(route, boost) {
-  const data = getRouteRibbonRows(route), columns = data.columns;
-  let nearest = 0;
-  for (let i = 1; i < data.points.length; i++) if (Math.hypot(data.points[i].x - boost.x, data.points[i].z - boost.z)
-    < Math.hypot(data.points[nearest].x - boost.x, data.points[nearest].z - boost.z)) nearest = i;
-  const center = data.distances[nearest], start = Math.max(0, center - boost.d / 2), end = Math.min(data.distances.at(-1), center + boost.d / 2);
-  const distances = [start, ...data.distances.filter(d => d > start + 1e-5 && d < end - 1e-5), end];
-  const rows = distances.map(distance => {
-    let i = 1; while (i < data.distances.length - 1 && data.distances[i] < distance) i++;
-    const blend = (distance - data.distances[i - 1]) / (data.distances[i] - data.distances[i - 1]);
-    const widthRatio = Math.min(.88, boost.w / route.width);
-    return Array.from({ length: columns + 1 }, (_, j) => {
-      const column = (columns / 2 + (j - columns / 2) * widthRatio), lo = Math.floor(column), hi = Math.min(columns, lo + 1), t = column - lo;
-      const p = {};
-      for (const axis of ['x', 'y', 'z']) {
-        const a = data.rows[i - 1][lo][axis] * (1 - t) + data.rows[i - 1][hi][axis] * t;
-        const b = data.rows[i][lo][axis] * (1 - t) + data.rows[i][hi][axis] * t;
-        p[axis] = a + (b - a) * blend;
-      }
-      p.y += .065; return p;
-    });
-  });
-  const geometry = geometryFromRows({ rows, columns, distances });
-  geometry.userData.floorOffset = .065; geometry.userData.sourceRouteId = route.id;
+// Clip each actual floor triangle so decals match slopes and banking.
+
+export function surfaceOverlayGeometry(route, patch = {}) {
+  const data = getRouteRibbonRows(route), { rows, columns, frames } = data;
+  const offset = patch.offset ?? .05, margin = patch.margin ?? .35;
+  const angle = patch.angle ?? 0, cosine = Math.cos(angle), sine = Math.sin(angle);
+  const center = { x: patch.x ?? 0, z: patch.z ?? 0 };
+  const local = p => ({ x: (p.x-center.x)*cosine+(p.z-center.z)*sine,
+    z: -(p.x-center.x)*sine+(p.z-center.z)*cosine });
+  const planes = [p=>p.left-margin,p=>p.right-margin];
+  if (patch.shape === 'circle') {
+    for(let k=0;k<48;k++) { const a=k*Math.PI*2/48;
+      planes.push(p=>patch.radius-Math.cos(a)*local(p).x-Math.sin(a)*local(p).z); }
+  } else if(patch.w && patch.d) {
+    planes.push(p=>patch.w/2-local(p).x,p=>patch.w/2+local(p).x,
+      p=>patch.d/2-local(p).z,p=>patch.d/2+local(p).z);
+  }
+  const positions=[],uv=[],indices=[],boundaries=getRibbonBoundarySegments(route);
+  const vertex=(i,j,span)=>{const p=rows[i][j],f=frames[i],a=rows[i][0],b=rows[i][columns];
+    const edgeDistance=side=>{let minimum=Infinity;
+      for(let k=Math.max(0,span-1);k<=Math.min(rows.length-2,span+1);k++){
+        const column=side<0?0:columns,start=rows[k][column],end=rows[k+1][column],dx=end.x-start.x,dz=end.z-start.z,length=Math.hypot(dx,dz)||1;
+        const center=rows[k][columns/2],sign=Math.sign(dx*(center.z-start.z)-dz*(center.x-start.x))||1;
+        minimum=Math.min(minimum,(dx*(p.z-start.z)-dz*(p.x-start.x))*sign/length);
+      }return minimum;};
+    return {...p,left:Math.min((p.x-a.x)*f.nx+(p.z-a.z)*f.nz,edgeDistance(-1)),right:Math.min((b.x-p.x)*f.nx+(b.z-p.z)*f.nz,edgeDistance(1))};};
+  const clip=(polygon,plane)=>{const out=[];for(let k=0;k<polygon.length;k++){
+    const a=polygon[k],b=polygon[(k+1)%polygon.length],da=plane(a),db=plane(b);
+    if(da>=-1e-8)out.push(a);
+    if((da>=0)!==(db>=0)){const t=da/(da-db),p={};for(const key of ['x','y','z','left','right'])p[key]=a[key]+(b[key]-a[key])*t;out.push(p);}
+  }return out;};
+  for(let i=0;i<rows.length-1;i++)for(let j=0;j<columns;j++)for(const triangle of [
+    [vertex(i,j,i),vertex(i,j+1,i),vertex(i+1,j,i)],
+    [vertex(i,j+1,i),vertex(i+1,j+1,i),vertex(i+1,j,i)],
+  ]){
+    const xMin=Math.min(...triangle.map(p=>p.x))-margin,xMax=Math.max(...triangle.map(p=>p.x))+margin;
+    const zMin=Math.min(...triangle.map(p=>p.z))-margin,zMax=Math.max(...triangle.map(p=>p.z))+margin;
+    const yMin=Math.min(...triangle.map(p=>p.y)),yMax=Math.max(...triangle.map(p=>p.y));
+    const centerX=triangle.reduce((n,p)=>n+p.x,0)/3,centerZ=triangle.reduce((n,p)=>n+p.z,0)/3;
+    const edgePlanes=[];
+    for(const edge of boundaries){
+      if(Math.max(edge.a.x,edge.b.x)<xMin||Math.min(edge.a.x,edge.b.x)>xMax||Math.max(edge.a.z,edge.b.z)<zMin||Math.min(edge.a.z,edge.b.z)>zMax||Math.max(edge.a.y,edge.b.y)<yMin-.5||Math.min(edge.a.y,edge.b.y)>yMax+.5)continue;
+      const dx=edge.b.x-edge.a.x,dz=edge.b.z-edge.a.z,length=Math.hypot(dx,dz)||1;
+      const sign=Math.sign(dx*(centerZ-edge.a.z)-dz*(centerX-edge.a.x))||1;
+      edgePlanes.push(p=>(dx*(p.z-edge.a.z)-dz*(p.x-edge.a.x))*sign/length-margin);
+    }
+    let polygon=triangle;for(const plane of [...planes,...edgePlanes]){polygon=clip(polygon,plane);if(polygon.length<3)break;}
+    if(polygon.length<3)continue;
+    const start=positions.length/3;
+    for(const p of polygon){positions.push(p.x,p.y+offset,p.z);const q=local(p);
+      uv.push(.5+q.x/(patch.w||patch.radius*2||4),.5+q.z/(patch.d||patch.radius*2||4));}
+    for(let k=1;k<polygon.length-1;k++)indices.push(start,start+k,start+k+1);
+  }
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.setIndex(indices);geometry.computeVertexNormals();
+  geometry.userData.floorOffset=offset;geometry.userData.edgeInset=margin;
+  geometry.userData.sourceRouteId=route.id;geometry.userData.surfaceOverlay=true;
   return geometry;
+}
+
+export function boostRibbonGeometry(route, boost) {
+  const data=getRouteRibbonRows(route);let nearest=0;
+  for(let i=1;i<data.points.length;i++)if(Math.hypot(data.points[i].x-boost.x,data.points[i].z-boost.z)<Math.hypot(data.points[nearest].x-boost.x,data.points[nearest].z-boost.z))nearest=i;
+  const f=data.frames[nearest];
+  return surfaceOverlayGeometry(route,{...boost,angle:Math.atan2(f.nz,f.nx),offset:.05});
 }

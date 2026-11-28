@@ -16,8 +16,8 @@ const meshPath = mesh => {
   return names.join('/') || `${mesh.geometry?.type || mesh.type}@${mesh.position.toArray().map(n => n.toFixed(2)).join(',')}`;
 };
 
-// Reframe rigid, playable surfaces. Decorative scenery uses the separate fade
-// controller; this resolver never changes a material, mesh or director pose.
+// Diagnose rigid, playable surfaces without changing the director framing.
+// Scenery fading is separate; no occluder is ever a camera collision surface.
 export function createCameraSightline(root) {
   const raycaster = new THREE.Raycaster(), camera = new THREE.Vector3(), center = new THREE.Vector3();
   const direction = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(), point = new THREE.Vector3();
@@ -29,7 +29,7 @@ export function createCameraSightline(root) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const view = new THREE.PerspectiveCamera(), frustum = new THREE.Frustum(), projection = new THREE.Matrix4();
   const hits = [], candidates = [];
-  let meshes = [], recovery = null, raycasts = 0;
+  let meshes = [], raycasts = 0;
   function refresh() {
     meshes = [];
     root.traverse(mesh => {
@@ -225,71 +225,14 @@ export function createCameraSightline(root) {
     }
     return { clear: true, blockers: 0 };
   }
-  function resolve(ball, desiredPose, dt) {
+  function resolve(ball, desiredPose) {
     root.updateMatrixWorld(true); updateEntries(); raycasts = 0;
-    const yaw = Math.atan2(desiredPose.x - desiredPose.lookX, desiredPose.z - desiredPose.lookZ);
-    const sx = Math.sin(yaw), sz = Math.cos(yaw), radius = ball.r || .62;
-    const desiredDistance = Math.hypot(desiredPose.x - ball.x, desiredPose.y - ball.y, desiredPose.z - ball.z);
-    const desiredPitch = Math.asin(clamp((desiredPose.y - ball.y) / desiredDistance, -1, 1));
-    const lead = clamp(-(desiredPose.lookX - ball.x) * sx - (desiredPose.lookZ - ball.z) * sz, 0, 2);
-    const minimum = Math.max(2.2, radius / Math.sin((desiredPose.fov || 46) * Math.PI / 360) * 1.1);
-    const candidate = (distance, pitch) => {
-      const ratio = Math.min(1, distance / desiredDistance), back = Math.cos(pitch) * distance;
-      const result = { ...desiredPose, x: ball.x + sx * back, y: ball.y + Math.sin(pitch) * distance,
-        z: ball.z + sz * back, lookX: ball.x - sx * lead * ratio * ratio,
-        lookY: ball.y + (desiredPose.lookY - ball.y) * ratio * ratio,
-        lookZ: ball.z - sz * lead * ratio * ratio };
-      a.set(ball.x - result.x, ball.y - result.y, ball.z - result.z);
-      b.set(result.lookX - result.x, result.lookY - result.y, result.lookZ - result.z);
-      const aimOffset = a.angleTo(b);
-      const requiredHalf = Math.asin(Math.min(.95, radius / distance)) + aimOffset + Math.PI / 90;
-      const narrowAspect = Math.max(.1, Math.min(1, desiredPose.aspect ?? 1));
-      result.fov = Math.max(desiredPose.fov, Math.atan(Math.tan(requiredHalf) / narrowAspect) * 360 / Math.PI);
-      return result;
-    };
-    const desiredCheck = probe(desiredPose, ball);
-    let result = desiredPose, check = desiredCheck, chosenDistance = desiredDistance, chosenPitch = desiredPitch;
-    if (desiredCheck.clear && recovery) {
-      const alpha = 1 - Math.exp(-6 * dt);
-      chosenDistance = recovery.distance + (desiredDistance - recovery.distance) * alpha;
-      chosenPitch = recovery.pitch + (desiredPitch - recovery.pitch) * alpha;
-      result = candidate(chosenDistance, chosenPitch); check = probe(result, ball);
-      if (Math.abs(chosenDistance - desiredDistance) < .004 && Math.abs(chosenPitch - desiredPitch) < .002) {
-        result = desiredPose; check = desiredCheck; chosenDistance = desiredDistance; chosenPitch = desiredPitch;
-      }
-    }
-    if (!check.clear) {
-      let found = false;
-      const pitches = [...new Set([desiredPitch, Math.min(1.4, desiredPitch + .4), 1.4,
-        Math.max(.03, desiredPitch - .4), .03])];
-      for (const pitch of pitches) {
-        let blockedDistance = desiredDistance;
-        const distances = [...new Set([clamp(desiredCheck.stop ?? desiredDistance * .65, minimum, desiredDistance),
-          Math.max(minimum, desiredDistance * .4), minimum])];
-        for (const distance of distances) {
-          const next = candidate(distance, pitch), nextCheck = probe(next, ball);
-          if (!nextCheck.clear) { blockedDistance = distance; continue; }
-          result = next; check = nextCheck; chosenDistance = distance; chosenPitch = pitch; found = true;
-          // Recover as much of the boom as the same verified clear interval permits.
-          let lo = distance, hi = Math.max(distance, blockedDistance);
-          for (let i = 0; i < 3; i++) {
-            const mid = (lo + hi) * .5, trial = candidate(mid, pitch), trialCheck = probe(trial, ball);
-            if (trialCheck.clear) { lo = mid; result = trial; check = trialCheck; chosenDistance = mid; }
-            else hi = mid;
-          }
-          break;
-        }
-        if (found) break;
-      }
-      // An impossible enclosure is reported honestly; the runtime/audit can
-      // diagnose its authoring instead of treating an unchecked fallback as safe.
-      if (!found) { result = desiredPose; check = desiredCheck; chosenDistance = desiredDistance; chosenPitch = desiredPitch; }
-    }
-    const compressed = chosenDistance < desiredDistance - .004 || Math.abs(chosenPitch - desiredPitch) > .002;
-    recovery = check.clear && compressed ? { distance: chosenDistance, pitch: chosenPitch } : null;
-    return { ...result, sightline: { clear: check.clear, compressed, blockers: check.blockers,
+    const check = probe(desiredPose, ball);
+    // Keep the old resolver API for audits, but make it strictly diagnostic.
+    // A rail entering the silhouette must not trigger a different camera pose.
+    return { ...desiredPose, sightline: { clear: check.clear, compressed: false, blockers: check.blockers,
       blockerNames: check.blockerNames || [], reason: check.reason, raycasts } };
   }
   refresh();
-  return { resolve, refresh, reset() { recovery = null; } };
+  return { resolve, refresh, reset() {} };
 }

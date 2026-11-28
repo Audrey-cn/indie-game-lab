@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 
-// Only scenery participates: the playable floor/guard/chute remains an honest
-// depth reference. Descendants inherit their parent's classification (outlines too).
+// Only authored large scenery structures participate. General scenery names,
+// small decorative props and legacy mushroom tags do not imply fade eligibility.
+// Descendants inherit a structure marker so its outlines fade with the surface.
 export function isCameraOccluder(mesh, root) {
   if (!mesh.isMesh) return false;
   let scenery = false;
@@ -9,8 +10,7 @@ export function isCameraOccluder(mesh, root) {
     if (node.userData.cameraOcclusionIgnore || node.userData.courseRibbon
       || node.userData.routeBody || node.userData.structuralGuard
       || node.name.startsWith('v3-dock-') || node.name === 'chute-half-pipe-shell') return false;
-    if (node.userData.cameraOccluder || node.userData.decorativeProp
-      || node.name.startsWith('environment-') || node.name.startsWith('v3-world-')) scenery = true;
+    if (node.userData.cameraOcclusionStructure) scenery = true;
     if (node === root) break;
   }
   return scenery;
@@ -103,14 +103,15 @@ export function createCameraOcclusion(root) {
       if (!originals.some(m => m.visible && (!m.transparent || m.opacity > .18))) continue;
       const materials = originals.map(m => m.clone());
       fading.set(mesh, { original: mesh.material, castShadow: mesh.castShadow,
-        materials, opacities: originals.map(m => m.transparent ? m.opacity : 1), factor: .18 });
+        materials, opacities: originals.map(m => m.transparent ? m.opacity : 1), factor: 1 });
       mesh.material = Array.isArray(mesh.material) ? materials : materials[0];
       mesh.castShadow = false;
     }
     for (const [mesh, entry] of fading) {
-      // Reveal on the first hit; easing into transparency would leave an opaque
-      // obstruction on low-Hz frames. Restore gently to avoid visibility flicker.
-      entry.factor = blocked.has(mesh) ? .18 : 1 - (1 - entry.factor) * Math.exp(-6 * dt);
+      // Both directions ease continuously; a newly crossed wall must not flash
+      // transparent in one frame. The camera pose stays entirely with director.
+      const target = blocked.has(mesh) ? .18 : 1;
+      entry.factor += (target - entry.factor) * (1 - Math.exp(-(target < 1 ? 10 : 6) * Math.max(0, dt)));
       if (entry.factor > .998) { restore(mesh, entry); continue; }
       entry.materials.forEach((material, i) => {
         material.opacity = entry.opacities[i] * entry.factor;

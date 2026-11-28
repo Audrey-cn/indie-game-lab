@@ -52,6 +52,70 @@ export function verifyCameraStability() {
       };
       return { d, ball, track, tick, run, get pose() { return pose; } };
     };
+    caseAt(hz, 'default and manual low zoom keep at least eight metres indoors', () => {
+      for (const orbit of [false, true]) {
+        const r = rig(0, 0, orbit); r.track.worldType = 'indoor_home';
+        r.run(5, { zoomDelta: -1 });
+        assert(r.d.distance >= 8 - 1e-10, `low zoom compressed ${r.d.mode} to ${r.d.distance}m`);
+        assert(Math.hypot(r.pose.x - r.ball.x, r.pose.y - r.ball.y, r.pose.z - r.ball.z) >= 8 - 1e-10,
+          'rendered camera-ball distance violates its minimum');
+      }
+    });
+    caseAt(hz, 'lagging focus cannot shorten actual distance on curves or reverse motion', () => {
+      const r = rig(); r.track.worldType = 'indoor_home';
+      r.ball.vx = r.ball.vz = 0; r.run(5, { zoomDelta: -1 });
+      let previousDistance = Math.hypot(r.pose.x - r.ball.x, r.pose.y - r.ball.y, r.pose.z - r.ball.z);
+      r.run(6, i => {
+        const heading = i < hz ? Math.PI : i * dt * 1.4;
+        r.ball.vx = Math.sin(heading) * 12; r.ball.vz = Math.cos(heading) * 12;
+        return { lateralInput: .5, zoomDelta: -1 };
+      });
+      // Run another full curve and inspect each rendered frame after movement.
+      for (let i = 0; i < hz * 4; i++) {
+        r.ball.vx = Math.sin(i * dt * 2) * 12; r.ball.vz = Math.cos(i * dt * 2) * 12;
+        r.tick({ lateralInput: .5, zoomDelta: -1 });
+        const actual = Math.hypot(r.pose.x - r.ball.x, r.pose.y - r.ball.y, r.pose.z - r.ball.z);
+        assert(actual >= 8 - 1e-10, `lagging focus compressed actual camera distance to ${actual}m`);
+        assert(Math.abs(actual - r.d.distance) < 1e-9, 'rendered radial distance differs from the bounded boom');
+        if (i) assert(Math.abs(actual - previousDistance) <= 8 * dt + 1e-9, 'rendered distance jumped during a curve');
+        previousDistance = actual;
+      }
+    });
+    caseAt(hz, 'low zoom chute release reaches normal mode without a distance snap', () => {
+      const r = rig(); r.track.worldType = 'indoor_home'; r.ball.vx = r.ball.vz = 0;
+      r.run(4, { zoomDelta: -1 }); r.ball.chuteRide = {}; r.run(3);
+      r.ball.chuteRide = null;
+      for (let i = 0; i < hz * 4; i++) {
+        const before = Math.hypot(r.pose.x - r.ball.x, r.pose.y - r.ball.y, r.pose.z - r.ball.z);
+        r.tick({ zoomDelta: -1 });
+        const actual = Math.hypot(r.pose.x - r.ball.x, r.pose.y - r.ball.y, r.pose.z - r.ball.z);
+        assert(Math.abs(actual - before) <= 8 * dt + 1e-9, 'low zoom release snapped its rendered radius');
+        assert(actual >= (r.d.mode === CAMERA_MODES.LOCKED_CHUTE ? 5.8 : 8) - 1e-9,
+          'low zoom release violates its mode distance minimum');
+      }
+      assert.equal(r.d.mode, CAMERA_MODES.DEFAULT_FOLLOW, 'low zoom release remains locked below its asymptotic target');
+    });
+    caseAt(hz, 'zoom and chute transitions bound camera distance velocity', () => {
+      const r = rig(); r.ball.vx = r.ball.vz = 0; r.tick();
+      const step = options => {
+        const previousDistance = Math.hypot(r.pose.x - r.ball.x, r.pose.y - r.ball.y, r.pose.z - r.ball.z), previousPitch = r.d.pitch, previousFov = r.pose.fov;
+        r.tick(options);
+        assert(Math.abs(Math.hypot(r.pose.x - r.ball.x, r.pose.y - r.ball.y, r.pose.z - r.ball.z) - previousDistance) <= 8 * dt + 1e-10,
+          `distance jumped at ${(Math.abs(r.d.distance - previousDistance) / dt).toFixed(2)}m/s`);
+        assert(Math.abs(r.d.pitch - previousPitch) < 1.5 * dt, 'mode transition snapped pitch');
+        assert(Math.abs(r.pose.fov - previousFov) < 220 * dt, 'mode transition snapped FOV');
+        const minimum = r.d.mode === CAMERA_MODES.LOCKED_CHUTE ? 5.8 : 8;
+        assert(r.d.distance >= minimum - 1e-10, `${r.d.mode} violates ${minimum}m minimum`);
+      };
+      for (const zoomDelta of [-1, 1, -1, 1]) for (let i = 0; i < hz; i++) step({ zoomDelta });
+      r.ball.chuteRide = {}; r.ball.chuteTangent = { x: 0, z: -1 };
+      for (let i = 0; i < hz * 3; i++) step();
+      assert(r.d.distance >= 5.8 && r.d.distance < 5.82, 'chute framing never settles at its safe distance');
+      r.ball.chuteRide = null;
+      for (let i = 0; i < hz * 3; i++) step({ manualDelta: i === 0 ? .1 : 0 });
+      assert.equal(r.d.mode, CAMERA_MODES.DEFAULT_FOLLOW);
+      assert(r.d.distance >= 8, 'chute release never restores ordinary framing');
+    });
     caseAt(hz, 'generous deadzone including angle wrap', () => {
       for (const [yaw, heading] of [[0, 20], [0, -20], [179, -165]]) {
         const r = rig(radians(yaw), radians(heading));

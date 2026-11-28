@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>魔女猫球 · Meowball Rush v3.1.1</title>
+  <title>魔女猫球 · Meowball Rush v3.1.2</title>
   <style>
     :root {
       --ink: #2b1e3a;
@@ -258,6 +258,7 @@
       background: rgba(255, 249, 239, 0.96); color: var(--ink);
       border: 3.5px solid var(--ink); border-radius: 26px; padding: 20px 18px;
       width: min(380px, 100%); text-align: center;
+      max-height: calc(100dvh - 36px); overflow-y: auto;
       box-shadow: 0 10px 0 var(--ink), 0 24px 60px rgba(0,0,0,0.5);
     }
     .res-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0 16px; }
@@ -272,6 +273,12 @@
     .slider-row input { flex: 1; accent-color: var(--violet); }
 
     @media (max-width: 520px) {
+      .hud-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr); }
+      .hud-actions { flex-wrap: wrap; }
+      .hud-actions:last-child { justify-content: flex-end; }
+      .hud-center { min-width: 0; }
+      #hud-track { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+      .hud-pause-btn { padding: 0 8px; font-size: 12px; }
       .hud-pill { font-size: 11px; padding: 4px 9px; }
       .timer-val { font-size: 22px; }
       .ctrl-hint { display: none; }
@@ -288,6 +295,7 @@
       <div class="hud-top">
         <div class="hud-actions">
           <button class="hud-pause-btn" id="btn-pause" title="暂停 (Esc)">⏸ 暂停</button>
+          <button class="hud-pause-btn" id="btn-hud-reset" title="回到检查点 (R)" aria-label="回到检查点 (R)">↺</button>
         </div>
         <div class="hud-center">
           <div class="timer-box" id="timer-box">
@@ -308,9 +316,9 @@
           <div class="speed-val" id="hud-speed">0 km/h</div>
           <div class="speed-sub" id="hud-status">🐾 全速滚动中</div>
         </div>
-        <div class="ctrl-hint" id="ctrl-hint">WASD/方向键移动 · 拖动/Q·E 转视角 · 滚轮缩放 · 手机左手移动/右手视角</div>
+        <div class="ctrl-hint" id="ctrl-hint">点画面锁鼠标推球(Esc释放) · WASD移动 · R回检查点 · 右键/Q·E转视角 · 滚轮缩放</div>
       </div>
-      <div id="camera-hint" hidden>↻ 拖动/Q·E 旋转视角查看落点</div>
+      <div id="camera-hint" hidden>↻ 右键拖动 / Q·E 旋转视角查看落点</div>
     </div>
     <div id="touch-joystick" hidden><div id="joystick-knob"></div></div>
 
@@ -328,7 +336,7 @@
       </div>
 
       <div class="hero-emblem">
-        <span class="badge-tag">MEOWBALL RUSH v3.1.1 · 3D 童话仓鼠球</span>
+        <span class="badge-tag">MEOWBALL RUSH v3.1.2 · 3D 童话仓鼠球</span>
         <h1 class="lobby-title">魔女猫球</h1>
         <p class="lobby-sub">9 只萌猫 · 10 幕四段式童话冒险 · 蓄势爬坡与环游螺旋！</p>
       </div>
@@ -375,6 +383,7 @@
         </div>
         <div class="cta-row" style="flex-direction:column;gap:8px;margin-top:8px">
           <button class="gbtn gbtn-play" id="btn-resume">▶ 继续冲刺</button>
+          <button class="gbtn gbtn-gold" id="btn-respawn-checkpoint">✨ 回到检查点 (R)</button>
           <button class="gbtn gbtn-gold" id="btn-restart-stage">🔄 重开本关</button>
           <button class="gbtn gbtn-dark" id="btn-pause-gyro">📱 切换/校准手机陀螺仪</button>
           <button class="gbtn gbtn-dark" id="btn-pause-lobby">🏠 返回大厅</button>

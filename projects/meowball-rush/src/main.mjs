@@ -1,4 +1,4 @@
-// Meowball Rush v3.1.1 — clear sightlines, grounded rails and stable steering.
+// Meowball Rush v3.1.2 — smooth cameras, solid critters and magic checkpoints.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -9,15 +9,17 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, TRACKS, migrateV3Save } from "./config.mjs";
 import { sfx } from "./audio.mjs";
-import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings, animateFairytaleScenery } from "./cel-builder.mjs";
+import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings, animateFairytaleScenery, activateCheckpoint } from "./cel-builder.mjs";
 import { nearestRouteSurface } from './course-math.mjs';
 import { createDirector, updateDirector, cameraRelativeInput, triggerSetpiece, CAMERA_MODES } from './director.mjs';
 import { createCameraOcclusion } from './camera-occlusion.mjs';
 import { createCameraSightline } from './camera-sightline.mjs';
-import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, integrateRollingMotion, resolveRollingLanding, resolveHorizontalGuardrail, collideRouteGuardrails } from './course-runtime.mjs';
+import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, collideFairytaleCritters, integrateRollingMotion, resolveRollingLanding, resolveHorizontalGuardrail, collideRouteGuardrails } from './course-runtime.mjs';
 import { generateClearPoster } from "./poster.mjs";
 import { FALL_MESSAGES, findFallZone, beginFallRecovery, advanceFallRecovery } from './fall-feedback.mjs';
 import { createFallEffect, updateFallEffects } from './fall-effects.mjs';
+import { resetBallToCheckpoint } from './checkpoint-runtime.mjs';
+import { createMagicBurst, updateMagicBursts } from './magic-effects.mjs';
 import { GLB_MODELS } from "./models/manifest.mjs";
 import coverUrl from "./assets/cover.webp";
 
@@ -528,6 +530,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   const cat = getSelectedCat();
 
   if (state?.fallEffects) updateFallEffects(state.fallEffects, 2);
+  if (state?.magicBursts) updateMagicBursts(state.magicBursts, 2);
   cameraOcclusion?.dispose();
   cameraSightline?.reset();
   if (trackRoot) scene.remove(trackRoot);
@@ -611,6 +614,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
     director: createDirector(track.startYaw || 0),
     shownTips: new Set(),
     fallEffects: [],
+    magicBursts: [],
     activeAct: 0,
     urgentLastSec: 10,
     camPos: new THREE.Vector3(track.start.x + 8.5, track.start.y + 10.5, track.start.z + 11.5),
@@ -650,6 +654,11 @@ function showFairytaleEvent(event) {
   } else if (type === 'book_hop') {
     sfx.playBoing();
     showStarPop('📖 魔法书振翅，轻轻跃向下一页！');
+  } else if (type === 'patrol') {
+    sfx.playBoing();
+    const at = event.position || entry?.mesh.position || prop;
+    createMagicBurst(trackRoot, state.magicBursts ||= [], at, 0xc7eeff);
+    showStarPop('✦ 小伙伴弹弹碰！');
   }
 }
 
@@ -1379,6 +1388,8 @@ function updatePhysics(dt) {
     if (idx > state.checkpointIdx && Math.hypot(b.x - cp.x, b.z - cp.z) < 2.8 && Math.abs(b.y - cp.y) < 1.8) {
       state.checkpointIdx = idx;
       state.checkpoint = { x: cp.x, y: cp.y, z: cp.z };
+      activateCheckpoint(dynamicMeshes, idx);
+      createMagicBurst(trackRoot, state.magicBursts ||= [], cp, 0xffd65c);
       sfx.playCheckpoint();
       showToast("🚩 已激活魔法检查点！");
     }
@@ -1416,6 +1427,8 @@ function updatePhysics(dt) {
   // External impulses share the terminal safety cap; motor cruise is a torque target.
   clampHorizontalSpeed(b, burstMax);
   collideSideRails(b, previousX, previousZ);
+  // Rail projection must not put the ball back inside a moving animal.
+  collideFairytaleCritters(state.track, b, state.elapsed, showFairytaleEvent);
 
   // Finish Portal!
   const fin = state.track.finish;
@@ -1425,6 +1438,7 @@ function updatePhysics(dt) {
 }
 
 function updateVisuals(dt) {
+  updateMagicBursts(state.magicBursts ||= [], dt);
   const b = state.ball;
   updateFallEffects(state.fallEffects, dt);
   let actIndex = b.supportRoute?.actIndex;
@@ -1651,14 +1665,27 @@ function syncHud() {
               : "🐾 全速滚动中";
 }
 
-// ===== CAMERA-RELATIVE CONTROLS: left joystick + independent right-hand orbit =====
+// ===== AUTHENTIC HAMSTERBALL CONTROLS (Pointer Lock Mouse + RMB/Q·E Orbit + WASD + Mobile Dual-Hand) =====
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('pointerdown', e => {
   if (!state || state.phase !== 'playing') return;
   sfx.unlock();
   const inp = state.input;
   const touch = e.pointerType !== 'mouse';
-  const isOrbit = !touch || e.clientX > window.innerWidth * 0.5;
+  if (!touch) {
+    // Left-click enters classic Hamsterball pointer-lock mouse steering; Right-click drags camera orbit!
+    if (e.button === 0 && document.pointerLockElement !== canvas && canvas.requestPointerLock) {
+      try { canvas.requestPointerLock(); } catch {}
+      return;
+    }
+    if (e.button === 2 && inp.orbitPointer == null) {
+      inp.orbitPointer = e.pointerId;
+      inp.orbitLastX = e.clientX; inp.orbitLastY = e.clientY;
+      canvas.setPointerCapture?.(e.pointerId);
+    }
+    return;
+  }
+  const isOrbit = e.clientX > window.innerWidth * 0.5;
   if (isOrbit && inp.orbitPointer == null) {
     inp.orbitPointer = e.pointerId;
     inp.orbitLastX = e.clientX; inp.orbitLastY = e.clientY;
@@ -1670,6 +1697,19 @@ canvas.addEventListener('pointerdown', e => {
     joy.hidden = false; joy.style.left = `${e.clientX}px`; joy.style.top = `${e.clientY}px`;
   }
   canvas.setPointerCapture?.(e.pointerId);
+});
+window.addEventListener('mousemove', e => {
+  if (!state || state.phase !== 'playing') return;
+  if (document.pointerLockElement !== canvas) return;
+  const inp = state.input;
+  const sens = save.mouseSens || 1;
+  if ((e.buttons & 2) !== 0) {
+    inp.orbitX = (inp.orbitX || 0) - e.movementX * 0.006 * sens;
+    inp.orbitY = (inp.orbitY || 0) + e.movementY * 0.004 * sens;
+  } else {
+    inp.mouseAccX = Math.max(-28, Math.min(28, inp.mouseAccX + e.movementX * 0.42 * sens));
+    inp.mouseAccZ = Math.max(-28, Math.min(28, inp.mouseAccZ + e.movementY * 0.42 * sens));
+  }
 });
 window.addEventListener('pointermove', e => {
   if (!state || state.phase !== 'playing') return;
@@ -1711,6 +1751,38 @@ window.addEventListener('blur', () => {
   document.getElementById('touch-joystick').hidden = true;
   if (state.phase === 'playing') openPause();
 });
+function respawnToCheckpoint() {
+  if (!state || !['playing', 'paused'].includes(state.phase)) return false;
+  resetBallToCheckpoint(state.ball, state.checkpoint);
+  // Remove stale input, motion trails and camera springs from the old location.
+  Object.assign(state.input, { ix: 0, iz: 0, mouseAccX: 0, mouseAccZ: 0,
+    orbitX: 0, orbitY: 0, zoomDelta: 0, lateralInput: 0, forwardInput: 0,
+    orbitPointer: null, movePointer: null });
+  state.input.keys.clear();
+  state.director = createDirector(state.track.startYaw || 0);
+  Object.assign(state, { squash: 0, squashVel: 0, turnSmooth: 0,
+    camSpringY: 0, camSpringVy: 0, lastVy: 0, lastGrounded: false });
+  trailPoints.length = 0;
+  updateFallEffects(state.fallEffects, 2);
+  updateMagicBursts(state.magicBursts ||= [], 2);
+  cameraOcclusion?.reset();
+  cameraSightline?.reset();
+  kittyRig.bubbleMesh.visible = true;
+  kittyRig.kitty.visible = true;
+  kittyRig.accGroup.visible = true;
+  kittyRig.furball.visible = false;
+  kittyRig.root.scale.setScalar(1);
+  pauseScreen.hidden = true;
+  document.getElementById('touch-joystick').hidden = true;
+  state.phase = 'playing';
+  sfx.setPaused(false);
+  // Render the new director immediately, including while leaving the pause UI.
+  updateVisuals(0);
+  syncHud();
+  showToast('✨ 已回到检查点！');
+  return true;
+}
+
 function openPause() {
   if (!state || state.phase !== "playing") return;
   state.phase = "paused";
@@ -1731,6 +1803,12 @@ function closePause() {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey && !e.altKey
+    && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)
+    && !e.target?.isContentEditable) {
+    if (!e.repeat && respawnToCheckpoint()) e.preventDefault();
+    return;
+  }
   if (e.code === "Escape" || e.code === "KeyP") {
     if (state?.phase === "playing") openPause();
     else if (state?.phase === "paused") closePause();
@@ -1803,6 +1881,8 @@ document.getElementById("btn-poster-close").onclick = () => {
 };
 document.getElementById("btn-pause").onclick = openPause;
 document.getElementById("btn-resume").onclick = closePause;
+document.getElementById('btn-respawn-checkpoint').onclick = respawnToCheckpoint;
+document.getElementById('btn-hud-reset').onclick = respawnToCheckpoint;
 document.getElementById("btn-restart-stage").onclick = () => {
   pauseScreen.hidden = true;
   if (state) loadTrack(state.trackIndex, state.mode, 0);

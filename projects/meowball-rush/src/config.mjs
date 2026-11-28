@@ -518,12 +518,10 @@ function addCourseFinale(t) {
     // creates overlapping collision rails even when the centerlines only meet once.
     authored[0]=P(last.x+dx/run*runway,last.y+(last.y-before.y)/run*runway,last.z+dz/run*runway);
     const points=[{...t.finish},...authored];
-    const added=route(t,id,section,kind,width,points,{walls:width>=3.5,extension:true});
-    let distance=0,prior={...added.points[0]};
-    for(let i=1;i<Math.min(4,added.points.length);i++) {
-      const original={...added.points[i]};distance+=Math.hypot(original.x-prior.x,original.z-prior.z);
-      added.points[i]=P(last.x+dx/run*distance,last.y+(last.y-before.y)/run*distance,last.z+dz/run*distance);prior=original;
-    }
+    // The first control already follows the arriving tangent. Overwriting just
+    // the first three sampled points creates a kink at the fourth sample and
+    // collapses the inside rail; let the whole spline ease off that runway.
+    route(t,id,section,kind,width,points,{walls:width>=3.5,extension:true});
     t.finish={...points.at(-1)};
   }
   t.originalFinish=originalFinish;
@@ -639,11 +637,14 @@ function authorClimbAssists(t) {
       const a=r.points[i-1],b=r.points[i+1],run=Math.hypot(b.x-a.x,b.z-a.z);
       if((b.y-a.y)/run>Math.tan(8*Math.PI/180))candidates.push(i);
     }
-    for(const fraction of [.2,.65]) {
+    // Ice keeps its momentum challenge, with a final rescue ribbon covering
+    // the steep lip after the first two pads instead of stranding a slow ball.
+    for(const fraction of t.index===7?[.2,.65,.98]:[.2,.65]) {
       const index=candidates[Math.floor((candidates.length-1)*fraction)];
       if(index===undefined)continue;
       const p=r.points[index],a=r.points[index-1],b=r.points[index+1],n=Math.hypot(b.x-a.x,b.z-a.z)||1;
-      t.boosts.push({id:`${t.id}-climb-ribbon-${t.boosts.length}`,x:p.x,y:p.y,z:p.z,w:4.4,d:5.5,fx:(b.x-a.x)/n*11,fz:(b.z-a.z)/n*11,role:'climb-assist',routeId:id});
+      const force=fraction>.9?5.5:11;
+      t.boosts.push({id:`${t.id}-climb-ribbon-${t.boosts.length}`,x:p.x,y:p.y,z:p.z,w:4.4,d:5.5,fx:(b.x-a.x)/n*force,fz:(b.z-a.z)/n*force,role:'climb-assist',routeId:id});
     }
   }
 }

@@ -53,6 +53,9 @@ export function getChuteFrame(chute, t) {
 const preparedRoutes = new WeakMap();
 const floorMeshes = new WeakMap();
 const preparedChutes = new WeakMap();
+const routeNeighbours = new WeakMap();
+const boundarySegments = new WeakMap();
+export const GUARDED_CLEAR_WIDTH = 2 * .62 + 1.6;
 const MITER_LIMIT = 1.8;
 export const RIBBON_COLUMNS = 8;
 const flatDirection = (a, b) => {
@@ -85,6 +88,9 @@ export function prepareRouteGeometry(routes, chutes = []) {
   const endpoints = new Map();
   for (const route of definitions) {
     preparedRoutes.delete(route); preparedChutes.delete(route); floorMeshes.delete(route);
+    boundarySegments.delete(route);
+    routeNeighbours.set(route, (routes || []).filter(other => other !== route &&
+      [route.points[0],route.points.at(-1)].some(a => [other.points[0],other.points.at(-1)].some(b => endpointKey(a) === endpointKey(b)))));
     for (const end of [0, 1]) {
       const key = endpointKey(end ? route.points.at(-1) : route.points[0]);
       if (!endpoints.has(key)) endpoints.set(key, []);
@@ -206,13 +212,50 @@ export function getCompanionChute(chute) {
     points:chute.points.map(p=>({x:center.x+(center.x-p.x)*radialScale,y:(p.y??center.y??0)+.65,z:center.z+(center.z-p.z)*radialScale}))};
 }
 export function getRibbonBoundarySegments(route) {
-  const { rows, columns } = getRouteRibbonRows(route), segments = [];
+  let cached=boundarySegments.get(route);if(cached)return cached;
+  const { rows, columns, leftWidths, rightWidths } = getRouteRibbonRows(route), segments = [];
+  // A guarded deck opens into a deliberate unguarded precision bridge before
+  // the shared floor taper becomes narrow. The full guarded span stays intact.
+  // Both collision and the renderer consume these exact finite exposed strips.
+  const clipLower=(range,a,b,min)=>{
+    if(a<min && b<min)return null;
+    if(a<min)range[0]=Math.max(range[0],(min-a)/(b-a));
+    if(b<min)range[1]=Math.min(range[1],(min-a)/(b-a));
+    return range[0]<range[1]-1e-8?range:null;
+  };
+  const subtract=(ranges,cut)=>ranges.flatMap(([lo,hi])=>cut[1]<=lo+1e-8||cut[0]>=hi-1e-8?[[lo,hi]]:
+    [[lo,Math.min(hi,cut[0])],[Math.max(lo,cut[1]),hi]].filter(([a,b])=>b-a>1e-7));
   for (let i = 0; i < rows.length - 1; i++) for (const side of [-1, 1]) {
     const column = side < 0 ? 0 : columns, a = rows[i][column], b = rows[i + 1][column];
     const f = flatDirection(a, b);
+    let range=[0,1];
+    if(route.walls) {
+      range=clipLower(range,leftWidths[i]+rightWidths[i],leftWidths[i+1]+rightWidths[i+1],GUARDED_CLEAR_WIDTH);
+      if(range)range=clipLower(range,leftWidths[i],leftWidths[i+1],1.22);
+      if(range)range=clipLower(range,rightWidths[i],rightWidths[i+1],1.22);
+      if(!range)continue;
+    }
+    const nx=f.nx*side,nz=f.nz*side;
+    let ranges=[range];
+    for(const other of routeNeighbours.get(route)||[])for(const q of getRouteFloorTriangles(other)) {
+      // Clip the rail wherever its outer face lies in a connected floor. This
+      // removes interior rails at acute mouths instead of creating a V trap.
+      const at=(p)=>{const x=p.x+nx*.025-q.a.x,z=p.z+nz*.025-q.a.z;
+        const u=(x*(q.c.z-q.a.z)-(q.c.x-q.a.x)*z)/q.den;
+        const v=((q.b.x-q.a.x)*z-x*(q.b.z-q.a.z))/q.den;
+        return[u,v,1-u-v,p.y-(q.a.y+q.slopeX*x+q.slopeZ*z)];};
+      const va=at(a),vb=at(b);let cut=[0,1];
+      for(let j=0;j<3&&cut;j++)cut=clipLower(cut,va[j],vb[j],1e-7);
+      if(cut)cut=clipLower(cut,va[3],vb[3],-.15);
+      if(cut)cut=clipLower(cut,-va[3],-vb[3],-.15);
+      if(cut)ranges=subtract(ranges,cut);
+      if(!ranges.length)break;
+    }
     // Outward normals follow each real mitered/tapered edge, including seams.
-    segments.push({ a, b, side, index: i, nx: f.nx * side, nz: f.nz * side });
+    const mix=t=>({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,z:a.z+(b.z-a.z)*t});
+    for(const [start,end]of ranges)segments.push({a:mix(start),b:mix(end),side,index:i,start,end,nx,nz});
   }
+  boundarySegments.set(route,segments);
   return segments;
 }
 // Match the visible ribbon triangles exactly, including bank and shared seams.

@@ -32,86 +32,93 @@ export function verifyCameraSightline() {
     const safety = createCameraSightline(root);
     assert(!centerClear(root, pose), 'upper playable deck fixture does not block the original view');
     const corrected = safety.resolve(ball, pose, dt);
-    assert(corrected.sightline.clear, 'upper deck did not yield a verified clear camera');
-    assert(centerClear(root, corrected), 'corrected camera still sees opaque upper deck');
-    assert(distance(corrected, ball) < distance(pose, ball), 'camera did not shorten its boom');
-    assert(Math.abs(delta(heading(corrected), heading(pose))) < 1e-10, 'reframing changed movement yaw');
-    const eye = new THREE.Vector3(corrected.x, corrected.y, corrected.z);
-    const bubbleDirection = new THREE.Vector3().sub(eye), aim = new THREE.Vector3(corrected.lookX, corrected.lookY, corrected.lookZ).sub(eye);
-    assert(bubbleDirection.angleTo(aim) + Math.asin(ball.r / eye.length()) < corrected.fov * Math.PI / 360,
-      'compressed camera crops the bubble despite a clear sightline');
-    assert.deepEqual(pose, requested, 'resolver mutated the director pose');
+    assert.deepEqual(Object.fromEntries(Object.keys(pose).map(key => [key, corrected[key]])), requested,
+      'opaque upper deck pulled the camera inward or changed its framing');
+    assert.equal(corrected.sightline.clear, false, 'blocked upper deck must remain an honest LOS diagnostic');
+    assert.equal(corrected.sightline.compressed, false, 'diagnostic resolver still compresses camera');
     assert.equal(deck.material, material, 'resolver faded a playable deck');
     assert.equal(material.opacity, 1, 'resolver changed playable opacity');
     assert.deepEqual(Array.from(deck.geometry.attributes.position.array), vertices, 'resolver changed playable geometry');
     deck.position.x = 30;
-    const recovering = safety.resolve(ball, pose, dt);
-    assert(distance(recovering, ball) > distance(corrected, ball), 'camera never restores its boom');
-    assert(distance(recovering, ball) < distance(pose, ball), 'camera restores with a discontinuous outward jump');
-    let restored = recovering;
-    for (let i = 0; i < hz * 3; i++) restored = safety.resolve(ball, pose, dt);
-    assert(Math.abs(distance(restored, ball) - distance(pose, ball)) < .01, 'clear camera failed to restore original framing');
+    const restored = safety.resolve(ball, pose, dt);
+    assert(restored.sightline.clear, 'clear geometry failed to clear the diagnostic');
+    assert.equal(distance(restored, ball), distance(pose, ball), 'clear frame changed camera distance');
     assert.equal(floor.material.opacity, 1, 'support floor was faded'); cases++;
+
+    // Nearby rails, curbs, curve lips, small props and critters must never
+    // become a camera collision surface, even when they cross the silhouette.
+    for (const marker of ['structuralGuard', 'routeBody', 'courseRibbon', 'decorativeProp', 'critter']) {
+      const closeRoot = new THREE.Group();
+      const obstacle = solid(closeRoot, new THREE.BoxGeometry(2, .2, .15), new THREE.Vector3(0, 0, 2));
+      obstacle.userData[marker] = true;
+      const closeSafety = createCameraSightline(closeRoot);
+      for (let i = 0; i < hz; i++) {
+        obstacle.position.x = i % 2 ? 0 : 3;
+        const result = closeSafety.resolve(ball, { ...pose, y: 0, lookZ: 0 }, dt);
+        assert.deepEqual({ x: result.x, y: result.y, z: result.z, lookX: result.lookX, lookY: result.lookY,
+          lookZ: result.lookZ, fov: result.fov }, { x: 0, y: 0, z: 10, lookX: 0, lookY: 0, lookZ: 0, fov: 46 },
+        `${marker} caused an occlusion-driven pose jump`);
+        assert.equal(result.sightline.compressed, false, `${marker} shortened the boom`);
+      }
+      cases++;
+    }
 
     const thinRoot = new THREE.Group();
     solid(thinRoot, new THREE.BoxGeometry(.04, .04, .04), new THREE.Vector3(.16, .08, 4));
     const straight = { ...pose, y: 0, lookZ: 0 };
     const thin = createCameraSightline(thinRoot).resolve(ball, straight, dt);
-    assert(thin.sightline.clear && thin.sightline.compressed, 'narrow strip between silhouette rays was missed');
+    assert(!thin.sightline.clear && !thin.sightline.compressed, 'narrow strip between silhouette rays was missed');
     assert(Math.abs(delta(heading(thin), 0)) < 1e-10, 'narrow-strip avoidance adds yaw'); cases++;
     const reflectedRoot = new THREE.Group();
     const reflected = solid(reflectedRoot, new THREE.PlaneGeometry(.04, .04), new THREE.Vector3(.16, .08, 4));
     reflected.scale.x = -1;
     const reflectedPose = createCameraSightline(reflectedRoot).resolve(ball, straight, dt);
-    assert(reflectedPose.sightline.clear && reflectedPose.sightline.compressed,
+    assert(!reflectedPose.sightline.clear && !reflectedPose.sightline.compressed,
       'negative parent scale flipped the visible side of a narrow strip'); cases++;
     const closeStripRoot = new THREE.Group();
     solid(closeStripRoot, new THREE.BoxGeometry(.025, .025, .025), new THREE.Vector3(.5, .08, .4));
     const closeStrip = createCameraSightline(closeStripRoot).resolve(ball, straight, dt);
-    assert(closeStrip.sightline.clear && closeStrip.sightline.compressed,
+    assert(!closeStrip.sightline.clear && !closeStrip.sightline.compressed,
       'narrow opaque strip just outside the sphere front was missed between rays'); cases++;
 
     const lowRoot = new THREE.Group(), low = new THREE.MeshBasicMaterial({ opacity: .1, transparent: false });
     const lowDeck = solid(lowRoot, new THREE.BoxGeometry(8, .4, 6), new THREE.Vector3(0, 2, 2), low);
     const lowSafety = createCameraSightline(lowRoot), lowPose = lowSafety.resolve(ball, pose, dt);
-    assert(lowPose.sightline.compressed && centerClear(lowRoot, lowPose), 'transparent=false low-opacity deck was treated as transparent');
+    assert(!lowPose.sightline.clear && !lowPose.sightline.compressed, 'transparent=false low-opacity deck was treated as transparent');
     lowDeck.parent.visible = false; lowSafety.reset();
-    assert(!lowSafety.resolve(ball, pose, dt).sightline.compressed, 'hidden parent still forces reframing'); cases++;
+    assert(lowSafety.resolve(ball, pose, dt).sightline.clear, 'hidden parent still forces reframing'); cases++;
 
     const multiRoot = new THREE.Group(), materials = Array.from({ length: 6 }, () => new THREE.MeshBasicMaterial({ visible: false }));
     materials[4] = new THREE.MeshBasicMaterial();
     solid(multiRoot, new THREE.BoxGeometry(8, 8, .2), new THREE.Vector3(0, 0, 4), materials);
     const multiSafety = createCameraSightline(multiRoot);
-    assert(multiSafety.resolve(ball, straight, dt).sightline.compressed, 'opaque material group was missed');
+    assert(!multiSafety.resolve(ball, straight, dt).sightline.clear, 'opaque material group was missed');
     materials[4].visible = false; multiSafety.reset();
-    assert(!multiSafety.resolve(ball, straight, dt).sightline.compressed, 'invisible material group still occludes'); cases++;
+    assert(multiSafety.resolve(ball, straight, dt).sightline.clear, 'invisible material group still occludes'); cases++;
 
     // A visibility ray ends at the first sphere surface, rather than continuing
     // into the ball toward an equator-plane sampling point behind that surface.
     const contactRoot = new THREE.Group();
     solid(contactRoot, new THREE.BoxGeometry(.02, .02, .02), new THREE.Vector3(.58, 0, .13));
     const closePose = { ...straight, z: 2.2 };
-    assert(!createCameraSightline(contactRoot).resolve(ball, closePose, dt).sightline.compressed,
+    assert(createCameraSightline(contactRoot).resolve(ball, closePose, dt).sightline.clear,
       'geometry hidden behind the first visible bubble surface forced camera movement'); cases++;
 
     const insideRoot = new THREE.Group();
     const enclosingEye = solid(insideRoot, new THREE.BoxGeometry(8, 8, 2), new THREE.Vector3(0, 6, 10));
     const outsideEye = createCameraSightline(insideRoot).resolve(ball, pose, dt);
-    assert(outsideEye.sightline.clear && outsideEye.sightline.compressed,
+    assert(!outsideEye.sightline.clear && !outsideEye.sightline.compressed,
       'camera inside a single-sided closed deck was falsely reported safe');
     const enclosureBounds = new THREE.Box3().setFromObject(enclosingEye);
-    assert(!enclosureBounds.containsPoint(new THREE.Vector3(outsideEye.x, outsideEye.y, outsideEye.z)),
-      'corrected camera remains inside the closed solid'); cases++;
+    assert(enclosureBounds.containsPoint(new THREE.Vector3(outsideEye.x, outsideEye.y, outsideEye.z)),
+      'diagnostic moved the camera out of the closed solid'); cases++;
 
     const portraitRoot = new THREE.Group();
     solid(portraitRoot, new THREE.BoxGeometry(8, .4, 6), new THREE.Vector3(0, 2, 2));
     const portrait = createCameraSightline(portraitRoot).resolve(ball, { ...pose, aspect: .25, fov: 54 }, dt);
-    const portraitEye = new THREE.Vector3(portrait.x, portrait.y, portrait.z);
-    const toBall = new THREE.Vector3().sub(portraitEye);
-    const toAim = new THREE.Vector3(portrait.lookX, portrait.lookY, portrait.lookZ).sub(portraitEye);
-    const horizontalHalf = Math.atan(Math.tan(portrait.fov * Math.PI / 360) * .25);
-    assert(toBall.angleTo(toAim) + Math.asin(ball.r / portraitEye.length()) < horizontalHalf,
-      'portrait safety framing crops the bubble horizontally'); cases++;
+    assert.deepEqual({ x: portrait.x, y: portrait.y, z: portrait.z, fov: portrait.fov },
+      { x: 0, y: 6, z: 10, fov: 54 }, 'portrait diagnostic changed the requested framing');
+    cases++;
 
     const enclosed = new THREE.Group();
     solid(enclosed, new THREE.SphereGeometry(1, 16, 12), new THREE.Vector3(), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
@@ -126,7 +133,7 @@ export function verifyCameraSightline() {
       const request = { ...pose, x: rotatedEye.x, y: rotatedEye.y, z: rotatedEye.z,
         lookX: rotatedAim.x, lookY: rotatedAim.y, lookZ: rotatedAim.z };
       const safe = createCameraSightline(rotated).resolve(ball, request, dt);
-      assert(safe.sightline.clear && centerClear(rotated, safe), 'rotated playable deck remains opaque');
+      assert(!safe.sightline.clear && !safe.sightline.compressed, 'rotated playable deck remains opaque');
       assert(Math.abs(delta(heading(safe), yaw)) < 1e-10, 'safety reframing rotates yaw across wrap boundary'); cases++;
     }
 
@@ -134,33 +141,33 @@ export function verifyCameraSightline() {
     solid(movingParent, new THREE.BoxGeometry(8, .4, 6), new THREE.Vector3(0, 2, 2));
     movingParent.position.x = 30;
     const movingSafety = createCameraSightline(movingRoot);
-    assert(!movingSafety.resolve(ball, pose, dt).sightline.compressed, 'clear moving platform starts blocked');
+    assert(movingSafety.resolve(ball, pose, dt).sightline.clear, 'clear moving platform starts blocked');
     movingParent.position.x = 0; movingParent.rotation.y = .3; movingParent.scale.set(1.1, 1, .9);
     const moved = movingSafety.resolve(ball, pose, dt);
-    assert(moved.sightline.clear && moved.sightline.compressed && centerClear(movingRoot, moved),
+    assert(!moved.sightline.clear && !moved.sightline.compressed,
       'cached geometry ignored a changed parent translation rotation or nonuniform scale'); cases++;
 
     const editedRoot = new THREE.Group(), editedGeometry = new THREE.BoxGeometry(8, .4, 6);
     editedGeometry.translate(30, 0, 0);
     solid(editedRoot, editedGeometry, new THREE.Vector3(0, 2, 2));
     const editedSafety = createCameraSightline(editedRoot);
-    assert(!editedSafety.resolve(ball, pose, dt).sightline.compressed, 'clear edited geometry starts blocked');
+    assert(editedSafety.resolve(ball, pose, dt).sightline.clear, 'clear edited geometry starts blocked');
     editedGeometry.translate(-30, 0, 0);
     const edited = editedSafety.resolve(ball, pose, dt);
-    assert(edited.sightline.clear && edited.sightline.compressed && centerClear(editedRoot, edited),
+    assert(!edited.sightline.clear && !edited.sightline.compressed,
       'cached triangles ignored the updated vertex buffer version'); cases++;
 
     const rangeRoot = new THREE.Group(), rangeGeometry = new THREE.BoxGeometry(8, .4, 6);
     rangeGeometry.setDrawRange(0, 0);
     solid(rangeRoot, rangeGeometry, new THREE.Vector3(0, 2, 2));
     const rangeSafety = createCameraSightline(rangeRoot);
-    assert(!rangeSafety.resolve(ball, pose, dt).sightline.compressed, 'undrawn triangles block the camera');
+    assert(rangeSafety.resolve(ball, pose, dt).sightline.clear, 'undrawn triangles block the camera');
     rangeGeometry.setDrawRange(0, Infinity);
-    assert(rangeSafety.resolve(ball, pose, dt).sightline.compressed, 'updated draw range did not restore opaque triangles');
+    assert(!rangeSafety.resolve(ball, pose, dt).sightline.clear, 'updated draw range did not restore opaque triangles');
     const originalIndex = rangeGeometry.index.clone(); rangeGeometry.setIndex([]); rangeSafety.reset();
-    assert(!rangeSafety.resolve(ball, pose, dt).sightline.compressed, 'removed index buffer triangles still block the camera');
+    assert(rangeSafety.resolve(ball, pose, dt).sightline.clear, 'removed index buffer triangles still block the camera');
     rangeGeometry.setIndex(originalIndex);
-    assert(rangeSafety.resolve(ball, pose, dt).sightline.compressed, 'restored index buffer did not restore the blocker'); cases++;
+    assert(!rangeSafety.resolve(ball, pose, dt).sightline.clear, 'restored index buffer did not restore the blocker'); cases++;
 
     const interleavedRoot = new THREE.Group(), interleaved = new THREE.BufferGeometry();
     const buffer = new THREE.InterleavedBuffer(new Float32Array([19,-1,4,0,21,-1,4,0,21,1,4,0,19,1,4,0]), 4);
@@ -168,11 +175,11 @@ export function verifyCameraSightline() {
     interleaved.setAttribute('position', interleavedPosition); interleaved.setIndex([0,1,2,0,2,3]);
     solid(interleavedRoot, interleaved, new THREE.Vector3());
     const interleavedSafety = createCameraSightline(interleavedRoot);
-    assert(!interleavedSafety.resolve(ball, straight, dt).sightline.compressed, 'clear interleaved geometry starts blocked');
+    assert(interleavedSafety.resolve(ball, straight, dt).sightline.clear, 'clear interleaved geometry starts blocked');
     for (let i = 0; i < interleavedPosition.count; i++) interleavedPosition.setX(i, interleavedPosition.getX(i) - 20);
     buffer.needsUpdate = true;
     const interleavedPose = interleavedSafety.resolve(ball, straight, dt);
-    assert(interleavedPose.sightline.clear && interleavedPose.sightline.compressed,
+    assert(!interleavedPose.sightline.clear && !interleavedPose.sightline.compressed,
       'updated interleaved position buffer did not invalidate cached triangles'); cases++;
 
   }

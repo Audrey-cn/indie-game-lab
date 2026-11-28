@@ -10,6 +10,9 @@ const FOLLOW_DEADZONE = 22 * Math.PI / 180;
 const FOLLOW_DELAY = 0.45;
 const FOLLOW_MAX_SPEED = 7 * Math.PI / 180;
 const CHUTE_EXIT_SECONDS = 0.35;
+const MIN_DISTANCE = 8;
+const CHUTE_MIN_DISTANCE = 5.8;
+const MAX_DISTANCE_SPEED = 8;
 const headingOf = (v, fallback) => v && Math.hypot(v.x, v.z) > 1e-6
   ? Math.atan2(-v.x, -v.z) : fallback;
 export function cameraRelativeInput(rawX, rawZ, yaw) {
@@ -55,9 +58,13 @@ export function updateDirector(d, { ball: b, track, dt, elapsed = 0, manualDelta
     d.yaw = angle(exit.from + angle(exit.to - exit.from) * t * t * (3 - 2 * t));
     if (t >= 1) d.chuteExit = null;
   }
-  d.mode = riding || d.chuteExit ? CAMERA_MODES.LOCKED_CHUTE : d.setpieceTime > 0
-    ? CAMERA_MODES.LOCKED_SETPIECE : zone ? CAMERA_MODES.MANUAL_ORBIT : CAMERA_MODES.DEFAULT_FOLLOW;
-  const locked = d.mode === CAMERA_MODES.LOCKED_CHUTE || d.mode === CAMERA_MODES.LOCKED_SETPIECE;
+  const freeMode = d.setpieceTime > 0 ? CAMERA_MODES.LOCKED_SETPIECE
+    : zone ? CAMERA_MODES.MANUAL_ORBIT : CAMERA_MODES.DEFAULT_FOLLOW;
+  // Preserve the chute mode while its short framing expands back to >=8m.
+  // Ordinary/manual mode can then resume without either violating its minimum
+  // or forcing an instantaneous 2.2m outward jump on release.
+  d.mode = riding || d.chuteExit || d.distance < MIN_DISTANCE ? CAMERA_MODES.LOCKED_CHUTE : freeMode;
+  const locked = riding || !!d.chuteExit || freeMode === CAMERA_MODES.LOCKED_SETPIECE;
   if (previousMode !== d.mode) {
     d.followTurnTime = 0;
     d.followTurnSign = 0;
@@ -71,7 +78,7 @@ export function updateDirector(d, { ball: b, track, dt, elapsed = 0, manualDelta
     // Apply explicit orbit exactly once. There is no decaying yaw offset that
     // can keep turning the view after the player releases Q/E or a drag.
     if (manualDelta) d.yaw = angle(d.yaw + manualDelta);
-    if (d.mode === CAMERA_MODES.MANUAL_ORBIT) {
+    if (freeMode === CAMERA_MODES.MANUAL_ORBIT) {
       d.orbitPitch = clamp((d.orbitPitch ?? 0.77) + pitchDelta, 0.35, 1.22);
     } else {
       const error = angle(headingOf(tangent, d.yaw) - d.yaw);
@@ -100,13 +107,18 @@ export function updateDirector(d, { ball: b, track, dt, elapsed = 0, manualDelta
   }
   let dist = (11.8 + Math.min(4, Math.max(0, speed - 6) * 0.45)) * (track.worldType === 'indoor_home' ? 0.85 : 1);
   let pitch = 0.62, fov = aspect < 0.95 ? 54 : 46;
-  if (d.mode === CAMERA_MODES.MANUAL_ORBIT) { dist = 15.2; pitch = d.orbitPitch ?? 0.77; fov += 3; }
-  if (d.mode === CAMERA_MODES.LOCKED_SETPIECE) { dist = 16.5; pitch = 0.58; fov = 53; }
-  if (d.mode === CAMERA_MODES.LOCKED_CHUTE) {
-    if (riding) d.yaw = angle(d.yaw + angle(d.chuteHeading - d.yaw) * (1 - Math.exp(-dt * 11)));
-    dist = 5.8; pitch = Math.PI / 10; fov = 64;
-  } else { dist *= d.zoom * (aspect < 0.95 ? 1.15 : 1); }
-  d.distance = smooth(d.distance, dist, locked ? 6 : 3.5, dt);
+  if (freeMode === CAMERA_MODES.MANUAL_ORBIT) { dist = 15.2; pitch = d.orbitPitch ?? 0.77; fov += 3; }
+  if (freeMode === CAMERA_MODES.LOCKED_SETPIECE) { dist = 16.5; pitch = 0.58; fov = 53; }
+  if (riding) {
+    d.yaw = angle(d.yaw + angle(d.chuteHeading - d.yaw) * (1 - Math.exp(-dt * 11)));
+    dist = CHUTE_MIN_DISTANCE; pitch = Math.PI / 10; fov = 64;
+  } else { dist = Math.max(MIN_DISTANCE, dist * d.zoom * (aspect < 0.95 ? 1.15 : 1)); }
+  // Finish the last sub-millimetre of an exponential approach in finite
+  // time, otherwise an 8m low-zoom exit would stay in chute mode forever.
+  const nextDistance = Math.abs(d.distance - dist) < .001 ? dist
+    : smooth(d.distance, dist, riding || d.chuteExit ? 6 : 3.5, dt);
+  d.distance += clamp(nextDistance - d.distance, -MAX_DISTANCE_SPEED * dt, MAX_DISTANCE_SPEED * dt);
+  if (!riding && !d.chuteExit && d.distance >= MIN_DISTANCE) d.mode = freeMode;
   d.pitch = smooth(d.pitch, pitch, 4, dt);
   const back = Math.cos(d.pitch) * d.distance;
   const lead = locked ? 0.65 : Math.min(2, speed * 0.14);
@@ -120,8 +132,17 @@ export function updateDirector(d, { ball: b, track, dt, elapsed = 0, manualDelta
     z: d.focus.z - forwardZ * back, lookX: d.focus.x + forwardX * d.lead,
     lookY: d.focus.y - d.lookDrop, lookZ: d.focus.z + forwardZ * d.lead,
     fov: smooth(d.pose?.fov ?? fov, fov, rate, dt), aspect, mode: d.mode };
-  // Smooth the focus and framing, then reconstruct both endpoints from the
-  // same yaw. Independent world-space lerps add a hidden second yaw spring.
+  // The focus can lag behind a moving ball. Normalize the rendered boom about
+  // the ball so reverse motion and tight curves cannot shorten its safe radius.
+  // Translate the aim by the same amount: view direction and steering yaw stay
+  // exact, without adding another angular spring.
+  const ox = target.x - b.x, oy = target.y - b.y, oz = target.z - b.z;
+  const radialScale = d.distance / (Math.hypot(ox, oy, oz) || d.distance);
+  const shiftX = ox * (radialScale - 1), shiftY = oy * (radialScale - 1), shiftZ = oz * (radialScale - 1);
+  target.x += shiftX; target.y += shiftY; target.z += shiftZ;
+  target.lookX += shiftX; target.lookY += shiftY; target.lookZ += shiftZ;
+  // Both endpoints use the same yaw. Independent world-space lerps would add
+  // a hidden second yaw spring.
   if (!d.pose) d.pose = target;
   else Object.assign(d.pose, target);
   return d.pose;

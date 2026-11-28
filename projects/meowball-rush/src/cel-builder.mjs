@@ -5,7 +5,7 @@
 import * as THREE from "three";
 import { addV3Platform, buildV3World } from "./v3-worlds.mjs";
 import { boostRibbonGeometry } from "./course-geometry.mjs";
-export { animateFairytaleScenery } from "./v3-worlds.mjs";
+export { animateFairytaleScenery, activateCheckpoint } from "./v3-worlds.mjs";
 import cobblePathTexUrl from "./assets/textures/tex-cobble-path.webp";
 import meadowGrassTexUrl from "./assets/textures/tex-meadow-grass.webp";
 import cliffRockTexUrl from "./assets/textures/tex-cliff-rock.webp";
@@ -922,7 +922,7 @@ function extrudeChannelSection(shape, length) {
 // Build Poster-Grade Natural Storybook 3D Scene!
 export function buildTrackScene(track) {
   const group = new THREE.Group();
-  const dynamicMeshes = { gears: [], hammers: [], rollingPins: [], bumpers: [], steamVents: [], stars: [], boosts: [], mushrooms: [], elevators: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], petals: null };
+  const dynamicMeshes = { gears: [], hammers: [], rollingPins: [], bumpers: [], steamVents: [], stars: [], boosts: [], mushrooms: [], elevators: [], portal: null, portalAnchor: null, treeSlots: [], propSlots: [], clouds: [], floaters: [], checkpoints: [], petals: null };
 
   const sky = createSkyDome(track);
   group.add(sky);

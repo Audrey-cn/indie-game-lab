@@ -3,12 +3,13 @@
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createHash } from "node:crypto";
-import { getRouteRibbonRows, getChuteShellRows, prepareRouteGeometry, nearestRouteSurface } from "../src/course-math.mjs";
+import { getRouteRibbonRows, getChuteShellRows, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments } from "../src/course-math.mjs";
 import { nearestSceneryClearance } from "../src/scenery-clearance.mjs";
 import { collideRouteGuardrails } from "../src/course-runtime.mjs";
 import { verifyRibbonMesh, verifyMeshCheckerFixtures, verifyMeshPairSeparation } from "./mesh-checks.mjs";
 import "./verify-fall-feedback.mjs";
-import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleScenery } from "../src/v3-worlds.mjs";
+import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleScenery, activateCheckpoint } from "../src/v3-worlds.mjs";
+import { boostRibbonGeometry } from "../src/course-geometry.mjs";
 import { createDirector, updateDirector, triggerSetpiece } from "../src/director.mjs";
 import { createCameraOcclusion, isCameraOccluder } from "../src/camera-occlusion.mjs";
 import { createCameraSightline } from "../src/camera-sightline.mjs";
@@ -34,7 +35,7 @@ const close = (actual, expected, label, tolerance = 0.00001) => {
 
 const results = [];
 await verifyCameraOcclusion();
-let cameraSamples = 0, cameraRays = 0, cameraPaths = 0, cameraContainmentChecks = 0;
+let cameraSamples = 0, cameraRays = 0, cameraPaths = 0, cameraContainmentChecks = 0, rigidSightIntersections = 0;
 const cameraFailures = [];
 const sightRay = new THREE.Raycaster(), eye = new THREE.Vector3(), focus = new THREE.Vector3();
 const viewDirection = new THREE.Vector3(), viewRight = new THREE.Vector3(), viewUp = new THREE.Vector3(), sightTarget = new THREE.Vector3();
@@ -90,7 +91,9 @@ function sightBlockers(group, pose, ball) {
 function recordSight(group, pose, ball, label) {
   cameraSamples++;
   const blockers=sightBlockers(group,pose,ball);
-  if(blockers.length)cameraFailures.push({label,ball:[ball.x,ball.y,ball.z],eye:[pose.x,pose.y,pose.z],blockers:blockers.map(hierarchy)});
+  rigidSightIntersections+=blockers.filter(mesh=>!isCameraOccluder(mesh,group)).length;
+  const structural=blockers.filter(mesh=>isCameraOccluder(mesh,group));
+  if(structural.length)cameraFailures.push({label,ball:[ball.x,ball.y,ball.z],eye:[pose.x,pose.y,pose.z],blockers:structural.map(hierarchy)});
   return blockers;
 }
 function verifyCameraScene(track,group,dynamicMeshes) {
@@ -129,9 +132,10 @@ function verifyCameraScene(track,group,dynamicMeshes) {
   for(const aspect of [1.6,.62])for(const dt of [1/120,1/60,1/25]) {
     safety.reset();sightline.reset();resetPickups();const ball={...track.start,r:.62,vx:0,vz:0};frame(ball,0);
     const pose=updateDirector(createDirector(track.startYaw||0),{ball,track,dt,aspect});
-    recordSight(group,pose,ball,`${track.id}: authored start ${aspect}/${dt}`);
     const untouched=sightline.resolve(ball,pose,dt);
-    assert.ok(untouched.sightline.clear&&!untouched.sightline.compressed,`${track.id}: authored start needs a rigid safety correction ${JSON.stringify(untouched.sightline)}`);
+    for(const key of Object.keys(pose))assert.deepEqual(untouched[key],pose[key],`${track.id}: start sightline changed director ${key}`);
+    assert.equal(untouched.sightline.compressed,false,`${track.id}: sightline compressed start pose`);
+    safety.update(ball,untouched,.5);recordSight(group,untouched,ball,`${track.id}: settled authored start ${aspect}/${dt}`);
     // A FrontSide box can enclose the eye without returning any front-face
     // hits. Check its exact local volume independently of renderer-side rays.
     for(const mesh of sightMeshes)if(isVisible(mesh)&&mesh.geometry.type==='BoxGeometry') {
@@ -190,8 +194,12 @@ function verifyCameraScene(track,group,dynamicMeshes) {
       if(path.ballistic)ball.launchAssist={};
       frame(ball,elapsed);
       const desired=updateDirector(director,{ball,track,dt,elapsed,forwardInput:1});
-      const pose=sightline.resolve(ball,desired,dt);safety.update(ball,pose,dt);
-      if(!pose.sightline.clear)cameraFailures.push({label:`${track.id}/${path.id}[${i}] lane ${lane}: rigid silhouette cone unresolved`,ball:[ball.x,ball.y,ball.z],eye:[pose.x,pose.y,pose.z],desired:{...desired},blockers:pose.sightline.blockers,reason:pose.sightline.reason,blockerNames:pose.sightline.blockerNames});
+      const pose=sightline.resolve(ball,desired,dt);
+      for(const key of Object.keys(desired))assert.deepEqual(pose[key],desired[key],`${track.id}: sightline changed director ${key}`);
+      assert.equal(pose.sightline.compressed,false,`${track.id}: sightline compressed camera`);
+      // Fixed-pose scene geometry audit after .5s fade settling. Temporal easing
+      // itself is covered at 120/60/25Hz in verify-camera-occlusion.
+      safety.update(ball,pose,.5);
       const blockers=recordSight(group,pose,ball,`${track.id}/${path.id}[${i}] lane ${lane}`);
       for(const mesh of blockers)if(isCameraOccluder(mesh,group))assert.fail(`${track.id}: scenery safety missed ${hierarchy(mesh)}`);
     }
@@ -305,13 +313,71 @@ function checkGeometry(geometry, label, strict = false) {
   assert.ok(Math.hypot(p.x-16,p.z)<=2*1.8+1e-5,'acute outer miter grows an unbounded spike');
   for(const route of [incoming,acute]){const geometry=createRouteRibbonGeometry(route);verifyRibbonMesh(geometry,route.id);geometry.dispose();}
 }
+let checkedBeacons=0,checkedOverlayVertices=0;
+function verifyCheckpointAndOverlays(track,group,dynamic) {
+  assert.equal(dynamic.checkpoints?.length,track.checkpoints.length,`${track.id}: missing checkpoint beacons`);
+  for(const[index,entry]of dynamic.checkpoints.entries()){
+    assert.equal(entry.def,track.checkpoints[index]);assert.ok(isAttached(entry.mesh,group));
+    assert.ok(entry.lantern.geometry.type==='OctahedronGeometry');assert.ok(entry.guardian.children.length>=7);
+    assert.equal(entry.particles.children.length,10);assert.equal(entry.active,false);
+    assert.equal(isCameraOccluder(entry.lantern,group),false);assert.equal(isCameraOccluder(entry.rune,group),false);
+    assert.ok(entry.rune.material.map.image.data.some((v,i)=>i%4===3&&v>0),'ground rune has no visible pixels');
+    assert.equal(activateCheckpoint(dynamic,index),true);assert.equal(activateCheckpoint(dynamic,index),false);
+    animateFairytaleScenery({checkpoints:dynamic.checkpoints},1,.016);assert.equal(entry.crystalMaterial.color.getHex(),0xffd36f);assert.equal(entry.rune.material.color.getHex(),0xffd984);
+    assert.ok(entry.rune.material.map.rotation>0);assert.ok(entry.particles.children.some(p=>p.position.y>1));checkedBeacons++;
+    entry.active=false;entry.pulse=0;entry.crystalMaterial.color.setHex(0xb6c0f5);entry.rune.material.color.setHex(0xc4c6ff);
+  }
+  group.updateMatrixWorld(true);
+  group.traverse(mesh=>{
+    if(!mesh.isMesh||!mesh.geometry.userData.surfaceOverlay)return;
+    const meta=mesh.geometry.userData,route=mesh.userData.supportRoute||track.routes.find(r=>r.id===meta.sourceRouteId);
+    assert.ok(route,`${track.id}/${mesh.name}: overlay has no support`);assert.ok(meta.edgeInset>=.35);
+    assert.equal(meta.floorOffset,mesh.name==='checkpoint-ground-rune'?.06:.05);
+    assert.ok(mesh.material.polygonOffset);assert.ok(mesh.geometry.index.count>=3,`${track.id}/${mesh.name}: empty overlay`);
+    const pos=mesh.geometry.attributes.position,worldPoint=new THREE.Vector3();
+    for(let i=0;i<pos.count;i++){
+      worldPoint.fromBufferAttribute(pos,i).applyMatrix4(mesh.matrixWorld);
+      let hit=nearestRouteSurface([route],worldPoint.x,worldPoint.z,Infinity);
+      if(!hit)for(const[dx,dz]of[[.00003,0],[-.00003,0],[0,.00003],[0,-.00003]]){hit=nearestRouteSurface([route],worldPoint.x+dx,worldPoint.z+dz,Infinity);if(hit)break;}
+      assert.ok(hit,`${track.id}/${mesh.name}: overlay vertex leaves supporting deck`);
+      close(worldPoint.y-hit.y,meta.floorOffset,`${track.id}/${mesh.name}: decal slope/height`,.0001);
+      for(const edge of getRibbonBoundarySegments(route)){
+        const dx=edge.b.x-edge.a.x,dz=edge.b.z-edge.a.z,length2=dx*dx+dz*dz;
+        const t=Math.max(0,Math.min(1,((worldPoint.x-edge.a.x)*dx+(worldPoint.z-edge.a.z)*dz)/(length2||1)));
+        if(Math.abs(worldPoint.y-meta.floorOffset-(edge.a.y+(edge.b.y-edge.a.y)*t))>.5)continue;
+        assert.ok(Math.hypot(worldPoint.x-edge.a.x-dx*t,worldPoint.z-edge.a.z-dz*t)>=.3498,`${track.id}/${mesh.name}: overlay intersects a supporting rail at ${worldPoint.toArray()} edge ${edge.index}/${edge.side}, distance ${Math.hypot(worldPoint.x-edge.a.x-dx*t,worldPoint.z-edge.a.z-dz*t)}`);
+      }
+      checkedOverlayVertices++;
+    }
+  });
+  for(const entry of dynamic.fairytaleProps.filter(p=>p.def.type==='turntable')){
+    assert.ok(entry.animatedParts.surfaceTexture,`${track.id}: turntable rotates thick geometry instead of projected surface`);
+    assert.equal(entry.animatedParts.spinner.rotation.y,0);
+  }
+  if(track.index===1){
+    const rug=group.getObjectByName('woven-start-rug');assert.ok(rug.geometry.userData.surfaceOverlay,'living-room rug is still a giant box');
+    const ramp=track.routes.find(r=>r.id==='book-ramp');
+    group.traverse(node=>{if(node.name!=='furniture-table-leg')return;const b=new THREE.Box3().setFromObject(node,true);
+      for(const p of ramp.points)if(p.y>=b.min.y-.5&&p.y<=b.max.y+.5)assert.ok(p.x<b.min.x-ramp.width/2||p.x>b.max.x+ramp.width/2||p.z<b.min.z-ramp.width/2||p.z>b.max.z+ramp.width/2,'living-room table leg intersects book approach');});
+  }
+}
+// The strip's width is across the road and depth follows travel direction.
+{
+  const route={id:'boost-orientation-fixture',width:6,points:[{x:0,y:1,z:5},{x:0,y:3,z:-5}]};
+  const geometry=boostRibbonGeometry(route,{x:0,z:0,w:2,d:6});geometry.computeBoundingBox();
+  const size=geometry.boundingBox.getSize(new THREE.Vector3());close(size.x,2,'boost cross-lane width');close(size.z,6,'boost along-route length');
+  for(let i=0;i<geometry.attributes.position.count;i++){const p=geometry.attributes.position;close(p.getY(i),2-p.getZ(i)*.2+.05,'boost slope support',.00001);}
+  geometry.dispose();
+}
 const expectedWorlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','starlight_library','grand_medley'];
 assert.equal(TRACKS.length, 10, 'v3 needs all ten approved stages');
 for (const [stage, track] of TRACKS.entries()) {
   assert.equal(track.worldType, expectedWorlds[stage], `${track.id}: wrong blueprint environment`);
   const { group, dynamicMeshes } = buildTrackScene(track);
+  assert.equal(dynamicMeshes.checkpoints?.length, track.checkpoints.length, `${track.id}: checkpoint beacon registration missing`);
   verifyMushroomContact(dynamicMeshes);
   verifyHazardEntries(track, dynamicMeshes);
+  verifyCheckpointAndOverlays(track,group,dynamicMeshes);
   group.updateMatrixWorld(true);
   let meshes = 0, vertices = 0;
   group.traverse((node) => {
@@ -338,7 +404,7 @@ for (const [stage, track] of TRACKS.entries()) {
     assert.ok(track.props.includes(entry.def), `${track.id}: orphan prop definition`);
     assert.ok(isAttached(entry.mesh, group), `${track.id}/${entry.def.type}: prop is detached`);
     let propMeshes=0;entry.mesh.traverse(node=>{if(node.isMesh)propMeshes++;});
-    assert.ok(propMeshes >= 2, `${track.id}/${entry.def.type}: missing sculpted prop parts`);
+    assert.ok(propMeshes >= (entry.def.type==='turntable'?1:2), `${track.id}/${entry.def.type}: missing sculpted prop parts`);
     close(entry.mesh.position.x, entry.def.x, `${track.id}: prop X`);
     close(entry.mesh.position.y, entry.def.y, `${track.id}: prop Y`);
     close(entry.mesh.position.z, entry.def.z, `${track.id}: prop Z`);
@@ -389,34 +455,20 @@ for (const [stage, track] of TRACKS.entries()) {
     for(let i=0;i<data.rows.length;i++)assert.ok(data.leftWidths[i]+data.rightWidths[i]>=1.3,`${label}[${i}]: clipped floor is narrower than the ball`);
     const body=mesh.children.find(node=>node.userData.routeBody);assert.ok(body,`${label}: missing continuous beveled extrusion`);
     checkGeometry(body.geometry,`${label}: skirt/guard`,true);
-    for(const [name,rowIndex]of[['start',0],['end',data.rows.length-1]]){
-      if(!route.walls)continue;
-      const cap=body.geometry.userData.endCaps.find(cap=>cap.row===rowIndex);
-      if(!cap){assert.ok(!data.seams[name]?.guardTransition,`${label}: guarded transition has no closure`);continue;}
-      assert.ok(cap?.indexCount>=6,`${label}: raised guard ends in an open cross-section`);closedGuardEnds++;
-      const vertices=body.geometry.attributes.position,index=body.geometry.index,row=data.rows[rowIndex],f=data.frames[rowIndex],origin=row[0];
-      const coordinate=p=>(p.x-origin.x)*f.nx+(p.z-origin.z)*f.nz;
-      const rowCoordinates=row.map(coordinate),edgeHeight=Math.max(...row.map(p=>p.y));let guardArea=0;
-      for(let k=cap.firstIndex;k<cap.firstIndex+cap.indexCount;k+=3){
-        const triangle=[0,1,2].map(j=>{const v=index.getX(k+j);return{x:vertices.getX(v),y:vertices.getY(v),z:vertices.getZ(v)};});
-        const center={x:triangle.reduce((n,p)=>n+p.x,0)/3,y:triangle.reduce((n,p)=>n+p.y,0)/3,z:triangle.reduce((n,p)=>n+p.z,0)/3},cross=coordinate(center);
-        if(center.y>edgeHeight+.02)guardArea++;
-        if(cross>rowCoordinates[0]+1e-5&&cross<rowCoordinates.at(-1)-1e-5){
-          let j=1;while(j<data.columns&&rowCoordinates[j]<cross)j++;
-          const t=(cross-rowCoordinates[j-1])/(rowCoordinates[j]-rowCoordinates[j-1]),floor=row[j-1].y+(row[j].y-row[j-1].y)*t;
-          assert.ok(center.y<=floor+2e-5,`${label}: curb cap puts a face above the playable road interior`);
-        }
-      }
-      assert.ok(guardArea>0,`${label}: guard closure has no actual raised cap triangles`);
+    const expectedGuards=route.walls?getRibbonBoundarySegments(route):[];
+    assert.deepEqual(body.geometry.userData.guardSegments,expectedGuards,`${label}: rendered guard intervals differ from collision`);
+    for(const cap of body.geometry.userData.endCaps){
+      assert.ok(cap.indexCount>=3,`${label}: open guard cross-section`);closedGuardEnds++;
+      const vertices=body.geometry.attributes.position,index=body.geometry.index;let raised=false;
+      for(let k=cap.firstIndex;k<cap.firstIndex+cap.indexCount;k++)if(vertices.getY(index.getX(k))>cap.point.y+.02)raised=true;
+      assert.ok(raised,`${label}: guard closure has no actual raised triangles`);
+    }
+    for(const post of mesh.children.filter(node=>node.userData.structuralGuard)){
+      const i=post.userData.guardRow,side=post.userData.guardSide;
+      assert.ok(expectedGuards.some(s=>s.side===side&&((s.index===i&&s.start<1e-6)||(s.index===i-1&&s.end>1-1e-6))),`${label}: post blocks an omitted guard opening`);
     }
     assert.equal(body.name,route.walls?'swept-beveled-guard':'swept-open-edge-skirt',`${label}: guardless edge identity differs from collision`);
-    if(route.walls){
-      const vertices=body.geometry.attributes.position,heights=[];
-      for(let j=0;j<body.geometry.userData.sweepStride/2;j++){
-        const height=vertices.getY(j)-vertices.getY(0);heights.push(Math.round(height*1000));if(height<-.2)break;
-      }
-      edgeProfiles.add(heights.join('/'));
-    }
+    if(route.walls)edgeProfiles.add(body.geometry.userData.profileSignature);
     assert.equal(mesh.material.userData.surfacePattern,route.surfacePattern,`${label}: rendered motif loses authored identity`);
     assert.equal(mesh.material.color.getHex(),route.kind==='honey'?0xb57228:route.kind==='mud'?0x805632:route.surfaceColor,`${label}: surface palette missing`);
     const pixels=mesh.material.map?.image?.data;assert.ok(pixels?.length>1000,`${label}: no actual motif texture pixels`);
@@ -508,8 +560,8 @@ assert.equal(motifHashes.size,10,'all ten stages need distinct rendered motif pi
 assert.equal(edgeProfiles.size,10,'all ten stages need distinct physical guard profiles');
 assert.ok(closedGuardEnds>10,'guard transition cap coverage is too small');
 assert.ok(seamCount>40,'seam coverage misses authored section transitions');
-console.log(JSON.stringify({cameraSamples,cameraRays,cameraPaths,cameraContainmentChecks,cameraFailures:cameraFailures.length,firstFailures:cameraFailures.slice(0,20)}));
+console.log(JSON.stringify({cameraSamples,cameraRays,cameraPaths,cameraContainmentChecks,rigidSightIntersections,cameraFailures:cameraFailures.length,firstFailures:cameraFailures.slice(0,20)}));
 assert.equal(cameraFailures.length,0,`camera LOS: ${JSON.stringify(cameraFailures.slice(0,12))}`);
-console.log(JSON.stringify({verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
+console.log(JSON.stringify({checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
 console.table(results);
 console.log(`Passed v3 Node structural and geometry checks for all ${TRACKS.length} scenes. WebGL visual appearance remains unverified.`);

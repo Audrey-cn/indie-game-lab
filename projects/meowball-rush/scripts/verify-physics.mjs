@@ -8,6 +8,7 @@ import * as courseConfig from '../src/config.mjs';
 import { createRouteRibbonGeometry } from '../src/v3-worlds.mjs';
 const { CATS, TRACKS } = courseConfig;
 import './verify-assets.mjs';
+import './verify-checkpoint.mjs';
 import { verifyCameraStability } from './verify-camera.mjs';
 import { verifyCameraSightline } from './verify-camera-sightline.mjs';
 const trackBuilder = await import('../src/cel-builder.mjs');
@@ -64,7 +65,7 @@ function makeHarness(track, cat = CATS[0]) {
     gyroEnabled: false, gyroTiltX: 0, gyroTiltZ: 0,
     sfx: new Proxy({}, { get: () => noop }),
     kittyRig: { bubbleMesh: visible(), kitty: visible(), accGroup: visible(), dizzyHalo: visible(), furball: visible() },
-    showToast: noop, showStarPop: noop,
+    showToast: noop, showStarPop: noop, activateCheckpoint: noop, createMagicBurst: noop,
     finishStage(cleared) { state.phase = 'ended'; state.cleared = cleared; },
   });
   vm.runInContext(`${surfaceCode}\n${popCode}\n${physicsCode}\nthis.updatePhysics = updatePhysics; this.sampleTrackSurface = sampleTrackSurface;`, context);
@@ -427,6 +428,56 @@ check('trough solid rails both sides at variable dt', () => {
   return { receipts };
 });
 
+check('Zero-Pinch / No-Trap: actual boundary rails leave a clear corridor through all ten stages',()=>{
+  const stages=[];
+  for(const track of TRACKS) {
+    let segments=0,guardedLength=0,authoredLength=0,minClearance=Infinity,minMeasuredWidth=Infinity,stations=0;
+    const stageRails=track.routes.filter(r=>r.walls).flatMap(r=>courseMath.getRibbonBoundarySegments(r));
+    for(const route of track.routes.filter(r=>r.walls)) {
+      const rails=courseMath.getRibbonBoundarySegments(route),data=courseMath.getRouteRibbonRows(route);
+      authoredLength+=courseMath.polylineLength(route.points);
+      for(const edge of rails) {
+        const i=edge.index,start=edge.start??0,end=edge.end??1;
+        for(const t of [start,(start+end)/2,end]) {
+          const left=data.leftWidths[i]*(1-t)+data.leftWidths[i+1]*t;
+          const right=data.rightWidths[i]*(1-t)+data.rightWidths[i+1]*t;
+          const clear=left+right;minClearance=Math.min(minClearance,clear);
+          assert(clear>=2.84-1e-5,`${track.id}/${route.id}/${i}: actual guarded corridor pinches to ${clear.toFixed(3)}m`);
+        }
+        segments++;guardedLength+=Math.hypot(edge.b.x-edge.a.x,edge.b.z-edge.a.z)/2;
+        const peers=track.routes.filter(other=>other!==route && other.points.some((p,j)=>[0,other.points.length-1].includes(j) && [route.points[0],route.points.at(-1)].some(q=>Math.hypot(p.x-q.x,p.y-q.y,p.z-q.z)<1e-5)));
+        for(const fraction of [.001,.25,.5,.75,.999]) {
+          const p={x:edge.a.x+(edge.b.x-edge.a.x)*fraction,y:edge.a.y+(edge.b.y-edge.a.y)*fraction,z:edge.a.z+(edge.b.z-edge.a.z)*fraction};
+          const inside=courseMath.nearestRouteSurface(peers,p.x+edge.nx*.025,p.z+edge.nz*.025,p.y+.15);
+          assert(!inside || Math.abs(inside.y-p.y)>.15,`${track.id}/${route.id}: rail blocks connected floor at seam ${i}/${fraction}`);
+        }
+      }
+      assert(rails.length>0,`${track.id}/${route.id}: guarded route lost every rail`);
+      // Independently raycast every row and mid-row normal against the actual
+      // finite rails, including other routes at this floor elevation. This
+      // catches diagonal/miter and neighbouring-route traps hidden by widths.
+      for(let i=0;i<route.points.length-1;i++)for(const fraction of [0,.5,1]) {
+        const a=route.points[i],b=route.points[i+1],p={x:a.x+(b.x-a.x)*fraction,y:a.y+(b.y-a.y)*fraction,z:a.z+(b.z-a.z)*fraction};
+        let nx=data.frames[i].nx*(1-fraction)+data.frames[i+1].nx*fraction,nz=data.frames[i].nz*(1-fraction)+data.frames[i+1].nz*fraction;
+        const norm=Math.hypot(nx,nz);nx/=norm;nz/=norm;let left=Infinity,right=Infinity;
+        for(const edge of stageRails) {
+          const dx=edge.b.x-edge.a.x,dz=edge.b.z-edge.a.z,den=nx*dz-nz*dx;
+          if(Math.abs(den)<1e-8)continue;
+          const ax=edge.a.x-p.x,az=edge.a.z-p.z,distance=(ax*dz-az*dx)/den,u=(ax*nz-az*nx)/den;
+          if(u< -1e-6||u>1+1e-6||Math.abs(edge.a.y+(edge.b.y-edge.a.y)*u-p.y)>1.25)continue;
+          if(distance<0)left=Math.min(left,-distance);else right=Math.min(right,distance);
+        }
+        if(Number.isFinite(left+right)) {
+          minMeasuredWidth=Math.min(minMeasuredWidth,left+right);stations++;
+          assert(left+right>=2*.62+1.2-1e-5,`${track.id}/${route.id}/${i}: finite opposing rails trap the ball in ${(left+right).toFixed(3)}m`);
+        }
+      }
+    }
+    assert(segments>0&&stations>0);stages.push({track:track.id,segments,stations,minClearWidth:+minClearance.toFixed(3),minMeasuredWidth:+minMeasuredWidth.toFixed(3),guardedLength:+guardedLength.toFixed(1),authoredLength:+authoredLength.toFixed(1)});
+  }
+  assert.equal(stages.length,10);return{stages};
+});
+
 check('guardrail impacts retain tangential travel without vertical energy or rail-top support', () => {
   const receipts=[];
   for(const hz of [120,60,25]) for(const side of [-1,1]) for(const speed of [2.5,7,14]) for(const degrees of [10,35,65]) {
@@ -467,6 +518,20 @@ check('horizontal guardrail response preserves vertical state and resting tangen
   assert.equal(resting.vz,-4,'resting contact repeatedly damps forward movement');
   assert.equal(resting.y,8.62);assert.equal(resting.vy,.75);
   return{impactRestitution:.18,tangentialRetention:.94,restingFrames:240};
+});
+
+check('opposing guard contacts recover along the route centerline instead of pinning the ball',()=>{
+  const route={id:'malformed-overlap-regression',kind:'wood',width:4,walls:true,points:[{x:0,y:8,z:12},{x:0,y:8,z:0},{x:3.5,y:8,z:0},{x:3.5,y:8,z:12}]};
+  const b={x:1.75,y:8.62,z:8,r:.62,vx:0,vy:0,vz:-.1,grounded:true,routeTangent:{x:0,z:-1}};
+  runtimeApi.collideRouteGuardrails(b,route,b.x,b.z);
+  assert(b.guardRecoveryCount>0,'opposing rail contacts did not invoke runtime recovery');
+  const centerDistance=Math.min(Math.abs(b.x),Math.abs(b.x-3.5));
+  assert(centerDistance<1e-6,'pinch recovery failed to return to a route centerline');
+  assert(Math.hypot(b.vx,b.vz)>=1.8-1e-8,'pinch recovery leaves the ball motionless');
+  const count=b.guardRecoveryCount;
+  for(let frame=0;frame<120;frame++){const x=b.x,z=b.z;b.x+=b.vx/120;b.z+=b.vz/120;runtimeApi.collideRouteGuardrails(b,route,x,z);}
+  assert.equal(b.guardRecoveryCount,count,'centerline recovery immediately re-enters the trap');
+  return{recoveries:count,centerDistance,speed:Math.hypot(b.vx,b.vz)};
 });
 
 check('flat, sloped and curved guardrail grazing stays grounded without sticking or jitter', () => {
@@ -799,9 +864,65 @@ check('v3 descending launch landings stay on receiving decks at all frame rates'
   return {landings};
 });
 
-check('v3 fairytale helpers and patrols apply bounded, cooldown-protected safe impulses',()=>{
+check('moving animals are solid spheres with gentle relative rebounds even during event cooldown',()=>{
+  const receipts=[];
+  for(const type of ['ducklings','sheep','penguin','penguins','snow_bunny','snow_bunnies'])for(const dt of [1/120,1/60,.04]) {
+    const prop={id:type,type,x:0,y:8,z:0,r:1.1,patrol:2,speed:1.2,phase:.3},elapsed=.6;
+    const position=runtimeApi.fairytalePropPosition(prop,elapsed),events=[];
+    const b={x:position.x+.9,y:8.62,z:0,r:.62,vx:-4,vy:0,vz:1,grounded:true,popTimer:0};
+    runtimeApi.updateFairytalePhysics({props:[prop]},b,elapsed,dt,e=>events.push(e));
+    assert(Math.hypot(b.x-position.x,b.z-position.z)>=1.72-1e-8,`${type}/${dt}: animal body remains penetrable`);
+    const patrolVx=Math.cos(elapsed*1.2+.3)*2*1.2;
+    assert(b.vx-patrolVx>=5.5-1e-8,`${type}/${dt}: incoming normal velocity does not gently rebound`);
+    assert.equal(b.vy,0);assert.equal(b.vz,1,'sphere rebound erases tangential motion');
+    assert.equal(events.length,1);assert.equal(events[0].type,'patrol');assert(events[0].position,'patrol event lacks contact position');
+    b.x=position.x+.3;b.z=0;b.vx=-2;
+    runtimeApi.updateFairytalePhysics({props:[prop]},b,elapsed,dt,e=>events.push(e));
+    assert(Math.hypot(b.x-position.x,b.z-position.z)>=1.72-1e-8,`${type}/${dt}: cooldown disables solid depenetration`);
+    assert(b.vx-patrolVx>=5.5-1e-8,`${type}/${dt}: cooldown disables normal collision response`);
+    assert.equal(events.length,1,'cooldown repeats contact feedback');
+    receipts.push({type,hz:Math.round(1/dt),outwardSpeed:b.vx-patrolVx});
+  }
+  return{cases:receipts.length,minOutwardSpeed:Math.min(...receipts.map(r=>r.outwardSpeed))};
+});
+
+check('rail-adjacent moving animals leave the final ball outside every body',()=>{
+  const route={id:'critter-corridor',kind:'wood',walls:true,width:3,points:[{x:0,y:8,z:15},{x:0,y:8,z:-15}]};
+  const props=[{id:'left',type:'sheep',x:-.8,y:8,z:-.5,r:1.1,patrol:.001},{id:'right',type:'penguin',x:.8,y:8,z:.5,r:1.1,patrol:.001}];
+  let cases=0;
+  for(const onRoute of [true,false])for(const dt of [1/120,1/60,.04])for(const x of [-.2,-1.3877787807814457e-16,.2,.6]) {
+    const b={x,y:8.62,z:0,r:.62,vx:0,vy:0,vz:-4,popTimer:0,grounded:true,supportRoute:onRoute?route:null},events=[];
+    runtimeApi.updateFairytalePhysics({props,routes:[route]},b,0,dt,e=>events.push(e));
+    if(onRoute)runtimeApi.collideRouteGuardrails(b,route,b.x,b.z);
+    runtimeApi.collideFairytaleCritters({props,routes:[route]},b,0,e=>events.push(e));
+    for(const prop of props){const p=runtimeApi.fairytalePropPosition(prop,0);assert(Math.hypot(b.x-p.x,b.z-p.z)>=1.72-1e-6,`${dt}/${x}: final rail/animal ordering re-embeds ${prop.id}`);}
+    if(onRoute)assert(Math.abs(b.x)<=.88+1e-6,'animal escape crosses a solid guardrail');
+    assert.equal(b.y,8.62);assert.equal(b.vy,0);assert(events.length<=2,'constraint iterations repeat contact feedback');cases++;
+  }
+  return{cases};
+});
+
+check('driving into animated animals rebounds before crossing their solid bodies',()=>{
   let contacts=0;
-  for(const track of TRACKS)for(const prop of (track.props||[]).filter(p=>!p.target && ['hedgehog','toy_mouse','ducklings','sheep','snow_bunny','penguin','turntable','wind_cloud'].includes(p.type)))for(const dt of [1/120,1/60,0.04]) {
+  for(const type of ['ducklings','sheep','penguin','penguins','snow_bunny','snow_bunnies'])for(const hz of [120,60,25]) {
+    const prop={id:`drive-${type}`,type,x:0,y:8,z:0,r:1.1,patrol:2,speed:1.2};
+    const h=makeHarness(testTrack([flat],{props:[prop],start:{x:-4.5,y:8.62,z:0}}));h.b.vx=6;
+    let bounced=false;
+    for(let frame=0;frame<hz*2.5;frame++) {
+      h.step(1/hz);
+      const p=runtimeApi.fairytalePropPosition(prop,h.state.elapsed),distance=Math.hypot(h.b.x-p.x,h.b.z-p.z);
+      assert(distance>=1.72-.02,`${type}/${hz}Hz: driven ball penetrates animated animal by ${1.72-distance}`);
+      assert(h.b.x<p.x,`${type}/${hz}Hz: driven ball crossed the animal body`);
+      if(h.b.propCooldowns?.has(prop.id)){assert(h.b.vx<0,`${type}/${hz}Hz: forward approach never rebounds`);bounced=true;break;}
+    }
+    assert(bounced,`${type}/${hz}Hz: fixture never reaches animal`);assert.equal(h.state.pops,0);contacts++;
+  }
+  return{contacts};
+});
+
+check('v3 fairytale helpers apply bounded, cooldown-protected safe impulses',()=>{
+  let contacts=0;
+  for(const track of TRACKS)for(const prop of (track.props||[]).filter(p=>!p.target && ['hedgehog','toy_mouse','turntable','wind_cloud'].includes(p.type)))for(const dt of [1/120,1/60,0.04]) {
     const elapsed=0.6,pos=runtimeApi.fairytalePropPosition(prop,elapsed);
     const b={...pos,y:pos.y+0.62,r:0.62,vx:0,vy:0,vz:-2,grounded:true,routeTangent:{x:0,z:-1},popTimer:0};
     const events=[],fixture={...track,props:[prop]};runtimeApi.updateFairytalePhysics(fixture,b,elapsed,dt,e=>events.push(e));finiteBall(b);
@@ -811,10 +932,9 @@ check('v3 fairytale helpers and patrols apply bounded, cooldown-protected safe i
       assert(b.vz<-2,'helper failed to nudge forward');const after=b.vz;
       runtimeApi.updateFairytalePhysics(fixture,b,elapsed+dt,dt,e=>events.push(e));near(b.vz,after,'helper cooldown prevents stacked impulse');assert.equal(events.filter(e=>e.type==='helper').length,1);
     }
-    if(['ducklings','sheep','snow_bunny','penguin'].includes(prop.type))assert(events.some(e=>e.type==='patrol'),'animated patrol and contact positions disagree');
     contacts++;
   }
-  assert(contacts>=21,'missing fairytale contacts');return{contacts};
+  assert(contacts>=12,'missing fairytale contacts');return{contacts};
 });
 
 check('v3 cozy indoor camera scale, speed pullback and default deadzone',()=>{
