@@ -92,6 +92,19 @@ export async function verifyCameraOcclusion() {
   for (let i = 0; i < 120; i++) excluded.update(ball, camera, 1 / 60);
   for (const small of excludedRoot.children) assert.equal(small.material, original, 'Rail or small prop was faded');
   excluded.dispose();
+  // At an oblique Float32 cap the exact floor query can miss by a micron,
+  // while physics still knows the supporting route. Low guard posts must stay
+  // eligible for cutaway rather than being discarded as unrelated low scenery.
+  const capRoot=new THREE.Group(),capDeck=new THREE.Group();capRoot.add(capDeck);
+  const capRoute={id:'finite-mouth',width:3,points:[{x:0,y:0,z:0},{x:0,y:0,z:-5}]};
+  Object.assign(capDeck.userData,{cameraOcclusionDeck:true,route:capRoute});
+  const capPost=new THREE.Mesh(new THREE.CylinderGeometry(.055,.08,.6,6),original);
+  capPost.position.set(1.54,.12,.3);capPost.userData.structuralGuard=true;capDeck.add(capPost);
+  const capSafety=createCameraOcclusion(capRoot),capBall={x:.88,y:.62,z:.001,r:.62,supportRoute:capRoute};
+  const capBlocked=capSafety.update(capBall,{x:.88,y:7.6,z:10},.5);
+  assert(capBlocked.has(capPost),'Known supporting-route post was skipped when finite cap query missed');
+  assert(capPost.material.opacity<.85,'Finite-mouth guard post still hides the bubble rim');
+  capSafety.dispose();
   console.log('Passed runtime camera occlusion: soft structural fades, rail/prop exclusions, silhouette, material isolation and restoration at 120/60/25Hz.');
 }
 

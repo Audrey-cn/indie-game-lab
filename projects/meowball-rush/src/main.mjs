@@ -1,4 +1,4 @@
-// Meowball Rush v4.0.0 — vertical flagship worlds and paired warp portals.
+// Meowball Rush v4.1.0 — four chute styles, curved dry lines and dense storybook borders.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -17,6 +17,7 @@ import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, 
 import { advancePortal, updatePortalPhysics, dampPortalSteering } from './portal-runtime.mjs';
 import { applyTimePenalty } from './time-runtime.mjs';
 import { animateSpikeTraps } from './spike-traps.mjs';
+import { disposeCourseSceneResources } from './v3-worlds.mjs';
 import { generateClearPoster } from "./poster.mjs";
 import { FALL_MESSAGES, findFallZone, beginFallRecovery, advanceFallRecovery } from './fall-feedback.mjs';
 import { createFallEffect, updateFallEffects } from './fall-effects.mjs';
@@ -551,6 +552,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   if (state?.magicBursts) updateMagicBursts(state.magicBursts, 2);
   cameraOcclusion?.dispose();
   cameraSightline?.reset();
+  disposeCourseSceneResources(dynamicMeshes);
   if (trackRoot) scene.remove(trackRoot);
   if (lobbyShowcaseRig) lobbyShowcaseRig.root.visible = false;
   if (kittyRig) {
@@ -1738,7 +1740,8 @@ function syncHud() {
   document.getElementById("hud-status").textContent =
     b.popTimer > 0 ? "💥 破球复活中…"
       : b.dizzyTimer > 0 ? "💫 摔晕冒金星！"
-        : b.surfaceKind === "mud" ? "🍯 陷入蜂蜜泥沼减速！"
+        : b.surfaceKind === "mud" ? "🪵 泥地减速，沿 S 形干燥线前进！"
+          : b.surfaceKind === "honey" ? "🍯 蜂蜜减速，沿 S 形干燥线前进！"
           : b.surfaceKind === "ice" || b.surfaceKind === "ice_ramp" ? "❄️ 冰面极限漂移！"
             : b.boostFlash > 0 ? "🌈 彩虹加速狂飙！"
               : "🐾 全速滚动中";

@@ -3,7 +3,9 @@ import * as THREE from 'three';
 import { getRouteFrame, getRouteRibbonRows, getChuteShellRows, getCompanionChute, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments, samplePath, polylineLength } from './course-math.mjs';
 import { routeRibbonGeometry, chuteShellGeometry, routeBodyGeometry, surfaceOverlayGeometry } from './course-geometry.mjs';
 import { nearestSceneryClearance, resolveSceneryPosition } from './scenery-clearance.mjs';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { buildDryCurveRibbonMesh } from './mud-curve.mjs';
+import { populateForestDensityBorders } from './forest-density-borders.mjs';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const sphereGeo = new THREE.SphereGeometry(1, 12, 8);
@@ -11,6 +13,7 @@ const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 const borderLeafGeo = new THREE.IcosahedronGeometry(1,0);
 const borderConeGeo = new THREE.ConeGeometry(1,1,6);
 const borderCylinderGeo = new THREE.CylinderGeometry(1,1,1,8);
+const denseBorderIndexed = new WeakMap();
 const _toon = new Map();
 let gradient;
 function mat(color, glow = 0) {
@@ -22,6 +25,21 @@ function mat(color, glow = 0) {
   const m = new THREE.MeshToonMaterial({color, gradientMap:gradient, emissive:color, emissiveIntensity:glow, polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1});
   _toon.set(key,m);
   return m;
+}
+const borderMaterial = (color, emissive, intensity = 0) => mat(color, intensity);
+// Batches and slowdown overlays are allocated per course build. Their shared
+// primitive geometries and cached toon materials stay alive for other stages.
+export function disposeCourseSceneResources(dynamic) {
+  const geometries=new Set(),materials=new Set();
+  for(const mesh of dynamic?.forestDensityBorders?.userData.batchMeshes||[])geometries.add(mesh.geometry);
+  for(const entry of dynamic?.slowZones||[])for(const mesh of [entry.pool,entry.dry]) {
+    if(!mesh)continue;geometries.add(mesh.geometry);
+    for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material])materials.add(material);
+  }
+  for(const geometry of geometries)geometry.dispose();
+  for(const material of materials)material.dispose();
+  if(dynamic?.forestDensityBorders)dynamic.forestDensityBorders.userData.batchMeshes=[];
+  if(dynamic)dynamic.slowZones=[];
 }
 function mesh(parent, geometry, material, x=0,y=0,z=0, sx=1,sy=1,sz=1, name='') {
   const m = new THREE.Mesh(geometry, material);
@@ -835,8 +853,14 @@ export function buildV3World(track,group,dynamic,materials) {
     }
     if(route.slowZone){
       const honey=route.slowZone.kind==='honey';
-      const pool=mesh(group,surfaceOverlayGeometry(route,{slowZone:'sticky'}),overlayMaterial(honey?0xd79737:0x906444,coursePattern(honey?'viscous_honey':'viscous_mud'),.88),0,0,0,1,1,1,'viscous-ground-overlay');pool.userData.supportRoute=route;
-      const dry=mesh(group,surfaceOverlayGeometry(route,{slowZone:'dry'}),overlayMaterial(honey?0xffe4b5:0xd9d7aa,coursePattern('wood_grain')),0,0,0,1,1,1,'dry-skill-line');dry.userData.supportRoute=route;
+      const curved=Number.isFinite(route.slowZone.amplitude);
+      const pool=mesh(group,surfaceOverlayGeometry(route,curved?{}:{slowZone:'sticky'}),overlayMaterial(honey?0xd79737:0x906444,coursePattern(honey?'viscous_honey':'viscous_mud'),.88),0,0,0,1,1,1,'viscous-ground-overlay');pool.userData.supportRoute=route;
+      let dry;
+      if(curved){
+        dry=buildDryCurveRibbonMesh(THREE,route,route.slowZone,overlayMaterial(honey?0xffe4b5:0xd9d7aa,coursePattern('wood_grain')));
+        dry.userData.continuousDryCurve=true;group.add(dry);
+      }else dry=mesh(group,surfaceOverlayGeometry(route,{slowZone:'dry'}),overlayMaterial(honey?0xffe4b5:0xd9d7aa,coursePattern('wood_grain')),0,0,0,1,1,1,'dry-skill-line');
+      dry.userData.supportRoute=route;
       if(track.flagship)for(const overlay of [pool,dry]){overlay.userData.cameraOcclusionDeck=true;overlay.userData.route=route;}
       dynamic.slowZones??=[];dynamic.slowZones.push({def:route.slowZone,route,pool,dry});
     }else if(['honey','mud'].includes(route.kind)){
@@ -872,9 +896,14 @@ export function buildV3World(track,group,dynamic,materials) {
     for(const column of [0,chuteRows.columns])lineTube(chuteGroup,chuteRows.rows.map(row=>row[column]),.065,def.material==='oak'?0xffd28e:color);
     const rings=[],chevrons=[];
     for(let i=3;i<def.points.length-3;i+=Math.max(3,Math.floor(def.points.length/14))){
-      const p=def.points[i],f=frame(def.points,i),tangent=new THREE.Vector3(f.tx,(def.points[i+1].y-def.points[i-1].y)/Math.max(.1,Math.hypot(def.points[i+1].x-def.points[i-1].x,def.points[i+1].z-def.points[i-1].z)),f.tz).normalize();
-      const ring=mesh(chuteGroup,new THREE.TorusGeometry(def.width*.42,.035,6,24,Math.PI*1.65),new THREE.MeshBasicMaterial({color:0xffefbc,transparent:true,opacity:.62,depthWrite:false}),p.x,p.y+def.width*.35,p.z);ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),tangent);ring.userData.phase=i/def.points.length*Math.PI*2;ring.userData.baseOpacity=.62;rings.push(ring);
-      const star=mesh(chuteGroup,new THREE.OctahedronGeometry(.11,0),mat(0xffe8ad,.8),p.x,p.y+.12,p.z);chevrons.push(star);
+      const p=def.points[i],f=chuteRows.frames[i],banked=f.roll!==undefined;
+      const tangent=banked?new THREE.Vector3(f.tx,0,f.tz):new THREE.Vector3(f.tx,(def.points[i+1].y-def.points[i-1].y)/Math.max(.1,Math.hypot(def.points[i+1].x-def.points[i-1].x,def.points[i+1].z-def.points[i-1].z)),f.tz).normalize();
+      const up=banked?new THREE.Vector3(f.upX,f.upY,f.upZ):UP;
+      const ring=mesh(chuteGroup,new THREE.TorusGeometry(def.width*.42,.035,6,24,Math.PI*1.65),new THREE.MeshBasicMaterial({color:0xffefbc,transparent:true,opacity:.62,depthWrite:false}),p.x+up.x*def.width*.35,p.y+up.y*def.width*.35,p.z+up.z*def.width*.35);
+      if(banked)ring.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(-f.lateralX,-f.lateralY,-f.lateralZ),up,tangent));
+      else ring.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),tangent);
+      ring.userData.bank=f.roll??0;ring.userData.phase=i/def.points.length*Math.PI*2;ring.userData.baseOpacity=.62;rings.push(ring);
+      const star=mesh(chuteGroup,new THREE.OctahedronGeometry(.11,0),mat(0xffe8ad,.8),p.x+up.x*.12,p.y+up.y*.12,p.z+up.z*.12);chevrons.push(star);
     }
     // Grounded oak chute has a hollow bark trunk, its front cut away to reveal the helix.
     if(def.material==='oak'){
@@ -885,7 +914,7 @@ export function buildV3World(track,group,dynamic,materials) {
       for(let i=0;i<5;i++){const a=i*Math.PI*.4;const canopy=ball(chuteGroup,[0x83bb6c,0x96c979,0x75ac63][i%3],cx+Math.cos(a)*r*.7,flagship?40:b.maxY+r*.35+1.5,cz+Math.sin(a)*r*.7,flagship?10:r*.7,1,flagship?.2:.5,1);canopy.name='oak-canopy-leaf-cluster';}
     }
     if(def.material==='rainbow'&&def.turns>=2){
-      const accents=def.points.map((p,i)=>{const f=frame(def.points,i);return{x:p.x-f.nx*(def.width*.75),y:p.y+def.width*.75,z:p.z-f.nz*def.width*.75};});lineTube(chuteGroup,accents,.13,0xffe499);
+      const accents=def.points.map((p,i)=>{const f=chuteRows.frames[i];return f.roll===undefined?{x:p.x-f.nx*(def.width*.75),y:p.y+def.width*.75,z:p.z-f.nz*def.width*.75}:{x:p.x+(f.upX-f.lateralX)*def.width*.75,y:p.y+(f.upY-f.lateralY)*def.width*.75,z:p.z+(f.upZ-f.lateralZ)*def.width*.75};});lineTube(chuteGroup,accents,.13,0xffe499);
     }
     dynamic.chutes.push({def,mesh:chuteGroup,rings,chevrons});
   }
@@ -911,9 +940,11 @@ export function buildV3World(track,group,dynamic,materials) {
   enforceSceneryClearance(track,group,dynamic);
   addWarpPortals(track,group,dynamic);
   addDiegeticBorders(track,group,dynamic);
+  dynamic.forestDensityBorders=populateForestDensityBorders(THREE,track,group,borderMaterial,{isClear:floorFootprintIndex(track)});
+  batchForestDensityBorders(group,dynamic.forestDensityBorders);
   addDioramaBackdrops(track,group,dynamic);
   const structures=new Set(['sunlit-room-wall','sunlit-room-side-wall','sunlit-window','giant-furniture-table','kitchen-cabinet','giant-purple-armchair','tall-magical-bookshelf','golden-telescope','half-timbered-house','gilded-clocktower','hollow-giant-oak-trunk','oak-canopy-leaf-cluster','storybook-tree','snowy-pine','winter-fireplace','starry-observatory-dome','observatory-goal-dome']);
-  group.traverse(node=>{if(structures.has(node.name))node.userData.cameraOcclusionStructure=true;});
+  group.traverse(node=>{if(structures.has(node.name))node.userData.cameraOcclusionStructure=true;if(node.userData.cameraOcclusionStructure)node.userData.occludable=true;});
   const b=boundsOf(allFloorPoints(track),6),n=90,pos=new Float32Array(n*3);
   for(let i=0;i<n;i++){pos[i*3]=b.minX+(Math.sin(i*14.34)*.5+.5)*(b.maxX-b.minX);pos[i*3+1]=b.minY+2+(i%11);pos[i*3+2]=b.minZ+(Math.cos(i*3.72)*.5+.5)*(b.maxZ-b.minZ);}
   const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));dynamic.petals=new THREE.Points(geo,new THREE.PointsMaterial({color:track.worldType==='starlight_library'?0xffe4a5:0xffc6dc,size:.16,transparent:true,opacity:.72}));group.add(dynamic.petals);
@@ -1042,6 +1073,39 @@ function sceneryBatch(parent,name,glowingColors=new Set()) {
       return meshes;
     },
   };
+}
+
+// Keep each cluster's clearance receipt, but render route-local color batches.
+// Opposite sides remain separate so a camera cutaway never fades both borders.
+function batchForestDensityBorders(parent,forest) {
+  const group=new THREE.Group();group.name='forest-density-border-batches';parent.add(group);
+  Object.assign(group.userData,{forestDensityBorderBatches:true,occludable:true,cameraOcclusionStructure:true});
+  parent.updateMatrixWorld(true);
+  const inverse=parent.matrixWorld.clone().invert(),buckets=new Map();let before=0;
+  for(const cluster of forest.children){
+    cluster.userData.parts=[];const originals=[];
+    cluster.traverse(node=>{
+      if(!node.isMesh)return;before++;originals.push(node);
+      const key=`${cluster.userData.routeId}/${cluster.userData.side}/${node.material.uuid}`;
+      if(!buckets.has(key))buckets.set(key,{material:node.material,parts:[],owners:[],vertices:0,routeId:cluster.userData.routeId,side:cluster.userData.side});
+      let source=denseBorderIndexed.get(node.geometry);
+      if(!source){source=mergeVertices(node.geometry);denseBorderIndexed.set(node.geometry,source);}
+      const bucket=buckets.get(key),geometry=source.clone();
+      geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse,node.matrixWorld));
+      bucket.owners.push({cluster,firstVertex:bucket.vertices,vertexCount:geometry.attributes.position.count});
+      bucket.vertices+=geometry.attributes.position.count;bucket.parts.push(geometry);
+    });
+    for(const node of originals)node.removeFromParent();
+  }
+  const meshes=[];
+  for(const bucket of buckets.values()){
+    const geometry=mergeGeometries(bucket.parts,false);for(const part of bucket.parts)part.dispose();
+    const batch=mesh(group,geometry,bucket.material,0,0,0,1,1,1,`forest-density-border-${bucket.routeId}-${bucket.side}`);
+    Object.assign(batch.userData,{occludable:true,cameraOcclusionStructure:true,forestDensityBorderBatch:true,routeId:bucket.routeId,side:bucket.side});
+    batch.castShadow=false;meshes.push(batch);
+    for(const {cluster,firstVertex,vertexCount}of bucket.owners)cluster.userData.parts.push({mesh:batch,firstVertex,vertexCount});
+  }
+  Object.assign(forest.userData,{batchGroup:group,batchMeshes:meshes,drawCallsBefore:before,drawCallsAfter:meshes.length});
 }
 
 function addDiegeticBorders(track,parent,dynamic) {

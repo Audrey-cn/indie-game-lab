@@ -4,11 +4,16 @@ import { getRouteRibbonRows, getChuteShellRows, getRibbonBoundarySegments, getSl
 
 export function geometryFromRows(data) {
   const { rows, columns, distances } = data, positions = [], uv = [], indices = [];
+  const addTriangle=(a,b,c)=>{
+    const p=rows[Math.floor(a/(columns+1))][a%(columns+1)],q=rows[Math.floor(b/(columns+1))][b%(columns+1)],r=rows[Math.floor(c/(columns+1))][c%(columns+1)];
+    const same=(u,v)=>u.x===v.x&&u.y===v.y&&u.z===v.z;
+    if(!same(p,q)&&!same(q,r)&&!same(r,p))indices.push(a,b,c);
+  };
   for (let i = 0; i < rows.length; i++) for (let j = 0; j <= columns; j++) {
     const p = rows[i][j]; positions.push(p.x, p.y, p.z); uv.push(j / columns, distances[i] / 3);
     if (i < rows.length - 1 && j < columns) {
       const a = i * (columns + 1) + j, b = a + columns + 1;
-      indices.push(a, a + 1, b, a + 1, b + 1, b);
+      addTriangle(a,a+1,b);addTriangle(a+1,b+1,b);
     }
   }
   const geometry = new THREE.BufferGeometry();
@@ -19,7 +24,12 @@ export function geometryFromRows(data) {
   return geometry;
 }
 export const routeRibbonGeometry = route => geometryFromRows(getRouteRibbonRows(route));
-export const chuteShellGeometry = chute => geometryFromRows(getChuteShellRows(chute));
+export function chuteShellGeometry(chute) {
+  const geometry = geometryFromRows(getChuteShellRows(chute));
+  geometry.userData.chuteStyle = chute.style ?? 'helix';
+  geometry.userData.signedBank = !!chute.bankProfile;
+  return geometry;
+}
 
 // A single indexed sweep closes each deck with beveled curbs, vertical fascia,
 // and a bottom. Its floor boundary is the exact mathematical ribbon edge.

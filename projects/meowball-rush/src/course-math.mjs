@@ -1,3 +1,4 @@
+import { evaluateDryCurveOffset, isPointOnDryCurve } from './mud-curve.mjs';
 // Shared authored geometry: scene meshes, rail motion and collision use the same samples.
 export function polylineLength(points) {
   let length = 0;
@@ -107,7 +108,7 @@ export function prepareRouteGeometry(routes, chutes = []) {
     if (!before || !after || before.route === after.route) continue;
     const a = before.route, b = after.route;
     const frame = jointFrame(flatDirection(a.points.at(-2), a.points.at(-1)), flatDirection(b.points[0], b.points[1]));
-    const seam = { frame, guardTransition: !!a.walls !== !!b.walls, halfWidth: Math.min(a.width, b.width) / 2, leftWidth: Math.min(a.width, b.width) / 2, rightWidth: Math.min(a.width, b.width) / 2, bank: Math.min(a.bank || 0, b.bank || 0) };
+    const seam = { frame, before:a, after:b, guardTransition: !!a.walls !== !!b.walls, halfWidth: Math.min(a.width, b.width) / 2, leftWidth: Math.min(a.width, b.width) / 2, rightWidth: Math.min(a.width, b.width) / 2, bank: Math.min(a.bank || 0, b.bank || 0) };
     if (!constraints.has(a)) constraints.set(a, {});
     if (!constraints.has(b)) constraints.set(b, {});
     constraints.get(a).end = seam; constraints.get(b).start = seam;
@@ -131,6 +132,25 @@ function buildRibbonRows(route, constraints = {}, chute = false) {
   const frames = points.map((_, i) => getRouteFrame(route, i));
   if (constraints.start) frames[0] = constraints.start.frame;
   if (constraints.end) frames[frames.length - 1] = constraints.end.frame;
+  // Styled chutes carry a signed roll in radians. Rotate the entire U section
+  // in the vertical course cross-section; symmetric route.bank is a different
+  // authored profile. Keeping the section vertical avoids pitching a rim back
+  // through the preceding hill. Legacy helices keep their original sections.
+  if (chute && route.bankProfile?.some(roll => Math.abs(roll) > 1e-9)) {
+    if (route.bankProfile.length !== points.length) throw new RangeError(`${route.id ?? 'Chute'}: bankProfile must align with points`);
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i], a = points[Math.max(0, i - 1)], b = points[Math.min(points.length - 1, i + 1)];
+      const roll = route.bankProfile[i];
+      if (!Number.isFinite(roll)) throw new TypeError(`${route.id ?? 'Chute'}: bankProfile[${i}] must be finite`);
+      const slope = (b.y - a.y) / Math.max(1e-9, Math.hypot(b.x - a.x, b.z - a.z));
+      const horizontal = 1 / Math.hypot(1, slope), vertical = slope * horizontal;
+      const tangentX = f.tx * horizontal, tangentY = vertical, tangentZ = f.tz * horizontal;
+      const cosine = Math.cos(roll), sine = Math.sin(roll);
+      frames[i] = { ...f, roll, tangentX, tangentY, tangentZ,
+        lateralX: f.nx * cosine, lateralY: -sine, lateralZ: f.nz * cosine,
+        upX: f.nx * sine, upY: cosine, upZ: f.nz * sine };
+    }
+  }
   const halfWidths = [], banks = [], rows = [];
   for (let i = 0; i < points.length; i++) {
     let halfWidth = route.width / 2, bank = route.bank || 0;
@@ -157,7 +177,11 @@ function buildRibbonRows(route, constraints = {}, chute = false) {
       const cross = chute ? Math.sin(u * Math.PI / 2) * width : u * width;
       const mouth = chute ? Math.min(1, distances[i] / 2.5, (length - distances[i]) / 3) : 1;
       const height = chute ? width * (1 - Math.cos(u * Math.PI / 2)) * mouth : banks[i] * u ** 2;
-      row.push({ x: Math.fround(p.x + f.nx * cross * f.miter), y: Math.fround(p.y + height), z: Math.fround(p.z + f.nz * cross * f.miter) });
+      row.push(f.roll === undefined
+        ? { x: Math.fround(p.x + f.nx * cross * f.miter), y: Math.fround(p.y + height), z: Math.fround(p.z + f.nz * cross * f.miter) }
+        : { x: Math.fround(p.x + f.lateralX * cross * f.miter + f.upX * height),
+          y: Math.fround(p.y + f.lateralY * cross * f.miter + f.upY * height),
+          z: Math.fround(p.z + f.lateralZ * cross * f.miter + f.upZ * height) });
     }
     return row;
   };
@@ -180,6 +204,20 @@ function buildRibbonRows(route, constraints = {}, chute = false) {
       widths[i] = Math.min(widths[i], limits[i] * .94);
     }
   }
+  // A rolled rim projects farther towards a bend than the unbanked mouth.
+  // Fit that complete U profile inside the same proven corner envelope.
+  if (chute && frames.some(f => f.roll !== undefined)) {
+    for (let i = 0; i < points.length; i++) for (const [side,widths,limits] of [[-1,leftWidths,leftLimits],[1,rightWidths,rightLimits]]) {
+      if (!Number.isFinite(limits[i])) continue;
+      const f=frames[i],mouth=Math.min(1,distances[i]/2.5,(length-distances[i])/3);
+      let projection=1;
+      for(let k=0;k<=columns/2;k++){
+        const angle=side*k/(columns/2)*Math.PI/2;
+        projection=Math.max(projection,side*(Math.sin(angle)*Math.cos(f.roll)+(1-Math.cos(angle))*mouth*Math.sin(f.roll)/f.miter));
+      }
+      widths[i]=Math.min(widths[i],limits[i]*.88/projection);
+    }
+  }
   for (const widths of [leftWidths, rightWidths]) {
     for (let i = 1; i < widths.length; i++) widths[i] = Math.min(widths[i], widths[i - 1] + (distances[i] - distances[i - 1]) * .65);
     for (let i = widths.length - 2; i >= 0; i--) widths[i] = Math.min(widths[i], widths[i + 1] + (distances[i + 1] - distances[i]) * .65);
@@ -189,6 +227,15 @@ function buildRibbonRows(route, constraints = {}, chute = false) {
     constraints[name].rightWidth = Math.min(constraints[name].rightWidth, rightWidths[i]);
   }
   rows.splice(0, rows.length, ...points.map((_, i) => makeRow(i)));
+  if(chute && frames.some(f=>f.roll!==undefined))for(const [name,i]of[['start',0],['end',points.length-1]]){
+    const seam=constraints[name];if(!seam)continue;
+    const other=seam.before===route?seam.after:seam.before,data=preparedRoutes.get(other);
+    if(!data)continue;
+    const shared=other===seam.before?data.rows.at(-1):data.rows[0];
+    // Different Float32 samplings of one slanted cap form tiny crossing
+    // zigzags. Reuse its actual vertices, then fan into the denser U section.
+    rows[i]=rows[i].map((_,j)=>({...shared[Math.floor(j/columns*data.columns)]}));
+  }
   return { rows, frames, points, distances, halfWidths, leftWidths, rightWidths, leftLimits, rightLimits, banks, columns, seams: constraints };
 }
 export function getRouteRibbonRows(route) {
@@ -280,12 +327,15 @@ export function getRibbonBoundarySegments(route) {
 export function getRouteFloorTriangles(route) {
   let cached = floorMeshes.get(route);
   if (cached) return cached;
-  const { rows, columns } = getRouteRibbonRows(route), triangles = [];
-  const dryDistances=route.slowZone?getSlowZoneDistanceRows(route):null;
-  function add(a, b, c, index, dryDistance) {
+  const data=preparedChutes.has(route)||route.bankProfile?getChuteShellRows(route):getRouteRibbonRows(route);
+  const { rows, columns, distances, leftWidths, rightWidths } = data, triangles = [];
+  const curved=Number.isFinite(route.slowZone?.amplitude);
+  const dryDistances=route.slowZone&&!curved?getSlowZoneDistanceRows(route):null;
+  const curveAt=(i,j)=>[distances[i]/distances.at(-1),(j/columns*2-1)*(j<columns/2?leftWidths[i]:rightWidths[i])];
+  function add(a, b, c, index, dryDistance, curveCoordinates) {
     const den = (b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z);
     if (Math.abs(den) < 1e-10) return;
-    triangles.push({ a, b, c, den, index, dryDistance,
+    triangles.push({ a, b, c, den, index, dryDistance, curveCoordinates,
       minX: Math.min(a.x, b.x, c.x), maxX: Math.max(a.x, b.x, c.x),
       minZ: Math.min(a.z, b.z, c.z), maxZ: Math.max(a.z, b.z, c.z),
       slopeX: ((b.y - a.y) * (c.z - a.z) - (c.y - a.y) * (b.z - a.z)) / den,
@@ -293,9 +343,11 @@ export function getRouteFloorTriangles(route) {
   }
   for (let i = 0; i < rows.length - 1; i++) for (let j = 0; j < columns; j++) {
     add(rows[i][j], rows[i][j + 1], rows[i + 1][j], i,
-      dryDistances?[dryDistances[i][j],dryDistances[i][j+1],dryDistances[i+1][j]]:null);
+      dryDistances?[dryDistances[i][j],dryDistances[i][j+1],dryDistances[i+1][j]]:null,
+      curved?[curveAt(i,j),curveAt(i,j+1),curveAt(i+1,j)]:null);
     add(rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j], i,
-      dryDistances?[dryDistances[i][j+1],dryDistances[i+1][j+1],dryDistances[i+1][j]]:null);
+      dryDistances?[dryDistances[i][j+1],dryDistances[i+1][j+1],dryDistances[i+1][j]]:null,
+      curved?[curveAt(i,j+1),curveAt(i+1,j+1),curveAt(i+1,j)]:null);
   }
   floorMeshes.set(route, triangles);
   return triangles;
@@ -338,12 +390,36 @@ export function nearestRouteSurface(routes, x, z, y = Infinity, contact = null) 
     const t = Math.max(0, Math.min(1, ((x - a.x) * sx + (z - a.z) * sz) / (flat * flat)));
     const tx = sx / flat, tz = sz / flat;
     const px = a.x + sx * t, pz = a.z + sz * t;
+    const rows=preparedChutes.has(route)||route.bankProfile?getChuteShellRows(route):getRouteRibbonRows(route);
     const candidate = { y: floor, slopeX: q.slopeX, slopeZ: q.slopeZ, kind: route.kind,
       route, distance: Math.hypot(x - px, z - pz), tx, tz,
       lateral: (x - px) * -tz + (z - pz) * tx,
-      normalX: -tz, normalZ: tx, halfWidth: getRouteRibbonRows(route).halfWidths[q.index] * (1 - t) + getRouteRibbonRows(route).halfWidths[q.index + 1] * t, along: t, segmentIndex: q.index,
+      normalX: -tz, normalZ: tx, halfWidth: rows.halfWidths[q.index] * (1 - t) + rows.halfWidths[q.index + 1] * t, along: t, segmentIndex: q.index,
       crossed, following };
-    if(route.slowZone && q.dryDistance) {
+    if(route.slowZone && Number.isFinite(route.slowZone.amplitude)) {
+      const data=getRouteRibbonRows(route),i=q.index,f=data.frames[i],g=data.frames[i+1];
+      const nx=f.nx*f.miter,nz=f.nz*f.miter,mx=g.nx*g.miter-nx,mz=g.nz*g.miter-nz;
+      const qx=x-route.points[i].x,qz=z-route.points[i].z;
+      const cross=(ax,az,bx,bz)=>ax*bz-az*bx;
+      const constant=cross(qx,qz,nx,nz),linear=cross(qx,qz,mx,mz)-cross(sx,sz,nx,nz),quadratic=-cross(sx,sz,mx,mz);
+      const [a,b,c]=q.curveCoordinates;
+      let fraction=((a[0]*(1-u-v)+b[0]*u+c[0]*v)*data.distances.at(-1)-data.distances[i])/(data.distances[i+1]-data.distances[i]);
+      // Invert the same bilinear miter frame used by sampleDryCurvePoints.
+      // A triangle's barycentric u alone shifts the stripe at curved spans.
+      for(let iteration=0;iteration<5;iteration++) {
+        const derivative=linear+2*quadratic*fraction;
+        if(Math.abs(derivative)<1e-10)break;
+        fraction=Math.max(0,Math.min(1,fraction-(constant+linear*fraction+quadratic*fraction*fraction)/derivative));
+      }
+      const fx=nx+mx*fraction,fz=nz+mz*fraction;
+      candidate.curveU=(data.distances[i]+fraction*(data.distances[i+1]-data.distances[i]))/data.distances.at(-1);
+      candidate.curveLateral=((qx-sx*fraction)*fx+(qz-sz*fraction)*fz)/(fx*fx+fz*fz);
+      candidate.dryCurveOffset=evaluateDryCurveOffset(route.slowZone,candidate.curveU);
+      candidate.slowZoneDistance=Math.abs(candidate.curveLateral-candidate.dryCurveOffset);
+      candidate.dryLine=isPointOnDryCurve(route.slowZone,candidate.curveU,candidate.curveLateral);
+      candidate.baseKind=route.kind;
+      if(!candidate.dryLine)candidate.kind=route.slowZone.kind;
+    } else if(route.slowZone && q.dryDistance) {
       const [a,b,c]=q.dryDistance;
       candidate.slowZoneDistance=a*(1-u-v)+b*u+c*v;
       candidate.dryLine=candidate.slowZoneDistance<=route.slowZone.dryWidth+1e-7;

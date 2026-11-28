@@ -33,15 +33,25 @@ export function trianglesIntersect(a,b){
   for(let i=0;i<3;i++)if(segmentTriangle(a[i],a[(i+1)%3],b)||segmentTriangle(b[i],b[(i+1)%3],a))return true;
   return false;
 }
-export function verifyRibbonMesh(geometry,label,{columns=geometry.userData.ribbonColumns,rows=geometry.userData.ribbonRows}={}){
+export function verifyRibbonMesh(geometry,label,{columns=geometry.userData.ribbonColumns,rows=geometry.userData.ribbonRows,normalAt}={}){
   const p=geometry.attributes.position,index=geometry.index,triangles=[],bins=new Map(),pairs=new Set();
   assert.ok(index,'swept floor must be an indexed continuous mesh');
   assert.equal(p.count,rows*(columns+1),`${label}: disconnected slats or duplicated seam vertices`);
   let minimumArea=Infinity;
   for(let i=0;i<index.count;i+=3){
     const ids=[index.getX(i),index.getX(i+1),index.getX(i+2)],vertices=ids.map(j=>({x:p.getX(j),y:p.getY(j),z:p.getZ(j)}));
-    const area=(vertices[1].x-vertices[0].x)*(vertices[2].z-vertices[0].z)-(vertices[2].x-vertices[0].x)*(vertices[1].z-vertices[0].z);
-    assert.ok(area<-1e-9,`${label}: inverted/folded triangle ${i/3} (signed XZ area ${area})`);minimumArea=Math.min(minimumArea,-area);
+    if(normalAt){
+      // A rolled U-shaped rim can overhang in XZ while retaining correct 3D
+      // winding. Check its face against the authored local surface normal.
+      const face=cross(sub(vertices[1],vertices[0]),sub(vertices[2],vertices[0]));
+      const normals=ids.map(normalAt),normal=normals.reduce((sum,n)=>({x:sum.x+n.x,y:sum.y+n.y,z:sum.z+n.z}),{x:0,y:0,z:0});
+      const area=length(face);
+      assert.ok(area>1e-9&&dot(face,normal)>1e-10,`${label}: inverted/folded triangle ${i/3} (local 3D normal)`);
+      minimumArea=Math.min(minimumArea,area);
+    }else{
+      const area=(vertices[1].x-vertices[0].x)*(vertices[2].z-vertices[0].z)-(vertices[2].x-vertices[0].x)*(vertices[1].z-vertices[0].z);
+      assert.ok(area<-1e-9,`${label}: inverted/folded triangle ${i/3} (signed XZ area ${area})`);minimumArea=Math.min(minimumArea,-area);
+    }
     const box=new THREE.Box3().setFromPoints(vertices.map(v=>new THREE.Vector3(v.x,v.y,v.z)));
     const t={vertices,box,row:Math.floor(Math.min(...ids)/(columns+1)),ids};triangles.push(t);
     for(let x=Math.floor(box.min.x/2);x<=Math.floor(box.max.x/2);x++)for(let z=Math.floor(box.min.z/2);z<=Math.floor(box.max.z/2);z++){
@@ -69,6 +79,9 @@ export function verifyMeshCheckerFixtures(){
   assert(!trianglesIntersect(flat(0),flat(4)),'separate triangle fixture falsely intersects');
   const legacy=new THREE.BufferGeometry();legacy.setAttribute('position',new THREE.Float32BufferAttribute([0,0,0,2,0,0,0,0,2,2,0,2],3));legacy.setIndex([0,1,2,1,3,2]);
   assert.throws(()=>verifyRibbonMesh(legacy,'inverted legacy fixture',{rows:2,columns:1}),/inverted\/folded/);
+  assert.throws(()=>verifyRibbonMesh(legacy,'inverted local-normal fixture',{rows:2,columns:1,normalAt:()=>({x:0,y:1,z:0})}),/inverted\/folded/);
+  legacy.setIndex([0,2,1,1,2,3]);
+  verifyRibbonMesh(legacy,'valid local-normal fixture',{rows:2,columns:1,normalAt:()=>({x:0,y:1,z:0})});
   legacy.dispose();
 }
 

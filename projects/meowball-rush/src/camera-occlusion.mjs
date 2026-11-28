@@ -77,7 +77,7 @@ export function createCameraOcclusion(root) {
       const radius = ball.r || .62;
       view.position.copy(camera); view.lookAt(origin);
       view.near = .001; view.far = distance;
-      view.fov = 2 * Math.asin(Math.min(.99, radius / distance)) * 180 / Math.PI;
+      view.fov = 2 * Math.asin(Math.min(.99, (radius + .01) / distance)) * 180 / Math.PI;
       view.updateProjectionMatrix(); view.updateMatrixWorld(true);
       frustum.setFromProjectionMatrix(projection.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse));
       // Broad phase uses cached local bounds, so triangle raycasts only touch
@@ -94,7 +94,7 @@ export function createCameraOcclusion(root) {
           const supporting = route && route === ball.supportRoute || support && support.y <= supportCeiling;
           const ownGuard = supporting && (mesh.userData.routeBody || mesh.userData.structuralGuard
             || mesh.name === 'chute-half-pipe-shell' && ball.chuteRide);
-          if (supporting && !ownGuard || !support && bounds.max.y <= supportCeiling) continue;
+          if (supporting && !ownGuard || !support && !supporting && bounds.max.y <= supportCeiling) continue;
           // A close banked guard may hide the bubble from its own legal edge
           // station. Cut away just that guard on actual ray contact, while the
           // supporting ribbon retains its original material and shadows.
@@ -109,20 +109,23 @@ export function createCameraOcclusion(root) {
         sphere.radius += radius;
         if (!raycaster.ray.intersectsSphere(sphere)
           || origin.distanceTo(sphere.center) - sphere.radius > distance) continue;
-        candidates.push(mesh);
         // Bounds conservatively cover the entire silhouette cone, including
         // thin twigs between rays and closed props enclosing either endpoint.
         // Limited extra fading at a bounding-box corner is preferable to
         // leaving any opaque fragment over the ball between sampled rays.
-        if (!supportingGuards.has(mesh) && (frustum.intersectsBox(bounds) || bounds.containsPoint(camera)
+        if ((!supportingGuards.has(mesh) || mesh.userData.structuralGuard) && (frustum.intersectsBox(bounds) || bounds.containsPoint(camera)
           || bounds.containsPoint(origin))) blocked.add(mesh);
+        // Bounds already require these structures to fade. Triangle casts
+        // cannot change that decision and cost heavily on dense merged props.
+        if(!blocked.has(mesh))candidates.push(mesh);
       }
       right.crossVectors(direction, THREE.Object3D.DEFAULT_UP);
       if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
       else right.normalize();
       up.crossVectors(right, direction).normalize();
       for (const [x, y] of offsets) {
-        point.copy(origin).addScaledVector(right, x * radius).addScaledVector(up, y * radius);
+        const normalizer=Math.hypot(x,y)||1;
+        point.copy(origin).addScaledVector(right, x / normalizer * radius).addScaledVector(up, y / normalizer * radius);
         // Intersect from the rendered side so inward-facing single-sided
         // cutaway walls are tested exactly as the camera sees them.
         direction.subVectors(point, camera);

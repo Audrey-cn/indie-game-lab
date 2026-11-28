@@ -6,6 +6,9 @@ import * as THREE from 'three';
 import vm from 'node:vm';
 import * as courseConfig from '../src/config.mjs';
 import { createRouteRibbonGeometry } from '../src/v3-worlds.mjs';
+import { CHUTE_STYLES } from '../src/chute-styles.mjs';
+import { evaluateDryCurveOffset, sampleDryCurvePoints, mudSpecForStage } from '../src/mud-curve.mjs';
+import { auditLaneThreat, difficultyProfileForStage, MIN_SAFE_PASSING_WIDTH } from '../src/lane-difficulty.mjs';
 const { CATS, TRACKS } = courseConfig;
 import './verify-assets.mjs';
 import './verify-checkpoint.mjs';
@@ -198,17 +201,25 @@ check('v3.2 authored rail-side bouncy props cannot pinch or embed the ball',()=>
     const route=track.routes.find(r=>r.id===def.routeId),rows=courseMath.getRouteRibbonRows(route);
     const center=route.points.reduce((a,b)=>Math.hypot(b.x-def.x,b.z-def.z)<Math.hypot(a.x-def.x,a.z-def.z)?b:a);
     const dx=def.x-center.x,dz=def.z-center.z,n=Math.hypot(dx,dz)||1;
-    const x=def.x+dx/n*.75,z=def.z+dz/n*.75;
-    const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);assert(floor);
+    // Original scenery bumpers exercise the trapped rail side. Lane blockers
+    // exercise their playable inward face; their outward side can be off deck.
+    const bumperFloor=courseMath.nearestRouteSurface([route],def.x,def.z,Infinity);assert(bumperFloor,`${track.id}/${def.id}: bumper has no floor`);
+    const side=def.laneSlot===undefined?1:-1,offset=side>0?Math.min(.75,Math.max(.1,bumperFloor.halfWidth-Math.abs(bumperFloor.lateral)-.06)):.75;
+    const x=def.x+dx/n*offset*side,z=def.z+dz/n*offset*side;
+    const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);assert(floor,`${track.id}/${def.id}: bumper contact fixture has no floor`);
     const h=makeHarness(testTrack([],{routes:[route],bumpers:[def],start:{x,y:floor.y+.62,z}}));
     h.b.grounded=true;h.b.supportRoute=route;h.b.bumperHitCd=.2;
     h.step(1/hz);
     assert(Math.hypot(h.b.x-def.x,h.b.z-def.z)>=def.r+h.b.r-1e-6,`${track.id}/${def.id}: rail projection embeds ball inside prop`);
     assert(h.b.grounded);assert.equal(h.state.pops,0);
     for(const edge of courseMath.getRibbonBoundarySegments(route)) {
+      // A folded route can place distant rails on the other side of this
+      // point's half-plane. Only rails near the original contact can constrain
+      // the recovery; the total correction is bounded separately below.
+      if(Math.abs((x-edge.a.x)*edge.nx+(z-edge.a.z)*edge.nz)>2)continue;
       const ex=edge.b.x-edge.a.x,ez=edge.b.z-edge.a.z,u=((h.b.x-edge.a.x)*ex+(h.b.z-edge.a.z)*ez)/(ex*ex+ez*ez);
       if(u<0||u>1)continue;
-      assert((h.b.x-edge.a.x)*edge.nx+(h.b.z-edge.a.z)*edge.nz<=-h.b.r+1e-5,`${track.id}: prop recovery crosses rail`);
+      assert((h.b.x-edge.a.x)*edge.nx+(h.b.z-edge.a.z)*edge.nz<=-h.b.r+1e-5,`${track.id}/${def.id}/${route.id}@${hz}Hz: prop recovery crosses rail; ball=${JSON.stringify({x:h.b.x,z:h.b.z})}, edge=${JSON.stringify(edge)}`);
     }
     maxCorrection=Math.max(maxCorrection,Math.hypot(h.b.x-x,h.b.z-z));cases++;
   }
@@ -255,28 +266,117 @@ check('v4 pendulum contacts preserve both the solid head and supporting tier flo
   return{contacts,rates:[120,60,25]};
 });
 
-check('v3.2 every slowdown leaves a whole-ball dry skill line on its actual floor',()=>{
+// Reproduce the authoring frame (including its miter), then query the actual
+// floor triangles. A normalized tangent offset would be wrong at clipped turns.
+function routeLateralPoint(route, distance, lateral) {
+  const data=courseMath.getRouteRibbonRows(route),d=Math.max(0,Math.min(data.distances.at(-1),distance));
+  let i=0;while(i<data.distances.length-2&&data.distances[i+1]<d)i++;
+  const fraction=(d-data.distances[i])/(data.distances[i+1]-data.distances[i]||1);
+  const onRow=index=>{
+    const sideWidth=lateral<0?data.leftWidths[index]:data.rightWidths[index];
+    const column=data.columns/2+lateral/sideWidth*data.columns/2,j=Math.min(data.columns-1,Math.max(0,Math.floor(column))),u=column-j;
+    const a=data.rows[index][j],b=data.rows[index][j+1];
+    return{x:a.x+(b.x-a.x)*u,z:a.z+(b.z-a.z)*u};
+  };
+  const a=onRow(i),b=onRow(i+1),x=a.x+(b.x-a.x)*fraction,z=a.z+(b.z-a.z)*fraction;
+  const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);
+  assert(floor,`${route.id}: lateral ${lateral}m leaves real floor at ${d}m`);
+  return{x,y:floor.y,z};
+}
+
+check('v4.1 every mud field has a continuous sinusoidal whole-ball dry curve on its actual floor',()=>{
   let zones=0,contacts=0;
-  for(const track of TRACKS) {
+  const dryWidths=[];
+  for(const [stageIndex,track] of TRACKS.entries()) {
     assert(track.routes.some(r=>r.slowZone),`${track.id}: no optional sticky skill challenge`);
     for(const route of track.routes) {
       assert(!['mud','honey'].includes(route.kind),`${track.id}/${route.id}: unavoidable full-width slowdown`);
       if(!route.slowZone)continue;zones++;
-      assert(route.slowZone.dryWidth>=1.24&&route.slowZone.dryWidth<=1.6);
-      const data=courseMath.getRouteRibbonRows(route),side=route.slowZone.drySide;
-      for(let i=1;i<data.rows.length-1;i+=5) {
-        const row=data.rows[i],a=row[side===1?data.columns:0],b=row[side===1?0:data.columns];
-        const width=Math.hypot(b.x-a.x,b.z-a.z);assert(width>=route.slowZone.dryWidth+.7);
-        for(const inset of [.13,.75,1.37,1.7]) {
-          const u=inset/width,x=a.x+(b.x-a.x)*u,z=a.z+(b.z-a.z)*u;
-          const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);
-          assert(floor,`${track.id}/${route.id}: dry lane floats off floor`);
-          assert.equal(floor.kind,inset<1.5?route.kind:route.slowZone.kind,`${track.id}/${route.id}[${i}]: wrong material at ${inset}m from dry edge (sample distance ${floor.slowZoneDistance}, floor segment ${floor.segmentIndex})`);contacts++;
+      assert(route.width>=5.6&&route.width<=6.4,`${track.id}/${route.id}: mud field width must be 5.6..6.4m`);
+      const expected=mudSpecForStage(stageIndex,route.width),spec=route.slowZone;
+      for(const key of ['routeHalfWidth','dryWidth','amplitude','phase'])near(spec[key],expected[key],`${track.id}/${route.id}: stage mud ${key}`);
+      assert(spec.cycles>=1.5&&spec.cycles<=2.5,`${track.id}/${route.id}: continuous dry curve lacks authored sinusoidal cycles`);
+      dryWidths.push(spec.dryWidth);
+      const len=courseMath.polylineLength(route.points),samples=sampleDryCurvePoints(route,spec,120);
+      let min=Infinity,max=-Infinity;
+      for(let i=1;i<samples.length-1;i++) {
+        const u=i/120,offset=evaluateDryCurveOffset(spec,u),p=samples[i];min=Math.min(min,offset);max=Math.max(max,offset);
+        const center=courseMath.nearestRouteSurface([route],p.x,p.z,Infinity);
+        assert(center,`${track.id}/${route.id}: dry curve floats off floor`);
+        near(p.y-center.y,.06,`${track.id}/${route.id}: dry visual follows floor`,3e-5);
+        for(const delta of [0,-spec.dryWidth/2+.04,spec.dryWidth/2-.04,-spec.dryWidth/2-.12,spec.dryWidth/2+.12]) {
+          const q=routeLateralPoint(route,len*u,offset+delta),floor=courseMath.nearestRouteSurface([route],q.x,q.z,Infinity);
+          assert.equal(floor.kind,Math.abs(delta)<spec.dryWidth/2?route.kind:spec.kind,`${track.id}/${route.id}[${i}]: wrong real material at dry offset ${delta}`);contacts++;
         }
       }
+      assert(min<-.5&&max>.5,`${track.id}/${route.id}: dry skill line needs a continuous S turn`);
     }
   }
-  return{zones,contacts};
+  near(Math.max(...dryWidths),1.85,'opening dry curve width');near(Math.min(...dryWidths),1.38,'final dry curve width');
+  return{zones,contacts,dryWidths:[...new Set(dryWidths)]};
+});
+
+check('v4.1 zero authored stars stand over sticky floor, including curved mud fields',()=>{
+  let stars=0,mudRouteStars=0;
+  for(const track of TRACKS)for(const star of track.stars){
+    const floor=courseMath.nearestRouteSurface(track.routes,star.x,star.z,star.y+.01);
+    assert(floor,`${track.id}: star at ${star.x},${star.z} has no actual route floor`);
+    assert(!['mud','honey'].includes(floor.kind),`${track.id}/${floor.route.id}: STAR IN ${floor.kind.toUpperCase()}`);
+    if(floor.route.slowZone)mudRouteStars++;stars++;
+  }
+  assert(stars>0);assert(mudRouteStars>0,'no real dry-curve stars were exercised');
+  return{stars,mudRouteStars,stickyFloorStars:0};
+});
+
+check('v4.1 lane hazards block real lanes while retaining at least 1.55m safe floor',()=>{
+  let groups=0,hazards=0,twoLane=0,threeLane=0,minClearWidth=Infinity;
+  const collisionKinds=new Set(),stageDensities=[],expectedCounts=[5,7,9,12,15,19,24,28,34,40];
+  for(const [stageIndex,track] of TRACKS.entries()){
+    assert(track.laneHazards?.length,`${track.id}: missing authored lane blockers`);
+    assert.equal(track.laneHazards.length,expectedCounts[stageIndex],`${track.id}: stage-wide lane blocker count drift`);
+    assert.deepEqual(track.difficultyProfile,difficultyProfileForStage(stageIndex),`${track.id}: difficulty profile drift`);
+    const grouped=new Map(),stageKinds=new Set();
+    for(const hazard of track.laneHazards){
+      const colliders=hazard.kind==='spike'?track.spikes:hazard.kind==='pendulum'?track.hammers:hazard.kind==='bumper'?track.bumpers:hazard.kind==='critter'?track.props:[];
+      assert(colliders.some(def=>def.id===hazard.id),`${track.id}/${hazard.id}: lane hazard is missing its real runtime collider`);
+      collisionKinds.add(hazard.kind);stageKinds.add(hazard.kind);
+      assert([-1,0,1].includes(hazard.laneSlot),`${track.id}/${hazard.id}: missing laneSlot`);
+      assert(Number.isFinite(hazard.along)&&Number.isFinite(hazard.laneOffset),`${track.id}/${hazard.id}: missing longitudinal/lateral placement`);
+      const route=track.routes.find(r=>r.id===hazard.routeId);assert(route,`${track.id}/${hazard.id}: missing lane route`);
+      const bucket=grouped.get(route)||[];bucket.push(hazard);grouped.set(route,bucket);
+    }
+    for(const [route,defs] of grouped){
+      const audit=auditLaneThreat(route,defs);assert(audit.ok,`${track.id}/${route.id}: ${audit.issues.join('; ')}`);
+      assert(audit.minClearWidth>=MIN_SAFE_PASSING_WIDTH-1e-6,`${track.id}/${route.id}: sealed safe lane`);
+      if(audit.laneCount===2){assert(route.width>=2.79&&route.width<=3.4);twoLane++;}
+      else {assert.equal(audit.laneCount,3);assert(route.width>=4.2&&route.width<=4.6);threeLane++;}
+      minClearWidth=Math.min(minClearWidth,audit.minClearWidth);groups++;hazards+=defs.length;
+    }
+    assert.deepEqual([...stageKinds].sort(),['bumper','critter','pendulum','spike'],`${track.id}: every stage needs all four real lane blocker kinds`);
+    const measuredLength=track.routes.filter(route=>!route.secret).reduce((sum,route)=>sum+courseMath.polylineLength(route.points),0)+track.chutes.reduce((sum,chute)=>sum+courseMath.polylineLength(chute.points),0);
+    const per100m=track.laneHazards.length/measuredLength*100,previous=stageDensities.at(-1);
+    assert(!previous||per100m>previous.per100m+1e-6,`${track.id}: actual lane trap density ${per100m.toFixed(4)}/100m does not exceed ${previous?.track} ${previous?.per100m.toFixed(4)}/100m`);
+    stageDensities.push({track:track.id,hazards:track.laneHazards.length,per100m});
+  }
+  assert(twoLane>0&&threeLane>0,'both two-lane and three-lane blockers must be authored');
+  assert.deepEqual([...collisionKinds].sort(),['bumper','critter','pendulum','spike'],'missing real lane blocker collision kind');
+  return{groups,hazards,twoLane,threeLane,minClearWidth,collisionKinds:[...collisionKinds].sort(),stageDensities};
+});
+
+check('v4.1 ten stages use their assigned distinct chute styles with signed banking',()=>{
+  const styles=['rollercoaster','banked_slalom','rollercoaster','helix','helix','corkscrew_drop','rollercoaster','banked_slalom','corkscrew_drop','corkscrew_drop'];
+  let chutes=0;
+  for(const [i,track] of TRACKS.entries()){
+    assert(track.chutes.length,`${track.id}: missing styled chute`);
+    for(const chute of track.chutes){
+      assert(CHUTE_STYLES.includes(chute.style));assert.equal(chute.style,styles[i],`${track.id}/${chute.id}: wrong stage chute style`);
+      assert.equal(chute.bankProfile.length,chute.points.length,'bank profile must match real rail samples');
+      assert(chute.bankProfile.every(bank=>Number.isFinite(bank)&&Math.abs(bank)<=.65),'chute bank roll exceeds safe authored bounds');
+      if(chute.style!=='helix')assert(chute.bankProfile.some(bank=>Math.abs(bank)>.05),'styled chute has no visible signed banking');
+      chutes++;
+    }
+  }
+  return{chutes,styles};
 });
 
 check('v4 clipped asymmetric turns retain a real 1.5m dry skill lane on either edge',()=>{
@@ -619,7 +719,16 @@ check('trough solid rails both sides at variable dt', () => {
 check('Zero-Pinch / No-Trap: actual boundary rails leave a clear corridor through all ten stages',()=>{
   const stages=[];
   for(const track of TRACKS) {
-    let segments=0,guardedLength=0,authoredLength=0,minClearance=Infinity,minMeasuredWidth=Infinity,stations=0;
+    let segments=0,guardedLength=0,authoredLength=0,minClearance=Infinity,minMeasuredWidth=Infinity,stations=0,minAllRowWidth=Infinity,rowsChecked=0;
+    // Check every real row, including unguarded roads and seam openings where
+    // no finite rail segment exists for the collision audit below.
+    for(const route of track.routes){
+      const data=courseMath.getRouteRibbonRows(route);
+      for(let i=0;i<data.rows.length;i++){
+        const width=data.leftWidths[i]+data.rightWidths[i];minAllRowWidth=Math.min(minAllRowWidth,width);rowsChecked++;
+        assert(width>=2.84-1e-5,`${track.id}/${route.id}/${i}: actual floor row pinches to ${width.toFixed(3)}m`);
+      }
+    }
     const stageRails=track.routes.filter(r=>r.walls).flatMap(r=>courseMath.getRibbonBoundarySegments(r));
     for(const route of track.routes.filter(r=>r.walls)) {
       const rails=courseMath.getRibbonBoundarySegments(route),data=courseMath.getRouteRibbonRows(route);
@@ -661,7 +770,7 @@ check('Zero-Pinch / No-Trap: actual boundary rails leave a clear corridor throug
         }
       }
     }
-    assert(segments>0&&stations>0);stages.push({track:track.id,segments,stations,minClearWidth:+minClearance.toFixed(3),minMeasuredWidth:+minMeasuredWidth.toFixed(3),guardedLength:+guardedLength.toFixed(1),authoredLength:+authoredLength.toFixed(1)});
+    assert(segments>0&&stations>0);stages.push({track:track.id,segments,stations,rowsChecked,minAllRowWidth:+minAllRowWidth.toFixed(3),minClearWidth:+minClearance.toFixed(3),minMeasuredWidth:+minMeasuredWidth.toFixed(3),guardedLength:+guardedLength.toFixed(1),authoredLength:+authoredLength.toFixed(1)});
   }
   assert.equal(stages.length,10);return{stages};
 });
@@ -812,7 +921,7 @@ const distance3 = (a,b) => Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 function near(a,b,label,tol=1e-6) { assert(Math.abs(a-b)<=tol, `${label}: ${a} != ${b}`); }
 const finiteBall = b => {for(const key of ['x','y','z','vx','vy','vz']) assert(Number.isFinite(b[key]),`non-finite ball.${key}`);};
 
-check('v4 ten distinct approved courses preserve original lengths and compact flagship footprints', () => {
+check('v4.1 ten distinct approved courses meet all 600..1750m targets and preserve flagship tiers', () => {
   assert.equal(TRACKS.length,10); assert.equal(CATS.length,9);
   assert.ok(courseMath,'missing shared v3 course geometry functions');
   const signatures = new Set();
@@ -828,13 +937,12 @@ check('v4 ten distinct approved courses preserve original lengths and compact fl
     assert(track.checkpoints.every((cp,j)=>!j||cp.progress>track.checkpoints[j-1].progress),`${track.id}: unordered checkpoints`);
     assert(track.routes.some(r=>r.width>=6.2&&r.width<=7.6));
     assert(track.routes.some(r=>r.width>=4&&r.width<=4.8));
-    assert(track.routes.some(r=>r.width>=2.6&&r.width<=3));
+    assert(track.routes.some(r=>r.width>=2.79&&r.width<=3.4),`${track.id}: missing two-lane challenge corridor`);
     assert(track.routes.some(r=>!r.walls)&&track.routes.some(r=>r.walls));
-    assert(track.bonusTime>=210&&track.bonusTime<=360);
+    assert(track.bonusTime>=210&&track.bonusTime<=420,`${track.id}: expanded course timer outside 210..420 seconds`);
     assert(track.spikes.length&&track.bumpers.length&&track.boosts.length,`${track.id}: missing action setpieces`);
     if(i>=2)assert(track.hammers.length&&track.rollingPins.length,`${track.id}: missing pendulum or rolling pin`);
-    if(!track.flagship) near(track.length,courseConfig.COURSE_LENGTH_TARGETS[i],`${track.id}: original v3 course length changed`,.03);
-    else {assert(track.length>=150&&track.length<=700,`${track.id}: flagship itinerary is not compact`);assert(!track.routes.some(r=>r.id.startsWith('adventure-')),`${track.id}: flagship was expanded away from its approved diorama`);}
+    near(track.length,courseConfig.COURSE_LENGTH_TARGETS[i],`${track.id}: measured v4.1 course target`,.03);
     signatures.add(JSON.stringify(track.routes.map(r=>r.points.map(p=>[+p.x.toFixed(2),+p.y.toFixed(2),+p.z.toFixed(2)]))));
     for(const route of track.routes) {
       assert(route.width>1.24 && route.points.length>=2,`${track.id}/${route.id}: unusable route dimensions`);
@@ -842,9 +950,8 @@ check('v4 ten distinct approved courses preserve original lengths and compact fl
     }
   }
   assert.equal(signatures.size,10,'courses reuse a layout');
-  assert(TRACKS[0].length>=420 && TRACKS[0].length<=480,'opening adventure length outside420..480m');
-  // v3.2 preserves the measured primary itinerary through a six-act grand finale.
-  assert(TRACKS[9].length>=1250 && TRACKS[9].length<=1450,'finale outside1250..1450m');
+  near(TRACKS[0].length,600,'opening course target',.03);
+  near(TRACKS[9].length,1750,'finale course target',.03);
   return {lengths:TRACKS.map(t=>+t.length.toFixed(2))};
 });
 
@@ -986,7 +1093,7 @@ check('v4 fresh saves unlock three flagships and lobby shortcuts launch them in 
   context.save.clearedTracks.push(0);assert.equal(context.unlocked(1),true,'original progression unlock no longer works');
   const shell=readFileSync(new URL('../src/shell.html',import.meta.url),'utf8');
   const indices=[...shell.matchAll(/data-flagship-track="(\d+)"/g)].map(match=>Number(match[1]));assert.deepEqual(indices,[4,3,8]);
-  assert(shell.includes('🌟 v4.0 立体王牌直通'),'lobby flagship bar title missing');
+  assert(shell.includes('🌟 v4.1 立体王牌直通'),'lobby flagship bar title missing');
   const buttons=indices.map(index=>({dataset:{flagshipTrack:String(index)}})),launches=[];
   const clicks=vm.createContext({selectedPracticeTrack:0,document:{querySelectorAll:()=>buttons},Number,loadTrack:(...args)=>launches.push(args)});
   vm.runInContext(sourceBetween("document.querySelectorAll('[data-flagship-track]')",'document.getElementById("btn-cat-go")'),clicks);
@@ -1303,26 +1410,59 @@ check('fresh keyboard, stick and gyro lateral intent cancels chute exit settling
   return{cases:receipts.length,receipts};
 });
 
+function makeLaneGuide(route,hazards) {
+  if(!hazards.length)return()=>0;
+  const audit=auditLaneThreat(route,hazards);
+  assert(audit.ok,`${route.id}: cannot guide through unsafe lane authoring: ${audit.issues.join('; ')}`);
+  let previousOffset=0;
+  const stops=audit.hazardAudits.sort((a,b)=>a.distance-b.distance).map(entry=>{
+    const {section,bodyLeft,bodyRight}=entry;
+    const left=(section.left.x-section.center.x)*section.nx+(section.left.z-section.center.z)*section.nz,right=left+section.width;
+    const choices=[[left,bodyLeft],[bodyRight,right]].filter(([a,b])=>b-a>=MIN_SAFE_PASSING_WIDTH-1e-6);
+    // Center the whole ball in the actual remaining floor, reserving the full
+    // pendulum/animal sweep, regardless of animation phase or telegraph state.
+    choices.sort((a,b)=>Math.abs((a[0]+a[1])/2-previousOffset)-Math.abs((b[0]+b[1])/2-previousOffset));
+    assert(choices.length,`${route.id}: no whole-ball safe passing guide`);
+    const offset=(choices[0][0]+choices[0][1])/2;previousOffset=offset;
+    return{start:entry.distance-entry.reach-.7,end:entry.distance+entry.reach+.7,offset};
+  });
+  const smooth=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
+  const first=stops[0],last=stops.at(-1),length=courseMath.polylineLength(route.points);
+  return distance=>{
+    if(distance<first.start)return first.offset*smooth((distance-Math.max(0,first.start-4))/Math.max(.01,Math.min(4,first.start)));
+    for(let i=0;i<stops.length;i++){
+      const current=stops[i];if(distance<=current.end)return current.offset;
+      const next=stops[i+1];
+      if(next&&distance<next.start){
+        // Sparse early stages leave long stretches without traps. Return to
+        // the ordinary centerline there so a distant lane blocker cannot steer
+        // the primary-route guide into an unrelated optional launch entrance.
+        if(next.start-current.end>10){
+          if(distance<current.end+4)return current.offset*(1-smooth((distance-current.end)/4));
+          if(distance>next.start-4)return next.offset*smooth((distance-next.start+4)/4);
+          return 0;
+        }
+        return current.offset+(next.offset-current.offset)*smooth((distance-current.end)/(next.start-current.end));
+      }
+    }
+    return last.offset*(1-smooth((distance-last.end)/Math.max(.01,Math.min(4,length-last.end))));
+  };
+}
+
 function driveCourse(track, { dt=1/120, speed=[2.9,2.75,3.3,3.6,4.1,5,5.4,6.2,6.4,6.7][track.index] }={}) {
   const h=makeHarness(track), points=[];
   for(const step of track.primaryPath||[]) {
     if(step.type==='route') {
-      const r=track.routes.find(r=>r.id===step.id),len=courseMath.polylineLength(r.points);
-      for(let d=0;d<len;d+=0.6) {
-        const p=courseMath.samplePath(r.points,d);
-        if(r.slowZone) {
-          const data=courseMath.getRouteRibbonRows(r);let i=0;
-          while(i<data.distances.length-2&&data.distances[i+1]<d)i++;
-          const fraction=Math.max(0,Math.min(1,(d-data.distances[i])/(data.distances[i+1]-data.distances[i]||1)));
-          const column=r.slowZone.drySide===1?data.columns:0,a=data.rows[i][column],b=data.rows[i+1][column];
-          const edge={x:a.x+(b.x-a.x)*fraction,z:a.z+(b.z-a.z)*fraction};
-          const nx=p.x-edge.x,nz=p.z-edge.z,n=Math.hypot(nx,nz)||1;
-          p.x=edge.x+nx/n*r.slowZone.dryWidth/2;p.z=edge.z+nz/n*r.slowZone.dryWidth/2;
-          p.y=courseMath.nearestRouteSurface([r],p.x,p.z,Infinity)?.y??p.y;
-        }
-        points.push({...p,kind:'surface',routeId:r.id,width:r.width,surfaceKind:r.kind});
+      const r=track.routes.find(r=>r.id===step.id),len=courseMath.polylineLength(r.points),count=Math.ceil(len/.6);
+      const laneHazards=(track.laneHazards||[]).filter(def=>def.routeId===r.id),dryPoints=r.slowZone?sampleDryCurvePoints(r,r.slowZone,count):null;
+      // Calculate hazard envelopes once; the guide only changes mouse input.
+      const laneGuide=laneHazards.length?makeLaneGuide(r,laneHazards):null;
+      const offsets=laneGuide?Array.from({length:count+1},(_,i)=>laneGuide(len*i/count)):null;
+      for(let i=0;i<=count;i++) {
+        const d=len*i/count;
+        const p=dryPoints?dryPoints[i]:offsets?routeLateralPoint(r,d,offsets[i]):courseMath.samplePath(r.points,d);
+        points.push({...p,kind:'surface',routeId:r.id,width:r.width,surfaceKind:r.kind,along:d,laneOffset:offsets?.[i]??(r.slowZone?evaluateDryCurveOffset(r.slowZone,i/count):0)});
       }
-      points.push({...r.points.at(-1),kind:'surface',routeId:r.id,width:r.width,surfaceKind:r.kind});
     }else if(step.type==='chute') {
       const c=track.chutes.find(c=>c.id===step.id);points.push({...c.points[0],kind:'chute',chuteId:c.id},{...c.receiving,kind:'chute_exit',chuteId:c.id});
     }else if(step.type==='portal') {
@@ -1375,23 +1515,35 @@ function driveCourse(track, { dt=1/120, speed=[2.9,2.75,3.3,3.6,4.1,5,5.4,6.2,6.
       }
       if(best<2)target=closest;
     }
-    while(target<points.length-1 && Math.hypot(points[target].x-h.b.x,points[target].z-h.b.z)<(points[target].width<=3.0?.65:.85) && Math.abs(points[target].y-h.b.y+h.b.r)<1.8)target++;
+    while(target<points.length-1 && Math.hypot(points[target].x-h.b.x,points[target].z-h.b.z)<(points[target].width<=3.4?.65:.85) && Math.abs(points[target].y-h.b.y+h.b.r)<1.8)target++;
     const p=points[target];
     let aim=p;
     // Aim ahead on the same floor instead of braking for every60cm sample.
     for(let i=target+1;i<Math.min(points.length,target+7);i++){
       const q=points[i];if(q.kind!=='surface'||q.routeId!==p.routeId)break;
-      if(Math.hypot(q.x-h.b.x,q.z-h.b.z)>(p.width<=3.0?1.15:2.1))break;
+      if(Math.hypot(q.x-h.b.x,q.z-h.b.z)>(p.width<=3.4?1.6:p.width<=4.6?2.4:2.5))break;
       aim=q;
     }
     const dx=aim.x-h.b.x,dz=aim.z-h.b.z,distance=Math.hypot(dx,dz);
-    let desiredSpeed=p.width<=3.0?2.1:p.surfaceKind==='ice'?4.8:speed;
+    const narrowCruise=track.index>=3?4:2.6;
+    let desiredSpeed=p.width<=3.4?narrowCruise:p.width<=4.6?Math.min(speed,6):p.surfaceKind==='ice'?4.8:speed;
     // Brake before narrow entries, launched gaps and sharp changes of direction.
     for(let i=target;i<Math.min(points.length,target+16);i++){
       const q=points[i],d=Math.hypot(q.x-h.b.x,q.z-h.b.z);
       if(q.kind==='chute_exit'||q.kind==='landing'||q.kind==='portal_exit')break;
-      if(q.width<=3.0)desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.1**2+2*3*d));
+      if(q.width<=3.4)desiredSpeed=Math.min(desiredSpeed,Math.sqrt(narrowCruise**2+2*3*d));
       if(q.kind==='launch')desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.2**2+2*3*d));
+      const before=points[i-1],after=points[i+1];
+      if(before?.kind==='surface'&&q.kind==='surface'&&after?.kind==='surface'){
+        const ax=q.x-before.x,az=q.z-before.z,bx=after.x-q.x,bz=after.z-q.z,la=Math.hypot(ax,az),lb=Math.hypot(bx,bz);
+        if(la>.1&&lb>.1){
+          const angle=Math.acos(Math.max(-1,Math.min(1,(ax*bx+az*bz)/(la*lb)))),curvature=angle/((la+lb)/2);
+          // Brake from route speed before a lane change or a tight geometric
+          // corner, using the same full-sweep safe line followed by input.
+          const turnSpeed=Math.max(1.7,Math.sqrt(3/Math.max(.001,curvature)));
+          desiredSpeed=Math.min(desiredSpeed,Math.sqrt(turnSpeed**2+2*3*d));
+        }
+      }
     }
     if(p.kind==='launch'||p.kind==='chute'||p.kind==='portal')desiredSpeed=Math.min(desiredSpeed,Math.max(1.6,distance*2));
     else desiredSpeed=Math.min(desiredSpeed,Math.max(.4,distance*3));
@@ -1405,19 +1557,19 @@ function driveCourse(track, { dt=1/120, speed=[2.9,2.75,3.3,3.6,4.1,5,5.4,6.2,6.
     if(h.state.pops)break;
     if(process.argv.includes(`--trace=${track.id}`) && frame%Math.round(1/dt)===0)console.log(JSON.stringify({trace:track.id,t:+h.state.elapsed.toFixed(2),target,p,aim,ax,az,supportRoute:h.b.supportRoute?.id,supportPlatform:h.b.supportPlatform?.role,ball:{x:h.b.x,y:h.b.y,z:h.b.z,grounded:h.b.grounded,vx:h.b.vx,vy:h.b.vy,vz:h.b.vz}}));
   }
-  return {track:track.id,hz:Math.round(1/dt),cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),remaining:+h.state.timeLeft.toFixed(2),penalties:h.state.timePenaltyTotal||0,target,targets:points.length,chuteRides,launches,portals,portalIds,falls:h.events.filter(e=>e.type==='fall').length,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
+  return {track:track.id,hz:Math.round(1/dt),cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),remaining:+h.state.timeLeft.toFixed(2),earnedTime:+(h.state.timeLeft+h.state.elapsed+(h.state.timePenaltyTotal||0)-track.bonusTime).toFixed(2),penalties:h.state.timePenaltyTotal||0,target,targets:points.length,chuteRides,launches,portals,portalIds,falls:h.events.filter(e=>e.type==='fall').length,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
 }
 const rateArgument=process.argv.find(a=>a.startsWith('--route-hz='));
 const routeRates=rateArgument?[Number(rateArgument.split('=')[1])]:[120,60,25];
 for(const hz of routeRates)assert(hz>=25 && hz<=240,'route rate must be25..240Hz');
-for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.argv.some(a=>a.startsWith('--course='))||process.argv.includes(`--course=${t.id}`)))check(`v4.0 input-only complete course at${routeHz}Hz: ${track.id}`,()=>{
+for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.argv.some(a=>a.startsWith('--course='))||process.argv.includes(`--course=${t.id}`)))check(`v4.1 input-only complete course at${routeHz}Hz: ${track.id}`,()=>{
   const receipt=driveCourse(track,{dt:1/routeHz});
   assert(receipt.cleared,`course cannot finish through real movement: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.pops,0,`route pops: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.falls,0,`route falls: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.portals,(track.portals||[]).length,'complete run skipped paired portal');
   assert.deepEqual(receipt.portalIds,(track.primaryPath||[]).filter(p=>p.type==='portal').map(p=>p.id),'complete run used wrong portal order');
-  assert(receipt.seconds<=track.bonusTime+1/routeHz,`course exceeds authored time budget: ${JSON.stringify(receipt)}`);
+  assert(receipt.remaining>=0,`course exhausted its authored timer and earned bonuses: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.chuteRides,(track.chutes||[]).length,'complete run skipped authored chute');
   if(track.chutes.length)assert(receipt.cameraModes.includes('LOCKED_CHUTE'),'complete run never enters chute camera');
   if(track.cameraZones.length)assert(receipt.cameraModes.includes('MANUAL_ORBIT'),'complete run never enters authored precision camera');

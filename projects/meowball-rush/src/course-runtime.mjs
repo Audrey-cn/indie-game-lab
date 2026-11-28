@@ -1,4 +1,5 @@
 import { polylineLength, samplePath, computeLaunchVelocity, getRibbonBoundarySegments, nearestRouteSurface } from './course-math.mjs';
+import { isPointOnDryCurve } from './mud-curve.mjs';
 
 // Contact queries are local to the sphere's tier. A stale pre-launch/warp
 // previousBottom cannot select an upper deck sharing the same XZ footprint.
@@ -13,10 +14,15 @@ export function isSurfaceInContactWindow(ball, floorY) {
 }
 export function sampleRollingRouteSurface(routes, ball) {
   const bottom = ball.y - ball.r;
-  return nearestRouteSurface(routes, ball.x, ball.z, bottom + .55, {
+  const surface=nearestRouteSurface(routes, ball.x, ball.z, bottom + .55, {
     bottom, previousBottom: ball.previousBottom, grounded: ball.grounded,
     supportRoute: ball.supportRoute, verticalWindow: surfaceContactWindow(ball),
   });
+  if(surface && Number.isFinite(surface.curveU)) {
+    surface.dryLine=isPointOnDryCurve(surface.route.slowZone,surface.curveU,surface.curveLateral);
+    surface.kind=surface.dryLine?surface.route.kind:surface.route.slowZone.kind;
+  }
+  return surface;
 }
 
 // A radial hazard projection must satisfy the floor as well as the sphere.

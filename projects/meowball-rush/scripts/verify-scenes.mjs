@@ -3,13 +3,14 @@
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createHash } from "node:crypto";
-import { getRouteRibbonRows, getChuteShellRows, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments } from "../src/course-math.mjs";
+import { getRouteRibbonRows, getChuteShellRows, getCompanionChute, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments } from "../src/course-math.mjs";
+import { evaluateDryCurveOffset, sampleDryCurvePoints } from "../src/mud-curve.mjs";
 import { nearestSceneryClearance } from "../src/scenery-clearance.mjs";
-import { collideRouteGuardrails, sampleRollingRouteSurface, isSurfaceInContactWindow, resolveSphereFloorContact } from "../src/course-runtime.mjs";
+import { collideRouteGuardrails, sampleRollingRouteSurface, isSurfaceInContactWindow, resolveSphereFloorContact, fairytalePropPosition } from "../src/course-runtime.mjs";
 import { animateSpikeTraps } from '../src/spike-traps.mjs';
 import { verifyRibbonMesh, verifyMeshCheckerFixtures, verifyMeshPairSeparation } from "./mesh-checks.mjs";
 import "./verify-fall-feedback.mjs";
-import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleScenery, activateCheckpoint } from "../src/v3-worlds.mjs";
+import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleScenery, activateCheckpoint, disposeCourseSceneResources } from "../src/v3-worlds.mjs";
 import { boostRibbonGeometry } from "../src/course-geometry.mjs";
 import { createDirector, updateDirector, triggerSetpiece } from "../src/director.mjs";
 import { createCameraOcclusion, isCameraOccluder } from "../src/camera-occlusion.mjs";
@@ -250,7 +251,17 @@ function verifyCameraScene(track,group,dynamicMeshes) {
 }
 const motifHashes=new Set(),edgeProfiles=new Set(),stageSignatures=new Set();
 let verifiedTriangles=0,intersectionPairs=0,crossShellPairs=0,crossRoutePairs=0,crossSurfacePairs=0,seamCount=0,closedGuardEnds=0,checkedScenery=0;
+let disposedCourseGeometries=0,disposedCourseMaterials=0,preservedForestMaterials=0;
 verifyMeshCheckerFixtures();
+// The original reflected-strand defect requires an actual helix. Stage07 now
+// uses a rollercoaster, so retain that regression against the ancient-oak coil.
+{
+  const source=TRACKS[3].chutes.find(chute=>chute.style==='helix');
+  assert(source,'legacy reflected-strand fixture needs the preserved oak helix');
+  const primary=createChuteShellGeometry(source),legacy=createChuteShellGeometry({...source,width:source.width*.82,points:source.points.map(p=>({x:source.center.x*2-p.x,y:p.y+.65,z:source.center.z*2-p.z}))});
+  assert.throws(()=>verifyMeshPairSeparation(primary,legacy,'legacy mirrored helix'),/separate shells intersect/,'regression did not expose the original crossing strands');
+  primary.dispose();legacy.dispose();
+}
 // Exercise every new mechanism even if a course accidentally loses its definition.
 const hazardFixture = { ...TRACKS[0], id: 'hazard-fixture',
   rollingPins: [{ x: 0, y: 8.48, z: -1, width: 2, ampZ: 0.9, speed: 1.2, phase: 0 }],
@@ -314,14 +325,17 @@ function verifyHazardEntries(track, dynamicMeshes) {
   }
 }
 
-let checkedBorders=0,checkedBackdrops=0,checkedSceneryVertices=0;
+let checkedBorders=0,checkedForestClusters=0,checkedDryCurves=0,checkedBankedRows=0,checkedBackdrops=0,checkedSceneryVertices=0;
 function verifyWorldLayers(track,group,dynamic) {
   assert(dynamic.diegeticBorders?.length>100,`${track.id}: sparse close-up diegetic border layer`);
   assert(dynamic.dioramaBackdrops?.length>=12,`${track.id}: missing surrounding diorama ring`);
   assert.deepEqual([...new Set(dynamic.dioramaBackdrops.map(entry=>entry.layer))].sort(),[0,1]);
   const batches=new Set([...dynamic.diegeticBorders,...dynamic.dioramaBackdrops].flatMap(entry=>entry.parts.map(part=>part.mesh)));
-  assert(batches.size<=300,`${track.id}: close/backdrop scenery lost material batching`);
-  assert([...batches].reduce((sum,mesh)=>sum+mesh.geometry.attributes.position.count,0)<=450000,`${track.id}: storybook scenery exceeded geometry budget`);
+  const routeLength=track.routes.reduce((sum,route)=>sum+getRouteRibbonRows(route).distances.at(-1),0);
+  // v4.1 extends the flagships with additional route-local batches and makes
+  // later courses longer. Retain per-route/per-metre budgets as they expand.
+  assert(batches.size<=Math.max(300,track.routes.length*20),`${track.id}: close/backdrop scenery lost material batching`);
+  assert([...batches].reduce((sum,mesh)=>sum+mesh.geometry.attributes.position.count,0)<=Math.max(450000,routeLength*650),`${track.id}: storybook scenery exceeded geometry budget`);
   if(track.worldType==='grand_medley')assert(dynamic.diegeticBorders.some(entry=>entry.parts.some(part=>part.mesh.material.emissiveIntensity>.1)),`${track.id}: starlight crystal borders have no actual glow`);
   // Independent polygon separation test, using the rendered road's actual
   // cross-sections. Every retained scenery vertex must fit its checked envelope.
@@ -383,27 +397,141 @@ function verifyWorldLayers(track,group,dynamic) {
     const clearance=nearestSceneryClearance(track,{x:entry.center.x,z:entry.center.z,radius:actualRadius});
     assert(clearance.margin>=20-1e-4&&clearance.margin<=85+1e-4,`${track.id}: backdrop outside20..85m route clearance`);checkedBackdrops++;
   }
-  assert.equal(dynamic.slowZones?.length,track.routes.filter(route=>route.slowZone).length);
-  for(const entry of dynamic.slowZones) {
-    for(const [mesh,kind] of [[entry.dry,entry.route.kind],[entry.pool,entry.def.kind]]) {
-      assert(mesh.geometry.attributes.position.count>0);
-      const vertices=mesh.geometry.attributes.position;
-      for(let i=0;i<vertices.count;i++) {
-        const x=vertices.getX(i),z=vertices.getZ(i);let floor=nearestRouteSurface([entry.route],x,z,Infinity);
-        // BufferGeometry stores Float32. At a finite mouth a rounded endpoint
-        // can lie a few microns outside the double triangle used for queries.
-        if(!floor)for(const [dx,dz] of [[.00003,0],[-.00003,0],[0,.00003],[0,-.00003]]){floor=nearestRouteSurface([entry.route],x+dx,z+dz,Infinity);if(floor)break;}
-        assert(floor,`${track.id}: sticky/dry overlay outside floor`);
-        const boundary=Math.abs(floor.slowZoneDistance-entry.def.dryWidth)<1e-4;
-        assert(boundary||floor.kind===kind,`${track.id}: visible sticky boundary differs from physics`);
+  const forest=dynamic.forestDensityBorders;
+  assert(forest?.isGroup&&isAttached(forest,group),`${track.id}: dense roadside layer is missing or detached`);
+  const clusters=forest.children;
+  const boundaryLength=track.routes.reduce((sum,route)=>sum+getRibbonBoundarySegments(route).reduce((length,edge)=>length+Math.hypot(edge.b.x-edge.a.x,edge.b.z-edge.a.z),0),0);
+  assert(clusters.length>=Math.max(40,boundaryLength/12),`${track.id}: roadside density is too low (${clusters.length} clusters / ${boundaryLength.toFixed(1)}m exposed edge)`);
+  assert.equal(forest.userData.borderCount,clusters.length,`${track.id}: forest count receipt differs from rendered clusters`);
+  assert.equal(forest.userData.placements.length,clusters.length,`${track.id}: forest placement receipt differs from rendered clusters`);
+  assert.deepEqual([...new Set(clusters.map(cluster=>cluster.userData.side))].sort(),[-1,1],`${track.id}: dense borders cover only one roadside`);
+  const forestBatches=forest.userData.batchMeshes;
+  assert(Array.isArray(forestBatches)&&forestBatches.length>0,`${track.id}: dense roadside geometry has no material batches`);
+  assert.equal(forest.userData.drawCallsAfter,forestBatches.length,`${track.id}: dense border draw-call receipt differs from actual batches`);
+  assert(forest.userData.drawCallsAfter<forest.userData.drawCallsBefore*.35,`${track.id}: roadside density lost practical material batching`);
+  // This uses the actual banked shell triangles, companion strand and landing
+  // rectangles, independently of the forest factory's clearance receipt.
+  const allFloors=[...floors];
+  for(const chute of [...track.chutes,...track.chutes.filter(chute=>chute.doubleHelix).map(getCompanionChute)]) {
+    const data=getChuteShellRows(chute);
+    for(let i=1;i<data.rows.length;i++)for(let j=1;j<=data.columns;j++) {
+      const a=data.rows[i-1][j-1],b=data.rows[i-1][j],c=data.rows[i][j-1],d=data.rows[i][j];
+      allFloors.push([a,b,c],[b,d,c]);
+    }
+  }
+  for(const p of track.platforms||[])allFloors.push([{x:p.x-p.w/2,z:p.z-p.d/2},{x:p.x+p.w/2,z:p.z-p.d/2},{x:p.x+p.w/2,z:p.z+p.d/2},{x:p.x-p.w/2,z:p.z+p.d/2}]);
+  const allBounds=allFloors.map(bounds),clearanceCells=new Map(),cellSize=8;
+  for(let i=0;i<allFloors.length;i++) {
+    const box=allBounds[i];
+    for(let x=Math.floor(box.minX/cellSize);x<=Math.floor(box.maxX/cellSize);x++)for(let z=Math.floor(box.minZ/cellSize);z<=Math.floor(box.maxZ/cellSize);z++) {
+      const key=`${x}/${z}`;if(!clearanceCells.has(key))clearanceCells.set(key,[]);clearanceCells.get(key).push(i);
+    }
+  }
+  for(const cluster of clusters) {
+    const meta=cluster.userData,box=bounds(meta.footprint);
+    assert(track.routes.some(route=>route.id===meta.routeId),`${track.id}: dense border has no source road`);
+    assert(meta.elementCount>=12&&meta.parts?.length>0,`${track.id}: dense border lacks sculpted detail or mesh receipts`);
+    assert.equal(meta.footprint.length,4,`${track.id}: forest footprint is not a closed clearance rectangle`);
+    const candidates=new Set();
+    for(let x=Math.floor(box.minX/cellSize);x<=Math.floor(box.maxX/cellSize);x++)for(let z=Math.floor(box.minZ/cellSize);z<=Math.floor(box.maxZ/cellSize);z++)for(const index of clearanceCells.get(`${x}/${z}`)||[])candidates.add(index);
+    for(const index of candidates)assert(!intersects(meta.footprint,allFloors[index]),`${track.id}/${meta.routeId}: actual dense border footprint intrudes into a route, chute or receiving platform`);
+    for(const part of meta.parts) {
+      assert(isAttached(part.mesh,group)&&isVisible(part.mesh),`${track.id}: dense border batch is detached or hidden`);
+      assert(forestBatches.includes(part.mesh),`${track.id}: dense border refers to an unregistered batch`);
+      assert(isCameraOccluder(part.mesh,group),`${track.id}: dense border mesh cannot fade from the ball's sightline`);
+      const vertices=part.mesh.geometry.attributes.position;
+      assert(part.firstVertex>=0&&part.vertexCount>0&&part.firstVertex+part.vertexCount<=vertices.count,`${track.id}: dense border vertex receipt is outside its material batch`);
+      for(let i=part.firstVertex;i<part.firstVertex+part.vertexCount;i++) {
+        worldPoint.fromBufferAttribute(vertices,i).applyMatrix4(part.mesh.matrixWorld);
+        for(let edge=0;edge<4;edge++) {
+          const a=meta.footprint[edge],b=meta.footprint[(edge+1)%4],dx=b.x-a.x,dz=b.z-a.z;
+          const centerCross=dx*(cluster.position.z-a.z)-dz*(cluster.position.x-a.x);
+          const vertexCross=dx*(worldPoint.z-a.z)-dz*(worldPoint.x-a.x);
+          assert(vertexCross*Math.sign(centerCross)>=-1e-4,`${track.id}: rendered forest leaf/prop leaves its checked footprint`);
+        }
+        checkedSceneryVertices++;
       }
     }
+    const offset=(cluster.position.x-meta.edge.x)*meta.edge.nx+(cluster.position.z-meta.edge.z)*meta.edge.nz;
+    close(offset,.55,`${track.id}: dense border does not hug its actual road edge`,.0001);
+    checkedForestClusters++;
+  }
+  assert.equal(dynamic.slowZones?.length,track.routes.filter(route=>route.slowZone).length);
+  assert(dynamic.slowZones.length>0,`${track.id}: stage has no visible S-curve slowdown challenge`);
+  for(const entry of dynamic.slowZones) {
+      assert(Number.isFinite(entry.def.amplitude),`${track.id}/${entry.route.id}: authored slowdown retains an obsolete drySide strip`);
+      const {dry,pool,route,def}=entry,geometry=dry.geometry,positions=geometry.attributes.position;
+      assert.equal(dry.name,'continuous-dry-skill-curve',`${track.id}/${route.id}: dry line is still a disconnected edge strip`);
+      assert.equal(dry.userData.supportRoute,route);assert.equal(pool.userData.supportRoute,route);
+      assert(isAttached(dry,group)&&isAttached(pool,group),`${track.id}: slow-zone surfaces are detached`);
+      const rows=geometry.userData.ribbonRows,columns=geometry.userData.ribbonColumns;
+      assert(rows>=73&&columns===4,`${track.id}: continuous dry curve has insufficient cross-sections`);
+      assert.equal(positions.count,rows*(columns+1));assert.equal(geometry.index.count,(rows-1)*columns*6);
+      const topology=verifyRibbonMesh(geometry,`${track.id}/${route.id}: continuous dry ribbon`);
+      verifiedTriangles+=topology.triangles;intersectionPairs+=topology.intersectionPairs;
+      const centerline=sampleDryCurvePoints(route,def,rows-1),offsets=[];
+      for(let i=0;i<rows;i++) {
+        offsets.push(evaluateDryCurveOffset(def,i/(rows-1)));
+        for(let j=0;j<=columns;j++) {
+          const vertex=i*(columns+1)+j,x=positions.getX(vertex),z=positions.getZ(vertex);
+          let floor=nearestRouteSurface([route],x,z,Infinity);
+          // Float32 overlay vertices can land one ulp beyond a finite mouth.
+          // Bound the retry by coordinate precision rather than widening roads.
+          if(!floor) {
+            const epsilon=Math.max(.00003,Math.max(Math.abs(x),Math.abs(z))*2**-23);
+            for(const [dx,dz] of [[epsilon,0],[-epsilon,0],[0,epsilon],[0,-epsilon]]) {
+              floor=nearestRouteSurface([route],x+dx,z+dz,Infinity);if(floor)break;
+            }
+          }
+          assert(floor,`${track.id}/${route.id}: continuous dry ribbon leaves rendered support`);
+          close(positions.getY(vertex)-floor.y,.06,`${track.id}: dry curve does not track its rendered floor`,.0002);
+          assert(floor.dryLine||Math.abs(floor.slowZoneDistance-def.dryWidth/2)<.0002,`${track.id}/${route.id}: visible dry ribbon differs from slowdown physics at row${i}/${rows-1} col${j}, distance ${floor.slowZoneDistance}, halfWidth ${def.dryWidth/2}, u ${floor.curveU}, lateral ${floor.curveLateral}`);
+          if(j===columns/2) {
+            close(x,centerline[i].x,`${track.id}: dry ribbon X deviates from shared S curve`,.0001);
+            close(z,centerline[i].z,`${track.id}: dry ribbon Z deviates from shared S curve`,.0001);
+          }
+        }
+      }
+      assert(Math.max(...offsets)>.5&&Math.min(...offsets)<-.5,`${track.id}: dry curve does not visibly cross both sides of the road`);
+      // Pool covers the complete sticky patch; the raised opaque ribbon masks
+      // its dry portion. It need not clip pool vertices to the S boundary.
+      assert(pool.geometry.userData.surfaceOverlay&&pool.geometry.index.count>0,`${track.id}: sticky slowdown pool is missing`);
+      checkedDryCurves++;
   }
 }
 verifyHazardEntries(hazardFixture, buildTrackScene(hazardFixture).dynamicMeshes);
 function isAttached(node, root) {
   for (let p = node; p; p = p.parent) if (p === root) return true;
   return false;
+}
+function verifyCourseResourceDisposal(track,dynamic) {
+  const geometries=new Set(),materials=new Set(),cachedMaterials=new Set();
+  for(const mesh of dynamic.forestDensityBorders.userData.batchMeshes) {
+    geometries.add(mesh.geometry);
+    for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material])cachedMaterials.add(material);
+  }
+  for(const entry of dynamic.slowZones)for(const mesh of [entry.pool,entry.dry]) {
+    geometries.add(mesh.geometry);
+    for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material])materials.add(material);
+  }
+  assert(geometries.size>0&&materials.size>0&&cachedMaterials.size>0,`${track.id}: disposal proof has no actual allocated course resources`);
+  for(const material of materials)assert(!cachedMaterials.has(material),`${track.id}: owned slowdown material aliases a cached forest material`);
+  const counts=new Map([...geometries,...materials,...cachedMaterials].map(resource=>[resource,0])),listeners=new Map();
+  for(const resource of counts.keys()) {
+    const listener=()=>counts.set(resource,counts.get(resource)+1);
+    listeners.set(resource,listener);resource.addEventListener('dispose',listener);
+  }
+  try {
+    for(let call=0;call<2;call++) {
+      disposeCourseSceneResources(dynamic);
+      for(const resource of [...geometries,...materials])assert.equal(counts.get(resource),1,`${track.id}: per-course ${resource.isMaterial?'material':'geometry'} was not disposed exactly once after cleanup call${call+1}`);
+      for(const material of cachedMaterials)assert.equal(counts.get(material),0,`${track.id}: course cleanup disposed a cached forest toon material`);
+    }
+  } finally {
+    for(const [resource,listener] of listeners)resource.removeEventListener('dispose',listener);
+  }
+  disposedCourseGeometries+=geometries.size;disposedCourseMaterials+=materials.size;preservedForestMaterials+=cachedMaterials.size;
+  return geometries;
 }
 function checkGeometry(geometry, label, strict = false) {
   const positions = geometry?.attributes?.position;
@@ -430,6 +558,16 @@ function checkGeometry(geometry, label, strict = false) {
   assert.ok(area > 0, `${label}: no nondegenerate triangles`);
   if (strict) assert.equal(collapsed, 0, `${label}: collapsed authored ribbon triangles`);
   return positions.count;
+}
+function chuteMeshOptions(chute,data=getChuteShellRows(chute)) {
+  if(!chute.bankProfile?.some(bank=>Math.abs(bank)>1e-7))return {};
+  return {normalAt:vertex=>{
+    const row=Math.floor(vertex/(data.columns+1)),column=vertex%(data.columns+1),f=data.frames[row];
+    const angle=(column/data.columns*2-1)*Math.PI/2;
+    const mouth=Math.min(1,data.distances[row]/2.5,(data.distances.at(-1)-data.distances[row])/3);
+    const lateral=-Math.sin(angle)*mouth,up=Math.cos(angle)*f.miter;
+    return {x:f.lateralX*lateral+f.upX*up,y:f.lateralY*lateral+f.upY*up,z:f.lateralZ*lateral+f.upZ*up};
+  }};
 }
 // Numeric fixtures would fail the original average-normal miter and mismatched
 // width mouths even when their meshes remained finite and nondegenerate.
@@ -478,8 +616,11 @@ function verifyCheckpointAndOverlays(track,group,dynamic) {
     for(let i=0;i<pos.count;i++){
       worldPoint.fromBufferAttribute(pos,i).applyMatrix4(mesh.matrixWorld);
       let hit=nearestRouteSurface([route],worldPoint.x,worldPoint.z,Infinity);
-      if(!hit)for(const[dx,dz]of[[.00003,0],[-.00003,0],[0,.00003],[0,-.00003]]){hit=nearestRouteSurface([route],worldPoint.x+dx,worldPoint.z+dz,Infinity);if(hit)break;}
-      assert.ok(hit,`${track.id}/${mesh.name}: overlay vertex leaves supporting deck`);
+      if(!hit) {
+        const epsilon=Math.max(.00003,Math.max(Math.abs(worldPoint.x),Math.abs(worldPoint.z))*2**-23);
+        for(const[dx,dz]of[[epsilon,0],[-epsilon,0],[0,epsilon],[0,-epsilon]]){hit=nearestRouteSurface([route],worldPoint.x+dx,worldPoint.z+dz,Infinity);if(hit)break;}
+      }
+      assert.ok(hit,`${track.id}/${mesh.name}/${route.id}: overlay vertex leaves supporting deck at ${worldPoint.toArray()}`);
       close(worldPoint.y-hit.y,meta.floorOffset,`${track.id}/${mesh.name}: decal slope/height`,.0001);
       for(const edge of getRibbonBoundarySegments(route)){
         const dx=edge.b.x-edge.a.x,dz=edge.b.z-edge.a.z,length2=dx*dx+dz*dz;
@@ -559,6 +700,8 @@ function verifyFlagshipStructures(track,group,dynamic){
 }
 
 const expectedWorlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','cosmic_warp','grand_medley'];
+const expectedChuteStyles=['rollercoaster','banked_slalom','rollercoaster','helix','helix','corkscrew_drop','rollercoaster','banked_slalom','corkscrew_drop','corkscrew_drop'];
+const renderedChuteStyles=new Set();
 assert.equal(TRACKS.length, 10, 'v3 needs all ten approved stages');
 const stageArguments=process.argv.filter(arg=>arg.startsWith('--stage=')).map(arg=>Number(arg.slice(8)));
 assert(stageArguments.every(stage=>Number.isInteger(stage)&&stage>=1&&stage<=10),'scene stage must be1..10');
@@ -572,7 +715,6 @@ for (const [stage, track] of TRACKS.entries()) {
   verifyHazardEntries(track, dynamicMeshes);
   verifyCheckpointAndOverlays(track,group,dynamicMeshes);
   group.updateMatrixWorld(true);
-  verifyFlagshipStructures(track,group,dynamicMeshes);
   let meshes = 0, vertices = 0;
   group.traverse((node) => {
     assert.ok(node.matrixWorld.elements.every(Number.isFinite), `${track.id}: invalid transform`);
@@ -603,11 +745,26 @@ for (const [stage, track] of TRACKS.entries()) {
     close(entry.mesh.position.y, entry.def.y, `${track.id}: prop Y`);
     close(entry.mesh.position.z, entry.def.z, `${track.id}: prop Z`);
   }
+  // Check authored anchors before flagship portal/train tests advance time.
+  // Then verify patrol animation against the collider's exact position API.
+  for(const elapsed of [0,1,2]) {
+    animateFairytaleScenery({fairytaleProps:dynamicMeshes.fairytaleProps},elapsed,1/60);
+    for(const entry of dynamicMeshes.fairytaleProps.filter(entry=>['ducklings','sheep','snow_bunny','snow_bunnies','penguin','penguins'].includes(entry.def.type))) {
+      const expected=fairytalePropPosition(entry.def,elapsed);
+      for(const axis of ['x','z'])close(entry.mesh.position[axis],expected[axis],`${track.id}/${entry.def.id}: patrol visual/collider ${axis}`);
+      assert(entry.mesh.position.y>=expected.y-1e-5&&entry.mesh.position.y<=expected.y+.05001,`${track.id}/${entry.def.id}: patrol idle hop leaves its floor-height envelope`);
+    }
+  }
+  verifyFlagshipStructures(track,group,dynamicMeshes);
   assert.ok(Array.isArray(dynamicMeshes.chutes), `${track.id}: missing chute registration`);
+  assert(dynamicMeshes.chutes.length>0,`${track.id}: stage has no visible styled chute`);
   assert.equal(dynamicMeshes.chutes.length, (track.chutes || []).length, `${track.id}: chute count`);
   for (const entry of dynamicMeshes.chutes) {
     assert.ok(track.chutes.includes(entry.def), `${track.id}: orphan chute definition`);
     assert.ok(isAttached(entry.mesh, group), `${track.id}: detached chute`);
+    assert.equal(entry.def.style,expectedChuteStyles[stage],`${track.id}: wrong authored chute style`);
+    renderedChuteStyles.add(entry.def.style);
+    assert.equal(entry.def.bankProfile.length,entry.def.points.length,`${track.id}: signed bank profile does not align with chute rows`);
     let translucent = 0, surfaceMeshes = 0;
     entry.mesh.traverse(node => {if (node.isMesh) {
       surfaceMeshes++;
@@ -616,13 +773,36 @@ for (const [stage, track] of TRACKS.entries()) {
     }});
     assert.ok(surfaceMeshes >= 3, `${track.id}: chute lacks halfpipe and guard structure`);
     const shell=entry.mesh.getObjectByName('chute-half-pipe-shell');
-    const topology=verifyRibbonMesh(shell.geometry,`${track.id}/${entry.def.id}`);verifiedTriangles+=topology.triangles;intersectionPairs+=topology.intersectionPairs;
+    const shellData=getChuteShellRows(entry.def),shellPositions=shell.geometry.attributes.position;
+    for(let i=0;i<shellData.rows.length;i++)for(let j=0;j<=shellData.columns;j++) {
+      const vertex=i*(shellData.columns+1)+j,p=shellData.rows[i][j];
+      close(shellPositions.getX(vertex),p.x,`${track.id}: banked collider/render X`,0);
+      close(shellPositions.getY(vertex),p.y,`${track.id}: banked collider/render Y`,0);
+      close(shellPositions.getZ(vertex),p.z,`${track.id}: banked collider/render Z`,0);
+    }
+    if(entry.def.style!=='helix') {
+      const banks=entry.def.bankProfile;
+      assert(Math.max(...banks.map(Math.abs))>=.2,`${track.id}: styled chute has no visible authored bank`);
+      if(entry.def.style==='banked_slalom')assert(Math.min(...banks)<-.2&&Math.max(...banks)>.2,`${track.id}: slalom does not bank in both directions`);
+      let visibleTilt=0;
+      for(let i=1;i<banks.length-1;i++) {
+        if(Math.abs(banks[i])<.05)continue;
+        const p=entry.def.points[i],f=shellData.frames[i];
+        close(f.roll,banks[i],`${track.id}: frame ignores signed bank`);
+        const left=shellData.rows[i][shellData.columns/4],right=shellData.rows[i][shellData.columns*3/4];
+        const measured=((right.y-p.y)/shellData.rightWidths[i]-(left.y-p.y)/shellData.leftWidths[i])/(2*Math.sin(Math.PI/4)*f.miter);
+        const expected=-Math.sin(banks[i]);
+        close(measured,expected,`${track.id}: rendered cross-section does not visibly tilt with signed roll`,.0001);
+        assert(measured*banks[i]<0,`${track.id}: rendered bank tilts against its signed profile`);
+        visibleTilt=Math.max(visibleTilt,Math.abs(measured));checkedBankedRows++;
+      }
+      assert(visibleTilt>.08,`${track.id}: authored bank has no visible rendered elevation difference`);
+    }
+    const topology=verifyRibbonMesh(shell.geometry,`${track.id}/${entry.def.id}`,chuteMeshOptions(entry.def,shellData));verifiedTriangles+=topology.triangles;intersectionPairs+=topology.intersectionPairs;
     if(entry.def.doubleHelix){
       const companion=entry.mesh.getObjectByName('rainbow-double-helix-companion');assert.ok(companion,`${track.id}: reflected companion shell missing`);
-      const companionTopology=verifyRibbonMesh(companion.geometry,`${track.id}/${entry.def.id}: companion`);verifiedTriangles+=companionTopology.triangles;intersectionPairs+=companionTopology.intersectionPairs;
+      const companionTopology=verifyRibbonMesh(companion.geometry,`${track.id}/${entry.def.id}: companion`,chuteMeshOptions(getCompanionChute(entry.def)));verifiedTriangles+=companionTopology.triangles;intersectionPairs+=companionTopology.intersectionPairs;
       crossShellPairs+=verifyMeshPairSeparation(shell.geometry,companion.geometry,`${track.id}: primary/companion`);
-      const legacy=createChuteShellGeometry({...entry.def,width:entry.def.width*.82,points:entry.def.points.map(p=>({x:entry.def.center.x*2-p.x,y:p.y+.65,z:entry.def.center.z*2-p.z}))});
-      assert.throws(()=>verifyMeshPairSeparation(shell.geometry,legacy,'legacy mirrored helix'),/separate shells intersect/,'regression did not expose the original crossing strands');legacy.dispose();
     }
     if(entry.def.material==='oak'){
       const trunk=entry.mesh.getObjectByName('hollow-giant-oak-trunk'),position=trunk.geometry.attributes.position;
@@ -729,7 +909,7 @@ for (const [stage, track] of TRACKS.entries()) {
   verifyCameraScene(track,group,dynamicMeshes);
   results.push({stage:stage+1, track:track.id, world:track.worldType, routes:track.routes.length,
     chutes:dynamicMeshes.chutes.length, props:dynamicMeshes.fairytaleProps.length, meshes, vertices});
-  const disposed = new Set();
+  const disposed = verifyCourseResourceDisposal(track,dynamicMeshes);
   group.traverse(node=>{if(node.geometry && !disposed.has(node.geometry)){disposed.add(node.geometry);node.geometry.dispose();}});
 }
 
@@ -753,8 +933,9 @@ assert.equal(stageSignatures.size,selectedStages.size,'selected stages need dist
 assert.equal(motifHashes.size,selectedStages.size,'selected stages need distinct rendered motif pixels');
 assert.equal(edgeProfiles.size,selectedStages.size,'selected stages need distinct physical guard profiles');
 if(selectedStages.size===10){assert.ok(closedGuardEnds>10,'guard transition cap coverage is too small');assert.ok(seamCount>40,'seam coverage misses authored section transitions');}
+if(selectedStages.size===10)assert.deepEqual([...renderedChuteStyles].sort(),['banked_slalom','corkscrew_drop','helix','rollercoaster'],'all ten stages must visibly use all four chute styles');
 console.log(JSON.stringify({cameraSamples,cameraRays,cameraPaths,cameraContainmentChecks,rigidSightIntersections,cameraFailures:cameraFailures.length,firstFailures:cameraFailures.slice(0,20)}));
 assert.equal(cameraFailures.length,0,`camera LOS: ${JSON.stringify(cameraFailures.slice(0,12))}`);
-console.log(JSON.stringify({checkedBorders,checkedBackdrops,checkedSceneryVertices,checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
+console.log(JSON.stringify({checkedBorders,checkedForestClusters,checkedDryCurves,checkedBankedRows,checkedBackdrops,checkedSceneryVertices,checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,disposedCourseGeometries,disposedCourseMaterials,preservedForestMaterials,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
 console.table(results);
-console.log(`Passed v4.0 Node structural and geometry checks for ${selectedStages.size} scenes. WebGL visual appearance remains unverified.`);
+console.log(`Passed v4.1 Node structural and geometry checks for ${selectedStages.size} scenes. WebGL visual appearance remains unverified.`);
