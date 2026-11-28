@@ -1372,6 +1372,9 @@ export function buildTrackScene(track) {
   for (const hm of track.hammers) {
     const arch = new THREE.Group();
     arch.position.set(hm.x, hm.y, hm.z);
+    if (hm.swingMode === "tangent" && Number.isFinite(hm.tx) && Number.isFinite(hm.tz)) {
+      arch.rotation.y = Math.atan2(hm.tx, hm.tz) - Math.PI / 2;
+    }
     arch.add(castRec(addOutline(new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.36, 0.36), mats.brassDark), 1.04)));
     const mountGear = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.22, 10), mats.brass), 1.05));
     mountGear.rotation.x = Math.PI / 2;

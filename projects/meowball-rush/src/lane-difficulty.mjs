@@ -100,8 +100,10 @@ function envelope(hazard, section) {
   const radius = kind === 'pendulum' ? .92 : hazard.r;
   const amplitude = kind === 'pendulum' ? Math.abs(hazard.len) * Math.sin(Math.min(Math.PI / 2, Math.abs(hazard.amp)))
     : kind === 'critter' ? Math.abs(hazard.patrol) : 0;
-  return { kind, radius, amplitude, lateral: radius + amplitude * Math.abs(section.nx),
-    longitudinal: radius + amplitude * Math.abs(section.tx) };
+  const isTangent = kind === 'pendulum' && hazard.swingMode === 'tangent';
+  return { kind, radius, amplitude,
+    lateral: radius + (isTangent ? 0 : amplitude * Math.abs(section.nx)),
+    longitudinal: radius + (isTangent ? amplitude : amplitude * Math.abs(section.tx)) };
 }
 function freeIntervals(left, right, blocked) {
   const gaps = []; let cursor = left;
@@ -155,8 +157,8 @@ export function placeLaneBlockingHazards(route, { stageIndex = 0, count, kinds =
     const occupied = slot === 0 ? Math.min(PLAYABLE_LANE_WIDTH, width - 2 * MIN_SAFE_PASSING_WIDTH) : intrusion;
     if (occupied < 1 - EPS) continue;
     const base = { kind, laneSlot: slot, routeId: route.id, along: distance, phase };
-    if (kind === 'pendulum') Object.assign(base, { r: .92, headRadius: .92, len: 2.8, amp: .06,
-      speed: 1.2 * profile.pendulumSweepSpeed, axis: 'z', variant: 'pendulum' });
+    if (kind === 'pendulum') Object.assign(base, { r: .92, headRadius: .92, len: 2.8, amp: .52,
+      speed: 1.55 * profile.pendulumSweepSpeed, axis: 'z', swingMode: 'tangent', variant: 'pendulum' });
     // Use one compact bunny: the existing sheep skin is a two-animal group
     // wider than a lane regardless of its collision radius.
     else if (kind === 'critter') Object.assign(base, { type: 'snow_bunny', bouncy: true, patrol: .1,
@@ -178,6 +180,15 @@ export function placeLaneBlockingHazards(route, { stageIndex = 0, count, kinds =
     if (hazards.some(h => Math.hypot(h.x - base.x, h.z - base.z) < 5)) continue;
     const audit = auditLaneThreat(route, [...hazards, base]);
     if (audit.ok) { base.safePassingWidth = audit.minClearWidth; hazards.push(base); }
+    else if (kind === 'pendulum') {
+      const fb = { kind: 'spike', laneSlot: slot, routeId: route.id, along: distance, phase, r: occupied / 2,
+        telegraph: .55, activeDuration: 1.1 / profile.spikeCycleSpeed, retractDuration: 2.35 / profile.spikeCycleSpeed - .55,
+        cycleSpeed: profile.spikeCycleSpeed, x: base.x, y: floor.y, z: base.z, laneOffset: offset,
+        laneWidth: PLAYABLE_LANE_WIDTH, footprintWidth: occupied, tx: p.tx, tz: p.tz, nx: section.nx, nz: section.nz,
+        id: `${route.id || 'route'}-lane-spike-fb-${stageIndex}-${i}` };
+      const fbAudit = auditLaneThreat(route, [...hazards, fb]);
+      if (fbAudit.ok) { fb.safePassingWidth = fbAudit.minClearWidth; hazards.push(fb); }
+    }
   }
   return hazards;
 }

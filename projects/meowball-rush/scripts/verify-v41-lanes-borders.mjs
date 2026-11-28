@@ -60,7 +60,12 @@ function verifyMotion(route, hazards, angle, stageIndex) {
       let position = hazard, radius = hazard.r;
       if (hazard.kind === 'pendulum') {
         const swing = Math.sin(time * hazard.speed + hazard.phase) * hazard.amp;
-        position = { ...hazard, x: hazard.x + Math.sin(swing) * hazard.len, y: hazard.y - Math.cos(swing) * hazard.len };
+        if (hazard.swingMode === 'tangent' && Number.isFinite(hazard.tx) && Number.isFinite(hazard.tz)) {
+          position = { ...hazard, x: hazard.x + hazard.tx * Math.sin(swing) * hazard.len,
+            y: hazard.y - Math.cos(swing) * hazard.len, z: hazard.z + hazard.tz * Math.sin(swing) * hazard.len };
+        } else {
+          position = { ...hazard, x: hazard.x + Math.sin(swing) * hazard.len, y: hazard.y - Math.cos(swing) * hazard.len };
+        }
         radius = .92;
       } else if (hazard.kind === 'critter') position = fairytalePropPosition(hazard, time);
       const center = position.x * nx + position.z * nz;

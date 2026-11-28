@@ -1034,7 +1034,7 @@ function updatePhysics(dt) {
   // Gather Isometric Screen-Aligned Input (Mouse Push + WASD + Touch Drag!)
   let kx = 0;
   let kz = 0;
-  if (inp.keys.has("KeyW") || inp.keys.has("ArrowUp")) kz -= 1;
+  if (inp.keys.has("KeyW") || inp.keys.has("ArrowUp") || inp.mouseDrive) kz -= 1;
   if (inp.keys.has("KeyS") || inp.keys.has("ArrowDown")) kz += 1;
   if (inp.keys.has("KeyA") || inp.keys.has("ArrowLeft")) kx -= 1;
   if (inp.keys.has("KeyD") || inp.keys.has("ArrowRight")) kx += 1;
@@ -1093,17 +1093,30 @@ function updatePhysics(dt) {
     g.mesh.rotation.y += g.def.omega * dt;
   }
   for (const hm of dynamicMeshes.hammers) {
-    const tArg = state.elapsed * hm.def.speed + hm.def.phase;
-    const ang = Math.sin(tArg) * hm.def.amp;
-    const angVel = Math.cos(tArg) * hm.def.amp * hm.def.speed;
+    const tArg = state.elapsed * (hm.def.speed || 1.5) + (hm.def.phase || 0);
+    const amp = hm.def.amp ?? 0.55;
+    const ang = Math.sin(tArg) * amp;
+    const angVel = Math.cos(tArg) * amp * (hm.def.speed || 1.5);
     hm.pivot.rotation.z = ang;
-    hm.worldHead.set(
-      hm.def.x + Math.sin(ang) * hm.def.len,
-      hm.def.y - Math.cos(ang) * hm.def.len,
-      hm.def.z
-    );
-    hm.velX = Math.cos(ang) * angVel * hm.def.len;
-    hm.velY = Math.sin(ang) * angVel * hm.def.len;
+    const sinA = Math.sin(ang);
+    const cosA = Math.cos(ang);
+    if (hm.def.swingMode === "tangent" && Number.isFinite(hm.def.tx) && Number.isFinite(hm.def.tz)) {
+      hm.worldHead.set(
+        hm.def.x + hm.def.tx * sinA * hm.def.len,
+        hm.def.y - cosA * hm.def.len,
+        hm.def.z + hm.def.tz * sinA * hm.def.len
+      );
+      hm.velX = hm.def.tx * cosA * angVel * hm.def.len;
+      hm.velY = sinA * angVel * hm.def.len;
+    } else {
+      hm.worldHead.set(
+        hm.def.x + sinA * hm.def.len,
+        hm.def.y - cosA * hm.def.len,
+        hm.def.z
+      );
+      hm.velX = cosA * angVel * hm.def.len;
+      hm.velY = sinA * angVel * hm.def.len;
+    }
   }
   for (const pin of dynamicMeshes.rollingPins || []) {
     const arg = state.elapsed * pin.def.speed + (pin.def.phase || 0);
@@ -1540,17 +1553,21 @@ function updateVisuals(dt) {
   kittyRig.bubbleMat.uniforms.uTime.value = state.elapsed;
 
   // Physical rolling rotation + expressive steering lean!
+  kittyRig.kitty.rotation.order = 'YXZ';
   let turnDelta = 0;
-  if (spd > 0.05) {
+  if (spd > 0.42) {
     const rollAxis = new THREE.Vector3(b.vz, 0, -b.vx).normalize();
     kittyRig.bubbleMesh.rotateOnWorldAxis(rollAxis, (spd * dt) / b.r);
     const targetFace = Math.atan2(-b.vx, -b.vz);
     let diff = targetFace - b.facing;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    turnDelta = Math.max(-1, Math.min(1, diff * 1.8));
-    b.facing += diff * Math.min(1, dt * 10);
+    turnDelta = Math.max(-1, Math.min(1, diff * 1.6));
+    b.facing += diff * (1 - Math.exp(-dt * 12));
     kittyRig.kitty.rotation.y = b.facing;
+  } else if (spd > 0.05) {
+    const rollAxis = new THREE.Vector3(b.vz, 0, -b.vx).normalize();
+    kittyRig.bubbleMesh.rotateOnWorldAxis(rollAxis, (spd * dt) / b.r);
   }
   kittyRig.updateAccessories(state.elapsed);
   state.turnSmooth += (turnDelta - state.turnSmooth) * Math.min(1, dt * 8);
@@ -1577,9 +1594,13 @@ function updateVisuals(dt) {
   sfx.updateSpeed(Math.min(1, spd / 16));
   if (kittyRig.mixer) {
     if (kittyRig.setAnim) {
-      kittyRig.setAnim(spd > 0.7 ? "Run" : "Idle", 0.2);
+      kittyRig.setAnim(spd > 0.55 ? "Run" : "Idle", 0.16);
     }
-    kittyRig.mixer.update(dt * (spd > 0.7 ? 0.5 + spd * 0.22 : 0.85));
+    kittyRig.mixer.update(dt * (spd > 0.55 ? 0.72 + spd * 0.2 : 0.85));
+    const hop = Math.abs(Math.sin(b.pawCycle * 0.95));
+    kittyRig.kitty.position.y = spd > 0.55 ? hop * Math.min(0.08, 0.015 + spd * 0.006) : 0;
+    kittyRig.kitty.rotation.x = -Math.min(0.18, spd * 0.014);
+    kittyRig.kitty.rotation.z = -state.turnSmooth * Math.min(0.24, spd * 0.022);
   } else if (kittyRig.isExternal && kittyRig.isExternal()) {
     const u = kittyRig.animUniforms;
     if (u) {
@@ -1591,8 +1612,8 @@ function updateVisuals(dt) {
     }
     const hop = Math.abs(Math.sin(b.pawCycle * 0.85));
     kittyRig.kitty.position.y = hop * Math.min(0.12, 0.015 + spd * 0.012);
-    // Forward lean into sprint + lateral banking into turns!
-    kittyRig.kitty.rotation.x = Math.min(0.28, spd * 0.022) + Math.sin(b.pawCycle * 1.7) * Math.min(0.08, spd * 0.008);
+    // Forward lean into sprint (cat faces -Z, so negative X pitches forward!) + lateral banking into turns!
+    kittyRig.kitty.rotation.x = -Math.min(0.22, spd * 0.018) - Math.sin(b.pawCycle * 1.7) * Math.min(0.06, spd * 0.006);
     kittyRig.kitty.scale.set(1, 1, 1);
   } else {
     kittyRig.paws.forEach((p, i) => {
@@ -1755,9 +1776,13 @@ canvas.addEventListener('pointerdown', e => {
   const inp = state.input;
   const touch = e.pointerType !== 'mouse';
   if (!touch) {
-    // Left-click enters classic Hamsterball pointer-lock mouse steering; Right-click drags camera orbit!
-    if (e.button === 0 && document.pointerLockElement !== canvas && canvas.requestPointerLock) {
-      try { canvas.requestPointerLock(); } catch {}
+    // Left-click locks pointer & holds continuous forward rolling acceleration; Right-click drags camera orbit!
+    if (e.button === 0) {
+      inp.mouseDrive = true;
+      inp.mouseLastX = e.clientX; inp.mouseLastY = e.clientY;
+      if (document.pointerLockElement !== canvas && canvas.requestPointerLock) {
+        try { Promise.resolve(canvas.requestPointerLock()).catch(() => {}); } catch {}
+      }
       return;
     }
     if (e.button === 2 && inp.orbitPointer == null) {
@@ -1782,15 +1807,19 @@ canvas.addEventListener('pointerdown', e => {
 });
 window.addEventListener('mousemove', e => {
   if (!state || state.phase !== 'playing') return;
-  if (document.pointerLockElement !== canvas) return;
   const inp = state.input;
   const sens = save.mouseSens || 1;
-  if ((e.buttons & 2) !== 0) {
-    inp.orbitX = (inp.orbitX || 0) - e.movementX * 0.006 * sens;
-    inp.orbitY = (inp.orbitY || 0) + e.movementY * 0.004 * sens;
+  const locked = document.pointerLockElement === canvas;
+  if (!locked && !inp.mouseDrive) return;
+  const dx = locked ? e.movementX : (e.clientX - (inp.mouseLastX ?? e.clientX));
+  const dy = locked ? e.movementY : (e.clientY - (inp.mouseLastY ?? e.clientY));
+  inp.mouseLastX = e.clientX; inp.mouseLastY = e.clientY;
+  if (locked && (e.buttons & 2) !== 0) {
+    inp.orbitX = (inp.orbitX || 0) - dx * 0.006 * sens;
+    inp.orbitY = (inp.orbitY || 0) + dy * 0.004 * sens;
   } else {
-    inp.mouseAccX = Math.max(-28, Math.min(28, inp.mouseAccX + e.movementX * 0.42 * sens));
-    inp.mouseAccZ = Math.max(-28, Math.min(28, inp.mouseAccZ + e.movementY * 0.42 * sens));
+    inp.mouseAccX = Math.max(-28, Math.min(28, inp.mouseAccX + dx * 0.42 * sens));
+    inp.mouseAccZ = Math.max(-28, Math.min(28, inp.mouseAccZ + dy * 0.42 * sens));
   }
 });
 window.addEventListener('pointermove', e => {
@@ -1812,6 +1841,7 @@ window.addEventListener('pointermove', e => {
 function releaseControlPointer(e) {
   if (!state) return;
   const inp = state.input;
+  if (e.button === 0 || (e.pointerType === 'mouse' && ((e.buttons ?? 0) & 1) === 0)) inp.mouseDrive = false;
   if (inp.orbitPointer === e.pointerId) inp.orbitPointer = null;
   if (inp.movePointer === e.pointerId) {
     inp.movePointer = null; inp.touchActive = false; inp.ix = 0; inp.iz = 0;
@@ -1819,8 +1849,12 @@ function releaseControlPointer(e) {
   }
 }
 window.addEventListener('pointerup', releaseControlPointer);
+window.addEventListener('mouseup', e => { if (state && e.button === 0) state.input.mouseDrive = false; });
 window.addEventListener('pointercancel', releaseControlPointer);
 canvas.addEventListener('lostpointercapture', releaseControlPointer);
+document.addEventListener('pointerlockchange', () => {
+  if (state && document.pointerLockElement !== canvas) state.input.mouseDrive = false;
+});
 canvas.addEventListener('wheel', e => {
   if (!state || state.phase !== 'playing') return;
   e.preventDefault();
@@ -1828,7 +1862,7 @@ canvas.addEventListener('wheel', e => {
 }, { passive: false });
 window.addEventListener('blur', () => {
   if (!state) return;
-  state.input.keys.clear(); state.input.ix = 0; state.input.iz = 0;
+  state.input.keys.clear(); state.input.ix = 0; state.input.iz = 0; state.input.mouseDrive = false;
   state.input.movePointer = null; state.input.orbitPointer = null;
   document.getElementById('touch-joystick').hidden = true;
   if (state.phase === 'playing') openPause();
@@ -1837,7 +1871,7 @@ function respawnToCheckpoint() {
   if (!state || !['playing', 'paused'].includes(state.phase)) return false;
   resetBallToCheckpoint(state.ball, state.checkpoint);
   // Remove stale input, motion trails and camera springs from the old location.
-  Object.assign(state.input, { ix: 0, iz: 0, mouseAccX: 0, mouseAccZ: 0,
+  Object.assign(state.input, { ix: 0, iz: 0, mouseAccX: 0, mouseAccZ: 0, mouseDrive: false,
     orbitX: 0, orbitY: 0, zoomDelta: 0, lateralInput: 0, forwardInput: 0,
     orbitPointer: null, movePointer: null });
   state.input.keys.clear();
