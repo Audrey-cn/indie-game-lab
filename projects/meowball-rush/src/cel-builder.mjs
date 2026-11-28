@@ -4,6 +4,7 @@
 // Drifting Magic Petals, Real-Time Soft Shadows & Hand-Painted Anime Kitten Face!
 import * as THREE from "three";
 import { addV3Platform, buildV3World } from "./v3-worlds.mjs";
+import { boostRibbonGeometry } from "./course-geometry.mjs";
 export { animateFairytaleScenery } from "./v3-worlds.mjs";
 import cobblePathTexUrl from "./assets/textures/tex-cobble-path.webp";
 import meadowGrassTexUrl from "./assets/textures/tex-meadow-grass.webp";
@@ -1556,8 +1557,10 @@ export function buildTrackScene(track) {
 
   // 5. Animated Rainbow Chevron Speed Boost Strips!
   for (const b of track.boosts) {
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(b.w, 0.08, b.d), mats.rainbow);
-    strip.position.set(b.x, b.y, b.z);
+    const route = track.routes?.find(route => route.id === b.routeId);
+    const strip = new THREE.Mesh(route ? boostRibbonGeometry(route, b) : new THREE.BoxGeometry(b.w, 0.08, b.d), mats.rainbow);
+    strip.name = 'rainbow-boost-ribbon';
+    if (!route) strip.position.set(b.x, b.y + .085, b.z);
     group.add(strip);
     dynamicMeshes.boosts.push({ mesh: strip, def: b, tex: rainbowTex });
   }

@@ -25,6 +25,8 @@ const moduleAt = async name => existsSync(new URL(`../src/${name}.mjs`, import.m
 const courseMath = await moduleAt('course-math');
 const directorApi = await moduleAt('director');
 const runtimeApi = await moduleAt('course-runtime');
+const fallApi = await moduleAt('fall-feedback');
+const fallEffectsApi = await moduleAt('fall-effects');
 const { Vector3 } = THREE;
 const noop = () => {};
 const visible = () => ({ visible: true, rotation: { y: 0 } });
@@ -34,7 +36,7 @@ function makeHarness(track, cat = CATS[0]) {
     hammerHitCd: 0, rollingPinHitCd: 0, bumperHitCd: 0,
     boostFlash: 0, burstTimer: 0, supportPlatform: null };
   const state = { track, cat, phase: 'playing', elapsed: 0, timeLeft: track.bonusTime || 180,
-    ball: b, pops: 0, stars: 0, squashVel: 0, checkpoint: { ...track.start },
+    ball: b, pops: 0, stars: 0, squashVel: 0, fallEffects: [], checkpoint: { ...track.start },
     viewYaw: 0, director: directorApi?.createDirector(0), checkpointIdx: -1, shownTips: new Set(), secretFound: false,
     input: { keys: new Set(), mouseAccX: 0, mouseAccZ: 0, ix: 0, iz: 0 } };
   const dynamicMeshes = {
@@ -53,7 +55,7 @@ function makeHarness(track, cat = CATS[0]) {
   };
   const events = [];
   const context = vm.createContext({
-    THREE, ...courseMath, ...directorApi, ...runtimeApi, state, dynamicMeshes,
+    THREE, ...courseMath, ...directorApi, ...runtimeApi, ...fallApi, ...fallEffectsApi, trackRoot: new THREE.Group(), state, dynamicMeshes,
     CATS, TRACKS, Math, console,
     getSideWallOpenings: (...args) => trackBuilder.getSideWallOpenings(...args),
     getEndWallOpenings: (...args) => trackBuilder.getEndWallOpenings(...args),
@@ -64,6 +66,11 @@ function makeHarness(track, cat = CATS[0]) {
     finishStage(cleared) { state.phase = 'ended'; state.cleared = cleared; },
   });
   vm.runInContext(`${surfaceCode}\n${popCode}\n${physicsCode}\nthis.updatePhysics = updatePhysics; this.sampleTrackSurface = sampleTrackSurface;`, context);
+  const actualFall = context.triggerContextualFall;
+  context.triggerContextualFall = zone => {
+    if(!b.fallRecovery && b.popTimer<=0)events.push({type:'fall',reason:zone.type,time:state.elapsed,x:b.x,y:b.y,z:b.z});
+    actualFall(zone);
+  };
   const actualPop = context.triggerBubblePop;
   context.triggerBubblePop = (reason) => {
     if (b.popTimer <= 0) events.push({ type: 'pop', reason, time: state.elapsed, x: b.x, y: b.y, z: b.z });
@@ -218,6 +225,90 @@ check('steam vent active and inactive phases with smooth acceleration', () => {
   return { receipts };
 });
 
+check('v3.1 full uphill input stalls at16deg while momentum and boosts climb', () => {
+  const receipts=[];
+  for(const dt of [1/120,1/60,1/25]) {
+    const slope=Math.tan(16*Math.PI/180), ramp={kind:'ramp',x:0,y:8,z:-14,w:12,d:28,h:.8,yStart:8,yEnd:8+28*slope,dir:'-z'};
+    let idle;const rollback=[];
+    for(const cat of CATS){
+      const h=makeHarness(testTrack([ramp],{start:{x:0,y:8+7*slope+.62,z:-7},cameraZones:[{type:'orbit',x:0,y:8,z:-7,r:100}]}),cat);
+      h.b.grounded=true;h.b.supportPlatform=ramp;h.b.surfaceKind='ramp';h.state.input.keys.add('KeyW');
+      for(let t=0;t<2;t+=dt)h.step(dt);
+      assert(h.b.z>-6.7 && h.b.vz>.4,`dt=${dt}:${cat.id}:W powers uphill from rest z=${h.b.z},vz=${h.b.vz}`);
+      rollback.push({cat:cat.id,vz:+h.b.vz.toFixed(3)});if(!idle)idle=h;
+    }
+    const approach={kind:'wood',x:0,y:8,z:7,w:12,d:14,h:.8};
+    const run=makeHarness(testTrack([approach,ramp],{start:{x:0,y:8.62,z:10}}));
+    for(let t=0;t<9 && run.b.z>-10;t+=dt)run.step(dt,0,-18,18);
+    assert(run.b.z<-10,`dt=${dt}:ordinary approach momentum cannot climb16deg z=${run.b.z}`);
+    const boost=makeHarness(testTrack([ramp],{start:{x:0,y:8+3*slope+.62,z:-3},boosts:[{x:0,y:8+3*slope,z:-3,w:3,d:2,fx:0,fz:-18}]}));
+    for(let t=0;t<4 && boost.b.z>-11;t+=dt)boost.step(dt,0,-18,18);
+    assert(boost.b.z<-11,`dt=${dt}:boost cannot climb16deg z=${boost.b.z}`);
+    receipts.push({hz:Math.round(1/dt),restZ:+idle.b.z.toFixed(3),restVz:+idle.b.vz.toFixed(3),rollback,momentumZ:+run.b.z.toFixed(3),boostZ:+boost.b.z.toFixed(3)});
+  }
+  return{receipts};
+});
+
+check('v3.1 motor slope threshold lies between11and13deg',()=>{
+  const receipts=[];
+  for(const degrees of [11,12,13,16]) {
+    const slope=Math.tan(degrees*Math.PI/180),ramp={kind:'ramp',x:0,y:8,z:0,w:20,d:100,h:.8,yStart:8-50*slope,yEnd:8+50*slope,dir:'-z'};
+    const h=makeHarness(testTrack([ramp]));h.b.grounded=true;h.b.supportPlatform=ramp;h.b.surfaceKind='ramp';
+    for(let t=0;t<3;t+=1/120)h.step(1/120,0,-18,18);
+    if(degrees===11)assert(h.b.z<-.4 && h.b.vz<-.2,'motor cannot climb a gentle11deg ramp');
+    if(degrees>=13)assert(h.b.z>=-.02,'motor bypasses the intended13deg stall threshold');
+    receipts.push({degrees,z:+h.b.z.toFixed(3),vz:+h.b.vz.toFixed(3)});
+  }
+  return{receipts};
+});
+
+check('v3.1 materials preserve distinct rolling, ice drift and viscous drag',()=>{
+  const receipts=[];
+  for(const kind of ['carpet','grass','wood','stone','ice','honey','mud']) {
+    const floor={...flat,kind},h=makeHarness(testTrack([floor]));
+    for(let t=0;t<3;t+=1/120)h.step(1/120,0,-18,18);
+    const drivenSpeed=Math.hypot(h.b.vx,h.b.vz);
+    for(let t=0;t<1;t+=1/120)h.step(1/120);
+    const coastSpeed=Math.hypot(h.b.vx,h.b.vz),beforeTurnZ=h.b.z;
+    for(let t=0;t<1;t+=1/120)h.step(1/120,18,0,18);
+    receipts.push({kind,drivenSpeed:+drivenSpeed.toFixed(3),coastLoss:+(drivenSpeed-coastSpeed).toFixed(3),drift:+(beforeTurnZ-h.b.z).toFixed(3)});
+  }
+  const of=k=>receipts.find(r=>r.kind===k);
+  assert(of('carpet').coastLoss>of('grass').coastLoss+.25,'carpet does not feel heavier than grass');
+  assert(of('grass').coastLoss>of('wood').coastLoss+.35,'grass has no extra rolling resistance');
+  assert(of('stone').coastLoss>of('wood').coastLoss+.12,'stone and wood have identical rolling');
+  assert(of('ice').drift>of('wood').drift*1.8,'ice lateral drift is not distinct');
+  for(const k of ['honey','mud'])assert(of(k).drivenSpeed<of('wood').drivenSpeed*.35,`${k} lacks viscous drag`);
+  return{receipts};
+});
+
+check('v3.1 brief reverse input microbrakes a narrow beam without reversing',()=>{
+  const route={id:'beam',kind:'wood',width:1.8,walls:false,points:[{x:0,y:8,z:0},{x:0,y:8,z:-70}]};
+  const fixture=testTrack([],{routes:[route]});
+  const coast=makeHarness(fixture),brake=makeHarness(fixture);
+  for(let i=0;i<180;i++){coast.step(1/120,0,-18,18);brake.step(1/120,0,-18,18);}
+  const before=Math.abs(brake.b.vz);
+  for(let i=0;i<18;i++){coast.step(1/120);brake.step(1/120,0,4.5,18);}
+  assert(brake.b.vz<0 && brake.b.grounded,'a short brake tap reverses or unseats the ball');
+  assert(Math.abs(brake.b.vz)<Math.abs(coast.b.vz)-.2,'partial reverse input has no useful microbraking effect');
+  assert(Math.abs(brake.b.vz)>before*.75,'partial brake tap erases too much momentum');
+  assert(Math.abs(brake.b.x)<.01,'beam microbrake introduces lateral motion');
+  return{before:+before.toFixed(3),coastSpeed:+Math.abs(coast.b.vz).toFixed(3),brakedSpeed:+Math.abs(brake.b.vz).toFixed(3)};
+});
+
+check('v3.1 shared tangent integration conserves bank momentum and soft landings',()=>{
+  const b={vx:4,vy:0,vz:6,grounded:true,rollSlopeX:0,rollSlopeZ:0};
+  const initial=Math.hypot(b.vx,b.vz),surface={kind:'ice',slopeX:.4,slopeZ:0};
+  runtimeApi.integrateRollingMotion(b,surface,0,0,1e-7,CATS[0].stats);
+  assert(Math.abs(runtimeApi.rollingSurfaceSpeed(b,surface)-initial)<.00001,'bank tangent kinetic speed');
+  const stone={vx:3,vy:-8,vz:-2},carpet={...stone};
+  const hard=runtimeApi.resolveRollingLanding(stone,{kind:'stone',slopeX:0,slopeZ:0}),soft=runtimeApi.resolveRollingLanding(carpet,{kind:'carpet',slopeX:0,slopeZ:0});
+  assert.equal(stone.vx,3,'landing preserves tangent X');assert.equal(stone.vz,-2,'landing preserves tangent Z');
+  assert(hard.rebound>.3 && hard.rebound<.8,'stone landing has no subtle restitution');
+  assert(soft.grounded && carpet.vy===0,'carpet landing should absorb the impact');
+  return{bankSpeed:runtimeApi.rollingSurfaceSpeed(b,surface),stoneRebound:hard.rebound,carpetRebound:soft.rebound};
+});
+
 check('flat speed under sustained drive', () => {
   const receipts = [];
   for (const cat of CATS) {
@@ -228,8 +319,8 @@ check('flat speed under sustained drive', () => {
       if (i === 59) atOneSecond = Math.hypot(h.b.vx, h.b.vz);
     }
     const limit = 10.2 * cat.stats.topSpeed;
-    assert(Math.abs(atOneSecond - limit) < 0.001 && Math.abs(Math.hypot(h.b.vx, h.b.vz) - limit) < 0.001,
-      `${cat.id}: sustained mouse drive did not plateau at cruise`);
+    assert(atOneSecond>2.6 && atOneSecond<4.7, `${cat.id}:motor fails weighted one-second acceleration ${atOneSecond}`);
+    assert(Math.hypot(h.b.vx,h.b.vz)>limit*.9 && Math.hypot(h.b.vx,h.b.vz)<=limit,`${cat.id}:sustained mouse drive did not approach torque-limited cruise`);
     receipts.push({ cat: cat.id, peak: +peak.toFixed(4), atOneSecond: +atOneSecond.toFixed(4), limit: +limit.toFixed(4) });
   }
   console.log(JSON.stringify({ flatSpeedReceipt: receipts }));
@@ -246,17 +337,17 @@ check('keyboard flat speed', () => {
     if (i === 59) atOneSecond = Math.hypot(h.b.vx, h.b.vz);
   }
   assert(peak <= 10.21, `Keyboard speed ${peak} exceeds cruise`);
-  assert(Math.abs(atOneSecond - 10.2) < 0.001 && Math.abs(Math.hypot(h.b.vx, h.b.vz) - 10.2) < 0.001,
-    'Sustained keyboard drive did not reach cruise by1s and hold it');
+  assert(atOneSecond>2.6 && atOneSecond<4.2,'keyboard motor must accelerate with weight');
+  assert(Math.hypot(h.b.vx,h.b.vz)>9.2 && Math.hypot(h.b.vx,h.b.vz)<=10.2,'sustained keyboard drive did not approach cruise');
   const mixed = makeHarness(testTrack([flat]));
   mixed.state.input.keys.add('KeyW');
-  for (let i = 0; i < 180; i++) mixed.step(1 / 60, 0, -180);
+  for (let i = 0; i < 720; i++) mixed.step(1 / 60, 0, -180);
   const mixedSpeed = Math.hypot(mixed.b.vx, mixed.b.vz);
-  assert(Math.abs(mixedSpeed - 10.2) < 0.001, `Combined keyboard+mouse speed ${mixedSpeed}`);
+  assert(mixedSpeed>9.2 && mixedSpeed<=10.2, `Combined keyboard+mouse speed ${mixedSpeed}`);
   return { peak: +peak.toFixed(4), atOneSecond: +atOneSecond.toFixed(4), mixedSpeed: +mixedSpeed.toFixed(4) };
 });
 
-check('boost cap and 0.6s decay with sustained input', () => {
+check('boost cap and force-driven momentum decay with sustained input', () => {
   const receipts = [];
   for (const dt of [1 / 120, 1 / 60, 0.04]) {
     const h = makeHarness(testTrack([flat], { boosts: [{ x: 0, y: 8.05, z: 0, w: 3, d: 2, fx: 0, fz: -100 }] }));
@@ -269,7 +360,7 @@ check('boost cap and 0.6s decay with sustained input', () => {
       if (effectEnd !== null && h.state.elapsed - effectEnd >= 0.6 + dt && settled === null) settled = speed;
     }
     assert(peak <= 15.21, `dt=${dt}: boost speed ${peak} exceeds burst cap`);
-    assert(settled !== null && settled <= 10.21, `dt=${dt}: boost does not settle in0.6s under continued drive: ${settled}`);
+    assert(settled !== null && settled > 10.4 && settled <= 15.21, `dt=${dt}: boost momentum is artificially erased instead of coasting: ${settled}`);
     receipts.push({ dt, peak: +peak.toFixed(4), effectEnd: +effectEnd.toFixed(4), settled: +settled.toFixed(4) });
   }
   return { receipts };
@@ -277,7 +368,7 @@ check('boost cap and 0.6s decay with sustained input', () => {
 
 check('downhill gravity and burst cap without drive', () => {
   const p = { kind: 'ramp', x: 0, y: 25, z: -40, w: 20, d: 80, h: 0.8, yStart: 50, yEnd: 0, dir: '-z' };
-  const h = makeHarness(testTrack([p, { ...flat, y: 0, z: -120, w: 20, d: 80 }], { start: { x: 0, y: 50.62, z: 0 } }));
+  const h = makeHarness(testTrack([p, { ...flat, y: 0, z: -240, w: 20, d: 320 }], { start: { x: 0, y: 50.62, z: 0 } }));
   h.b.vz = -0.5;
   let peak = 0, speedAtTwoSeconds = 0;
   for (let i = 0; i < 20 * 120; i++) {
@@ -344,7 +435,7 @@ check('solid wall rebound and connected side doorway', () => {
     assert(bounced && Math.abs(solid.b.x) <= 2.381, `No wall rebound side${side}`);
     const q = { kind: 'grass', x: side * 5, y: 8, z: 0, w: 4, d: 6, h: 1 };
     const door = makeHarness(testTrack([p, q]));
-    for (let i = 0; i < 75 && door.b.x * side < 4.5; i++) door.step(1 / 60, side * 18, 0);
+    for (let i = 0; i < 180 && door.b.x * side < 4.5; i++) door.step(1 / 60, side * 18, 0);
     assert(door.b.x * side > 3.5, `Connected deck doorway blocked side${side} x=${door.b.x}`);
     assert(door.b.grounded && Math.abs(door.b.y - 8.62) < 0.02, `Doorway crossing lost support side${side}`);
     receipts.push({ side, bounced, doorwayX: +door.b.x.toFixed(4) });
@@ -388,7 +479,7 @@ check('v3 ten distinct blueprint courses and measured progressive lengths', () =
     assert.ok(track.routes?.length,`${track.id}: missing continuous 3D routes`);
     const measured=track.routes.filter(r=>!r.secret).reduce((n,r)=>n+courseMath.polylineLength(r.points),0)+(track.chutes||[]).reduce((n,c)=>n+courseMath.polylineLength(c.points),0);
     near(track.length,measured,`${track.id}: declared versus measured route length`,0.02);
-    if(i) {const growth=track.length/TRACKS[i-1].length;assert(growth>=1.1999 && growth<=1.3001,`${track.id}: length growth ${growth} outside +20%..30%`);}
+    if(i) {const growth=track.length/TRACKS[i-1].length;assert(growth>=1.10 && growth<=1.30,`${track.id}: length growth ${growth} outside v3.1 progressive growth`);}
     signatures.add(JSON.stringify(track.routes.map(r=>r.points.map(p=>[+p.x.toFixed(2),+p.y.toFixed(2),+p.z.toFixed(2)]))));
     for(const route of track.routes) {
       assert(route.width>1.24 && route.points.length>=2,`${track.id}/${route.id}: unusable route dimensions`);
@@ -396,9 +487,9 @@ check('v3 ten distinct blueprint courses and measured progressive lengths', () =
     }
   }
   assert.equal(signatures.size,10,'courses reuse a layout');
-  assert(TRACKS[0].length>=94.9 && TRACKS[0].length<=115.1,'tutorial length outside 95..115m');
-  // 95m * 1.2^9 = 490.18m: strict per-stage growth mathematically supersedes the approximate 450m endpoint.
-  assert(TRACKS[9].length>=490 && TRACKS[9].length<=600,'finale does not preserve strict progressive growth');
+  assert(TRACKS[0].length>=160 && TRACKS[0].length<=170,'tutorial length outside160..170m');
+  // v3.1 authoring scales a multi-act opening to a720m grand finale.
+  assert(TRACKS[9].length>=700 && TRACKS[9].length<=740.1,'finale does not preserve strict progressive growth');
   return {lengths:TRACKS.map(t=>+t.length.toFixed(2))};
 });
 
@@ -491,9 +582,15 @@ check('v3 collider floor follows actual rendered triangle centroids through bank
       geometry.dispose();
     }
   }
-  const track=TRACKS[7],route=track.routes.find(r=>r.id==='window-bowl'),h=makeHarness(track),p={x:49.823701,y:11.771281,z:-63.886998};
-  Object.assign(h.b,{...p,y:p.y+h.b.r,previousBottom:p.y,grounded:true,supportRoute:route,supportPlatform:null});
-  const actual=h.context.sampleTrackSurface(p.x,h.b.y,p.z,h.b.r);assert(actual,'reviewer icy bowl floor disappeared');near(actual.y,p.y,'reviewer icy bowl overlap chooses nearest supported height',0.0001);
+  // Two overlapping floors exercise support-height selection without relying
+  // on an obsolete coordinate snapshot from an earlier authored course scale.
+  const fixture = [{ id:'lower',kind:'ice',width:4,bank:.6,points:[{x:-3,y:5,z:0},{x:3,y:5,z:0}] },
+    { id:'upper',kind:'ice',width:4,bank:.6,points:[{x:0,y:8,z:-3},{x:0,y:8,z:3}] }];
+  for(const route of fixture) for(const triangle of courseMath.getRouteFloorTriangles(route)) {
+    const p={x:(triangle.a.x+triangle.b.x+triangle.c.x)/3,y:(triangle.a.y+triangle.b.y+triangle.c.y)/3,z:(triangle.a.z+triangle.b.z+triangle.c.z)/3};
+    const floor=courseMath.nearestRouteSurface(fixture,p.x,p.z,p.y+.55,{bottom:p.y,previousBottom:p.y,grounded:true,supportRoute:route});
+    assert(floor,'overlapping fixture loses the rendered floor');near(floor.y,p.y,'overlapping fixture chooses the supported height',.00001);
+  }
   assert(samples>2000,'renderer triangle coverage is too sparse');return{samples};
 });
 
@@ -501,9 +598,9 @@ check('v3 route lateral contact and airborne queries never select a lower crossi
   let samples=0;
   for(const track of TRACKS){const h=makeHarness(track);
     for(const route of track.routes)for(let index=1;index<route.points.length-1;index++){
-      const p=route.points[index],prev=route.points[index-1],next=route.points[index+1],dx=next.x-prev.x,dz=next.z-prev.z,len=Math.hypot(dx,dz)||1,nx=-dz/len,nz=dx/len;
+      const row=courseMath.getRouteRibbonRows(route).rows[index];
       for(const side of [-1,1]){
-        const x=p.x+nx*route.width*.36*side,z=p.z+nz*route.width*.36*side;
+        const p=row[side<0?1:7],x=p.x,z=p.z;
         const authored=courseMath.nearestRouteSurface([route],x,z,Infinity);
         assert(authored,`${track.id}/${route.id}[${index}] side${side} x${x} z${z}: lateral authored floor missing`);const floor=authored.y;
         Object.assign(h.b,{x,y:floor+h.b.r,z,grounded:true,supportRoute:route,supportPlatform:null,previousBottom:floor});
@@ -525,7 +622,7 @@ check('v3 airborne surface queries do not teleport to distant floors',()=>{
 });
 
 check('v3 floating spellbooks form four pads with three genuine airborne gaps',()=>{
-  const track=TRACKS[8],pads=track.routes.filter(r=>r.kind==='book'),hops=track.props.filter(p=>p.type==='spellbook_bridge' && p.target);
+  const track=TRACKS[8],pads=track.routes.filter(r=>r.kind==='book' && r.section==='floating_spellbooks'),hops=track.props.filter(p=>p.type==='spellbook_bridge' && p.target);
   assert.equal(pads.length,4,'library lacks separate spellbook pads');assert.equal(hops.length,3,'library lacks three authored book jumps');
   for(const prop of hops){
     assert.equal(prop.cinematic,false,'precision book jump locks manual camera');
@@ -539,7 +636,7 @@ check('v3 actual keyboard movement uses rendered camera yaw and launchers trigge
   for(const yaw of [0,Math.PI/2,-Math.PI/2,Math.PI]){
     const h=makeHarness(testTrack([flat]));h.state.viewYaw=yaw;h.state.director.yaw=yaw;h.state.input.keys.add('KeyW');
     // A single real-physics step isolates the current rendered input basis from subsequent follow-camera motion.
-    h.step(1/60);const length=Math.hypot(h.b.vx,h.b.vz);assert(length>0.1,'keyboard applies no acceleration');
+    h.b.grounded=true;h.b.supportPlatform=flat;h.step(1/60);const length=Math.hypot(h.b.vx,h.b.vz);assert(length>.04,'keyboard applies no acceleration');
     near(h.b.vx/length,-Math.sin(yaw),'actual keyboard camera-forward X',0.001);near(h.b.vz/length,-Math.cos(yaw),'actual keyboard camera-forward Z',0.001);
   }
   const track=TRACKS[4],prop=track.props.find(p=>p.type==='toaster'),h=makeHarness(track);Object.assign(h.b,{x:prop.x,y:prop.y+h.b.r,z:prop.z,grounded:true});
@@ -562,7 +659,7 @@ check('v3 spiral rail capture, finite motion and exact tangent exit at three fra
     while(active && time<60) {const before={...b};active=runtimeApi.advanceChute(b,ride,dt,0.2);finiteBall(b);assert(distance3(before,b)<=chute.speed*dt+0.45,`${track.id}: discontinuous rail step`);time+=dt;}
     assert(!active,`${track.id}: chute never releases`);
     near(b.x,exit.x,`${track.id}: exit x`,0.005);near(b.y,exit.y+b.r,`${track.id}: exit y`,0.03);near(b.z,exit.z,`${track.id}: exit z`,0.005);
-    near(b.vx,exit.tx*chute.speed,`${track.id}: exact tangent vx`,0.01);near(b.vy,exit.ty*chute.speed,`${track.id}: exact tangent vy`,0.01);near(b.vz,exit.tz*chute.speed,`${track.id}: exact tangent vz`,0.01);
+    const exitSpeed=chute.exitSpeed||chute.speed;near(b.vx,exit.tx*exitSpeed,`${track.id}: exact tangent vx`,0.01);near(b.vy,exit.ty*exitSpeed,`${track.id}: exact tangent vy`,0.01);near(b.vz,exit.tz*exitSpeed,`${track.id}: exact tangent vz`,0.01);
     const h=makeHarness(track);Object.assign(h.b,b,{previousBottom:exit.y});const floor=h.context.sampleTrackSurface(b.x,b.y,b.z,b.r);
     assert(floor,`${track.id}: chute exit misses receiving platform`);near(floor.y,exit.y,`${track.id}: exit landing floor`,0.05);rides++;
   }
@@ -615,12 +712,12 @@ check('v3 fairytale helpers and patrols apply bounded, cooldown-protected safe i
   for(const track of TRACKS)for(const prop of (track.props||[]).filter(p=>!p.target && ['hedgehog','toy_mouse','ducklings','sheep','snow_bunny','penguin','turntable','wind_cloud'].includes(p.type)))for(const dt of [1/120,1/60,0.04]) {
     const elapsed=0.6,pos=runtimeApi.fairytalePropPosition(prop,elapsed);
     const b={...pos,y:pos.y+0.62,r:0.62,vx:0,vy:0,vz:-2,grounded:true,routeTangent:{x:0,z:-1},popTimer:0};
-    const events=[];runtimeApi.updateFairytalePhysics(track,b,elapsed,dt,e=>events.push(e));finiteBall(b);
+    const events=[],fixture={...track,props:[prop]};runtimeApi.updateFairytalePhysics(fixture,b,elapsed,dt,e=>events.push(e));finiteBall(b);
     assert.equal(b.vy,0,`${track.id}/${prop.type}: friendly contact creates unsafe vertical kick`);
     assert(Math.hypot(b.vx,b.vz)<=5,`${track.id}/${prop.type}: helper/patrol force exceeds gentle impulse`);
     if(['hedgehog','toy_mouse'].includes(prop.type)) {
       assert(b.vz<-2,'helper failed to nudge forward');const after=b.vz;
-      runtimeApi.updateFairytalePhysics(track,b,elapsed+dt,dt,e=>events.push(e));near(b.vz,after,'helper cooldown prevents stacked impulse');assert.equal(events.filter(e=>e.type==='helper').length,1);
+      runtimeApi.updateFairytalePhysics(fixture,b,elapsed+dt,dt,e=>events.push(e));near(b.vz,after,'helper cooldown prevents stacked impulse');assert.equal(events.filter(e=>e.type==='helper').length,1);
     }
     if(['ducklings','sheep','snow_bunny','penguin'].includes(prop.type))assert(events.some(e=>e.type==='patrol'),'animated patrol and contact positions disagree');
     contacts++;
@@ -663,7 +760,15 @@ function driveCourse(track, { dt=1/120, speed=4.2 }={}) {
       const exit=points.findIndex((p,i)=>i>=target && p.kind==='chute_exit' && p.chuteId===h.b.chuteRide.chute.id);
       if(exit>=0)target=exit;
     }
-    if(h.b.launchAssist && h.b.launchAssist!==lastLaunch){launches++;lastLaunch=h.b.launchAssist;}
+    if(h.b.launchAssist && h.b.launchAssist!==lastLaunch){
+      launches++;lastLaunch=h.b.launchAssist;
+      let closest=-1,best=2;
+      for(let i=target;i<Math.min(points.length,target+45);i++)if(points[i].kind==='launch'){
+        const d=Math.hypot(points[i].x-lastLaunch.start.x,points[i].z-lastLaunch.start.z);
+        if(d<best){best=d;closest=i;}
+      }
+      if(closest>=0)target=closest+1;
+    }
     if(wasAssist && !assisted) {
       let closest=target,best=Infinity;
       for(let i=target;i<Math.min(points.length,target+18);i++) {
@@ -673,24 +778,55 @@ function driveCourse(track, { dt=1/120, speed=4.2 }={}) {
       if(best<3)target=closest;
     }
     wasAssist=assisted;
-    while(target<points.length-1 && Math.hypot(points[target].x-h.b.x,points[target].z-h.b.z)<(points[target].surfaceKind==='ice' && points[target].width>=5?1.8:0.55) && Math.abs(points[target].y-h.b.y+h.b.r)<1.8)target++;
-    const p=points[target],dx=p.x-h.b.x,dz=p.z-h.b.z,distance=Math.hypot(dx,dz);
-    const desiredSpeed=Math.min(p.width<=2.6?2.5:p.surfaceKind==='ice'?8:speed,distance*4);
+    if(points[target].kind==='surface') {
+      let closest=target,best=Infinity;
+      for(let i=target;i<Math.min(points.length,target+14);i++) {
+        const q=points[i];if(q.kind!=='surface'||q.routeId!==points[target].routeId)break;
+        const d=Math.hypot(q.x-h.b.x,q.z-h.b.z)+Math.abs(q.y-h.b.y+h.b.r)*2;
+        if(d<best){best=d;closest=i;}
+      }
+      if(best<2)target=closest;
+    }
+    while(target<points.length-1 && Math.hypot(points[target].x-h.b.x,points[target].z-h.b.z)<(points[target].width<=2.6?.65:.85) && Math.abs(points[target].y-h.b.y+h.b.r)<1.8)target++;
+    const p=points[target];
+    let aim=p;
+    // Aim ahead on the same floor instead of braking for every60cm sample.
+    for(let i=target+1;i<Math.min(points.length,target+7);i++){
+      const q=points[i];if(q.kind!=='surface'||q.routeId!==p.routeId)break;
+      if(Math.hypot(q.x-h.b.x,q.z-h.b.z)>(p.width<=2.6?1.15:2.1))break;
+      aim=q;
+    }
+    const dx=aim.x-h.b.x,dz=aim.z-h.b.z,distance=Math.hypot(dx,dz);
+    let desiredSpeed=p.width<=2.6?2.1:p.surfaceKind==='ice'?3.2:speed;
+    // Brake before narrow entries, launched gaps and sharp changes of direction.
+    for(let i=target;i<Math.min(points.length,target+16);i++){
+      const q=points[i],d=Math.hypot(q.x-h.b.x,q.z-h.b.z);
+      if(q.kind==='chute_exit'||q.kind==='landing')break;
+      if(q.width<=2.6)desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.1**2+2*3*d));
+      if(q.kind==='launch')desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.2**2+2*3*d));
+    }
+    if(p.kind==='launch'||p.kind==='chute')desiredSpeed=Math.min(desiredSpeed,Math.max(1.6,distance*2));
+    else desiredSpeed=Math.min(desiredSpeed,Math.max(.4,distance*3));
     const vx=dx/(distance||1)*desiredSpeed,vz=dz/(distance||1)*desiredSpeed;
-    const gain=h.b.grounded?9:3;
-    const ax=Math.max(-18,Math.min(18,(vx-h.b.vx)*gain)),az=Math.max(-18,Math.min(18,(vz-h.b.vz)*gain));
+    const gain=h.b.grounded?14:6;
+    const surface=h.b.grounded?h.context.sampleTrackSurface(h.b.x,h.b.y,h.b.z,h.b.r):null;
+    const gravity=surface?26*(5/7)/(1+surface.slopeX**2+surface.slopeZ**2):0;
+    const ax=(vx-h.b.vx)*gain+(surface?.slopeX||0)*gravity*18/4.05;
+    const az=(vz-h.b.vz)*gain+(surface?.slopeZ||0)*gravity*18/4.05;
     h.step(dt,assisted?0:ax,assisted?0:az,18);cameraModes.add(h.state.director.mode);
     if(h.state.pops)break;
-    if(process.argv.includes(`--trace=${track.id}`) && frame%Math.round(1/dt)===0)console.log(JSON.stringify({trace:track.id,t:+h.state.elapsed.toFixed(2),target,p,ball:{x:h.b.x,y:h.b.y,z:h.b.z,grounded:h.b.grounded,vx:h.b.vx,vy:h.b.vy,vz:h.b.vz}}));
+    if(process.argv.includes(`--trace=${track.id}`) && frame%Math.round(1/dt)===0)console.log(JSON.stringify({trace:track.id,t:+h.state.elapsed.toFixed(2),target,p,aim,ax,az,supportRoute:h.b.supportRoute?.id,supportPlatform:h.b.supportPlatform?.role,ball:{x:h.b.x,y:h.b.y,z:h.b.z,grounded:h.b.grounded,vx:h.b.vx,vy:h.b.vy,vz:h.b.vz}}));
   }
-  return {track:track.id,cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),target,targets:points.length,chuteRides,launches,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
+  return {track:track.id,hz:Math.round(1/dt),cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),target,targets:points.length,chuteRides,launches,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
 }
-const routeHz=Number(process.argv.find(a=>a.startsWith('--route-hz='))?.split('=')[1]||120);
-assert(routeHz>=25 && routeHz<=240,'route rate must be 25..240Hz');
-for(const track of TRACKS)check(`v3 input-only complete course: ${track.id}`,()=>{
+const rateArgument=process.argv.find(a=>a.startsWith('--route-hz='));
+const routeRates=rateArgument?[Number(rateArgument.split('=')[1])]:[120,60,25];
+for(const hz of routeRates)assert(hz>=25 && hz<=240,'route rate must be25..240Hz');
+for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.argv.some(a=>a.startsWith('--course='))||process.argv.includes(`--course=${t.id}`)))check(`v3.1 input-only complete course at${routeHz}Hz: ${track.id}`,()=>{
   const receipt=driveCourse(track,{dt:1/routeHz});
   assert(receipt.cleared,`course cannot finish through real movement: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.pops,0,`route pops: ${JSON.stringify(receipt)}`);
+  assert(receipt.seconds<=track.bonusTime+1/routeHz,`course exceeds authored time budget: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.chuteRides,(track.chutes||[]).length,'complete run skipped authored chute');
   if(track.chutes.length)assert(receipt.cameraModes.includes('LOCKED_CHUTE'),'complete run never enters chute camera');
   if(track.cameraZones.length)assert(receipt.cameraModes.includes('MANUAL_ORBIT'),'complete run never enters authored precision camera');

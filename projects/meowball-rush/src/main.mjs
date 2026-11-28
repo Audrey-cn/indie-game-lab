@@ -1,4 +1,4 @@
-// Meowball Rush v3.0.0 — approved multi-view courses + Dynamic Camera Director.
+// Meowball Rush v3.1.0 — approved multi-view courses + Dynamic Camera Director.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -10,10 +10,12 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, TRACKS, migrateV3Save } from "./config.mjs";
 import { sfx } from "./audio.mjs";
 import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings, animateFairytaleScenery } from "./cel-builder.mjs";
-import { nearestRouteSurface } from './course-math.mjs';
+import { nearestRouteSurface, getRibbonBoundarySegments } from './course-math.mjs';
 import { createDirector, updateDirector, cameraRelativeInput, triggerSetpiece, CAMERA_MODES } from './director.mjs';
-import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics } from './course-runtime.mjs';
+import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, integrateRollingMotion, resolveRollingLanding } from './course-runtime.mjs';
 import { generateClearPoster } from "./poster.mjs";
+import { FALL_MESSAGES, findFallZone, beginFallRecovery, advanceFallRecovery } from './fall-feedback.mjs';
+import { createFallEffect, updateFallEffects } from './fall-effects.mjs';
 import { GLB_MODELS } from "./models/manifest.mjs";
 import coverUrl from "./assets/cover.webp";
 
@@ -517,6 +519,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   const track = TRACKS[trackIndex];
   const cat = getSelectedCat();
 
+  if (state?.fallEffects) updateFallEffects(state.fallEffects, 2);
   if (trackRoot) scene.remove(trackRoot);
   if (lobbyShowcaseRig) lobbyShowcaseRig.root.visible = false;
   if (kittyRig) {
@@ -595,6 +598,8 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
     input: { ix: 0, iz: 0, mouseAccX: 0, mouseAccZ: 0, keys: new Set(), touchActive: false, lx: 0, ly: 0 },
     director: createDirector(track.startYaw || 0),
     shownTips: new Set(),
+    fallEffects: [],
+    activeAct: 0,
     urgentLastSec: 10,
     camPos: new THREE.Vector3(track.start.x + 8.5, track.start.y + 10.5, track.start.z + 11.5),
     camLook: new THREE.Vector3(track.start.x, track.start.y - 0.3, track.start.z - 2.0),
@@ -615,7 +620,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   resultScreen.hidden = true;
   hudEl.hidden = false;
   sfx.startBgm(trackIndex);
-  showToast(`🏁 ${track.name} · 冲向终点传送门！`);
+  showToast(`🏁 ${track.name} · 第一幕：${track.acts?.[0]?.name || '出发！'}`);
 }
 
 // ===== DETERMINISTIC 3D SURFACE QUERY (Platforms, Ramps & Rotating Gears!) =====
@@ -655,7 +660,7 @@ function platformFloor(p, x, z, time = state.elapsed) {
     if (p.dir === "-z") {
       const t = Math.max(0, Math.min(1, (p.z + p.d * 0.5 - z) / p.d));
       y = p.yStart + (p.yEnd - p.yStart) * t;
-      slopeZ = (p.yEnd - p.yStart) / p.d;
+      slopeZ = -(p.yEnd - p.yStart) / p.d;
     } else if (p.dir === "+x") {
       const t = Math.max(0, Math.min(1, (x - p.x + p.w * 0.5) / p.w));
       y = p.yStart + (p.yEnd - p.yStart) * t;
@@ -673,34 +678,28 @@ function clampHorizontalSpeed(b, limit) {
   }
 }
 
-function isDownhillSurface(surf, b) {
-  return surf && (surf.route || surf.kind === "ramp" || surf.kind === "ice_ramp")
-    && (-surf.slopeX * b.vx + (surf.route ? -1 : 1) * surf.slopeZ * b.vz) > 0.01;
-}
-
 function collideSideRails(b, previousX, previousZ) {
-  // Curved route rails follow the same piecewise centerline as the visible ribbon.
+  // Contact uses the actual mitered/tapered edge segments rendered by the
+  // sweep, including asymmetric inner corners and shared width transitions.
   const route = b.supportRoute;
-  if (route?.walls && b.grounded) {
-    let closest = null;
-    for (let i = 1; i < route.points.length; i++) {
-      const a = route.points[i - 1], c = route.points[i];
-      const dx = c.x - a.x, dz = c.z - a.z, len2 = dx * dx + dz * dz;
-      if (len2 < 0.00001) continue;
-      const u = Math.max(0, Math.min(1, ((b.x - a.x) * dx + (b.z - a.z) * dz) / len2));
-      const x = a.x + dx * u, z = a.z + dz * u;
-      const dist = Math.hypot(b.x - x, b.z - z);
-      if (!closest || dist < closest.dist) closest = { x, z, dist, nx: -dz / Math.sqrt(len2), nz: dx / Math.sqrt(len2) };
-    }
-    if (closest) {
-      const lateral = (b.x - closest.x) * closest.nx + (b.z - closest.z) * closest.nz;
-      const limit = route.width / 2 - b.r;
-      if (Math.abs(lateral) > limit && closest.dist < route.width / 2 + b.r) {
-        const side = Math.sign(lateral), correction = lateral - side * limit;
-        b.x -= closest.nx * correction; b.z -= closest.nz * correction;
-        const outward = (b.vx * closest.nx + b.vz * closest.nz) * side;
-        if (outward > 0) { b.vx -= closest.nx * side * outward * 1.25; b.vz -= closest.nz * side * outward * 1.25; }
-      }
+  if (route?.walls && b.grounded) for (let pass = 0; pass < 2; pass++) {
+    for (const edge of getRibbonBoundarySegments(route)) {
+      const dx = edge.b.x - edge.a.x, dz = edge.b.z - edge.a.z, len2 = dx * dx + dz * dz;
+      if (len2 < 1e-8) continue;
+      const signed = (b.x - edge.a.x) * edge.nx + (b.z - edge.a.z) * edge.nz;
+      if (signed <= -b.r + 1e-6) continue;
+      const previous = (previousX - edge.a.x) * edge.nx + (previousZ - edge.a.z) * edge.nz;
+      const crossing = previous <= -b.r && signed > previous;
+      const fraction = crossing ? (-b.r - previous) / (signed - previous) : 1;
+      const hitX = previousX + (b.x - previousX) * fraction, hitZ = previousZ + (b.z - previousZ) * fraction;
+      const u = ((hitX - edge.a.x) * dx + (hitZ - edge.a.z) * dz) / len2;
+      if (u < -1e-6 || u > 1 + 1e-6 || (!crossing && signed > b.r + .15)) continue;
+      const floor = edge.a.y + (edge.b.y - edge.a.y) * Math.max(0, Math.min(1, u));
+      if (Math.abs(b.y - b.r - floor) > 1.25) continue;
+      const correction = signed + b.r;
+      b.x -= edge.nx * correction; b.z -= edge.nz * correction;
+      const outward = b.vx * edge.nx + b.vz * edge.nz;
+      if (outward > 0) { b.vx -= edge.nx * outward * 1.25; b.vz -= edge.nz * outward * 1.25; }
     }
   }
   for (const p of state.track.platforms) {
@@ -815,6 +814,21 @@ function triggerBubblePop(reason = "💥 砰！猫球破啦！") {
   kittyRig.dizzyHalo.visible = false;
   kittyRig.furball.visible = true;
   showToast(reason);
+}
+
+function triggerContextualFall(zone) {
+  const b = state.ball;
+  if (b.fallRecovery || b.popTimer > 0) return;
+  state.pops += 1;
+  state.fallEffects.push(createFallEffect(trackRoot, zone, b));
+  beginFallRecovery(b, zone);
+  if (zone.type === 'water') sfx.playSplash();
+  else if (zone.type === 'indoor') { sfx.playWoodThud(); state.squashVel -= 5; }
+  else if (zone.type === 'bush') sfx.playLeafRustle();
+  else sfx.playCloudFall(zone.variant === 'starlight');
+  const variantMessage = { snow:'❄️ 滚进松软雪堆啦，回到冰桥！',
+    awning:'🪁 落到遮阳篷上啦，回到屋顶！', flowerbed:'🌿 滚进街角花坛啦，回到小路！' }[zone.variant];
+  showToast(zone.message || variantMessage || FALL_MESSAGES[zone.type]);
 }
 
 function finishStage(cleared) {
@@ -971,6 +985,10 @@ function tick(ts) {
 
 function updatePhysics(dt) {
   const b = state.ball;
+  if (b.fallRecovery) {
+    advanceFallRecovery(b, dt, state.checkpoint);
+    return;
+  }
   b.chuteCooldown = Math.max(0, (b.chuteCooldown || 0) - dt);
   b.launchLanding = Math.max(0, (b.launchLanding || 0) - dt);
   if (b.chuteRide && b.popTimer <= 0) {
@@ -984,11 +1002,8 @@ function updatePhysics(dt) {
   const inp = state.input;
   const previousX = b.x;
   const previousZ = b.z;
-  const speedBeforeDrive = Math.hypot(b.vx, b.vz);
-  const cruiseMax = 10.2 * catStats.topSpeed;
+  // Cruise is a motor torque target; external momentum decays through material forces.
   const burstMax = 15.2 * catStats.topSpeed;
-  // A full burst settles to cruise in 0.6s, even while holding the accelerator.
-  const settlingLimit = Math.max(cruiseMax, Math.min(burstMax, speedBeforeDrive) - (burstMax - cruiseMax) * dt / 0.6);
   b.boostFlash = Math.max(0, b.boostFlash - dt);
 
   for (const lift of dynamicMeshes.elevators || []) {
@@ -1083,36 +1098,10 @@ function updatePhysics(dt) {
   const driveX = drive.x;
   const driveZ = drive.z;
 
-  const isIce = b.surfaceKind === "ice" || b.surfaceKind === "ice_ramp";
-  const isMud = b.surfaceKind === "mud";
-  const accelMult = (b.grounded ? (isMud ? 0.45 : isIce ? 0.55 : 1.0) : 0.36) * catStats.accel;
-  b.vx += driveX * accelMult * dt;
-  b.vz += driveZ * accelMult * dt;
-
-  // Authentic Rigid-Sphere Rolling Inertia vs Sticky Honey Mud vs Active Steering Grip!
-  const isDriving = Math.hypot(driveX, driveZ) > 0.5;
-  const rollingDrag = b.grounded ? (isMud ? 0.08 : isIce ? 0.90 : 0.64) : 0.88;
-  b.vx *= Math.pow(rollingDrag, dt);
-  b.vz *= Math.pow(rollingDrag, dt);
-  // Active grip helps carve corners & brake when pushing against current velocity (never acts like glue when coasting!)
-  if (b.grounded && isDriving && !isIce) {
-    const spdNow = Math.hypot(b.vx, b.vz);
-    const dLen = Math.hypot(driveX, driveZ);
-    if (spdNow > 0.5 && dLen > 0.1) {
-      const dot = (b.vx * driveX + b.vz * driveZ) / (spdNow * dLen);
-      if (dot < 0.35) {
-        // Braking or sharp turn: catStats.grip cleanly tightens lateral slip
-        const brakeDrag = Math.pow(Math.max(0.28, 0.58 / catStats.grip), dt);
-        b.vx *= brakeDrag;
-        b.vz *= brakeDrag;
-      }
-    }
-  }
-  b.vy -= 26.0 * dt;
-
+  const wasGrounded = b.grounded;
   const startSurf = b.grounded ? sampleTrackSurface(b.x, b.y, b.z, b.r) : null;
-  clampHorizontalSpeed(b, b.boostFlash > 0 || !b.grounded || isDownhillSurface(startSurf, b)
-    ? burstMax : settlingLimit);
+  integrateRollingMotion(b, startSurf, driveX, driveZ, dt, catStats);
+  clampHorizontalSpeed(b, burstMax);
 
   b.x += b.vx * dt;
   b.y += b.vy * dt;
@@ -1174,39 +1163,26 @@ function updatePhysics(dt) {
     }
   }
 
-  // Surface Collision & True Inclined-Plane Gravity Decomposition (a = 5/7 * g * sin(theta)!)
+  // Contact follows the exact floor gradient; air impacts retain a small material bounce.
   const surf = sampleTrackSurface(b.x, b.y, b.z, b.r);
-  // A gently rising ball must leave the floor too (not only fast mushroom
-  // jumps); otherwise the surface snap cancels a vent's gradual lift.
-  if (surf && (b.vy <= 0 || (b.grounded && b.vy <= 1.2))) {
+  if (surf && (wasGrounded || b.vy <= 0)) {
     const impactVy = -b.vy;
-    const wasRamp = b.surfaceKind === "ramp" || b.surfaceKind === "ice_ramp";
     b.y = surf.y + b.r;
-    if (!b.grounded && !wasRamp && impactVy > 15.0 && !b.launchLanding) {
+    if (!wasGrounded && impactVy > 15.0 && !b.launchLanding) {
       triggerBubblePop("💥 摔太狠啦！魔法泡泡碎了！");
       return;
-    } else if (!b.grounded && !wasRamp && impactVy > 9.6 && !b.launchLanding) {
+    } else if (!wasGrounded && impactVy > 9.6 && !b.launchLanding) {
       b.dizzyTimer = 1.35 / catStats.dizzyResist;
       sfx.playDizzy();
       showToast("💫 摔晕啦！小猫头顶冒金星！");
-      b.vy = impactVy * 0.22;
-    } else {
-      b.vy = 0;
     }
-    b.grounded = true;
+    const landing = wasGrounded ? null : resolveRollingLanding(b, surf, { bounce: !b.launchLanding });
+    b.grounded = landing ? landing.grounded : true;
+    if (wasGrounded) b.vy = surf.slopeX * b.vx + surf.slopeZ * b.vz;
     b.surfaceKind = surf.kind;
-    b.supportPlatform = surf.platform || null;
-    b.supportRoute = surf.route || null;
+    b.supportPlatform = b.grounded ? surf.platform || null : null;
+    b.supportRoute = b.grounded ? surf.route || null : null;
     if (surf.route) b.routeTangent = { x: surf.tx, z: surf.tz };
-    // True rolling-sphere gravity along ramp: a = (5/7) * g * sin(theta) — coasting downhill genuinely accelerates!
-    if (surf.slopeX !== 0 || surf.slopeZ !== 0) {
-      const isIceSlope = surf.kind === "ice_ramp";
-      const gSlope = isIceSlope ? 24.5 : 19.5;
-      const sinX = surf.slopeX / Math.hypot(1, surf.slopeX);
-      const sinZ = surf.slopeZ / Math.hypot(1, surf.slopeZ);
-      b.vx -= sinX * gSlope * dt;
-      b.vz += sinZ * gSlope * dt * (surf.route ? -1 : 1);
-    }
     // Rotating Gear tangential carry!
     if (surf.gearVx || surf.gearVz) {
       b.x += surf.gearVx * dt;
@@ -1236,9 +1212,9 @@ function updatePhysics(dt) {
     });
   }
 
-  // Fall off floating sky island!
-  if (b.y < state.track.deathY) {
-    triggerBubblePop("☁️ 掉进云海啦！正在魔法召回…");
+  const fallZone = findFallZone(state.track, b);
+  if (fallZone) {
+    triggerContextualFall(fallZone);
     return;
   }
 
@@ -1437,9 +1413,8 @@ function updatePhysics(dt) {
     }
   }
 
-  // Impulses from pickups, boosters and banks must obey the same speed envelope as driving.
-  clampHorizontalSpeed(b, b.boostFlash > 0 || !b.grounded || isDownhillSurface(surf, b)
-    ? burstMax : settlingLimit);
+  // External impulses share the terminal safety cap; motor cruise is a torque target.
+  clampHorizontalSpeed(b, burstMax);
   collideSideRails(b, previousX, previousZ);
 
   // Finish Portal!
@@ -1451,9 +1426,26 @@ function updatePhysics(dt) {
 
 function updateVisuals(dt) {
   const b = state.ball;
+  updateFallEffects(state.fallEffects, dt);
+  let actIndex = b.supportRoute?.actIndex;
+  if (b.chuteRide) actIndex = state.track.primaryPath.find(step => step.id === b.chuteRide.chute.id)?.actIndex ?? 1;
+  else if (b.launchAssist) {
+    const start = b.launchAssist.start;
+    const launcher = [...state.track.props, ...state.track.mushrooms].find(prop =>
+      Math.hypot(prop.x - start.x, prop.z - start.z) < .5);
+    if (launcher) actIndex = state.track.primaryPath.find(step => step.id === launcher.id)?.actIndex ?? actIndex;
+  }
+  if ((b.grounded || b.chuteRide || b.launchAssist) && actIndex > state.activeAct) {
+    state.activeAct = actIndex;
+    showToast(`🎬 第${['一','二','三','四'][actIndex]}幕：${state.track.acts[actIndex].name}`);
+  }
   const spd = Math.hypot(b.vx, b.vz);
 
   kittyRig.root.position.set(b.x, b.y, b.z);
+  const recall = b.fallRecovery;
+  const cloudFade = recall?.zone.type === 'cloud' ? (recall.elapsed < .75
+    ? Math.max(.01, 1 - recall.elapsed / .55) : Math.min(1, (recall.elapsed - .75) / .4)) : 1;
+  kittyRig.root.scale.setScalar(Math.max(.01, cloudFade));
   kittyRig.bubbleMat.uniforms.uTime.value = state.elapsed;
 
   // Physical rolling rotation + expressive steering lean!
@@ -1543,10 +1535,11 @@ function updateVisuals(dt) {
   }
 
   // Ground Contact Shadow
-  const surf = sampleTrackSurface(b.x, b.y, b.z, b.r);
+  const surf = sampleTrackSurface(b.x, b.y, b.z, b.r)
+    || (b.fallRecovery?.zone.type === 'indoor' ? { y: b.fallRecovery.floor } : null);
   if (surf && b.popTimer <= 0) {
     kittyRig.shadow.visible = true;
-    kittyRig.shadow.position.set(b.x, surf.y + 0.03, b.z);
+    kittyRig.shadow.position.set(b.x, surf.y + 0.055, b.z);
     const hDiff = Math.max(0, b.y - b.r - surf.y);
     const sc = Math.max(0.35, 1 - hDiff * 0.14);
     kittyRig.shadow.scale.setScalar(sc);

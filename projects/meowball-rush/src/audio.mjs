@@ -230,6 +230,37 @@ class MeowAudio {
     this.tone(860, 520, 0.18, "triangle", 0.12, 0.06);
   }
 
+  noiseBurst(duration, volume, cutoff, highpass = false) {
+    if (!this.ctx || this.muted) return;
+    const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * duration, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length) ** 1.6;
+    const source = this.ctx.createBufferSource(); source.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter(); filter.type = highpass ? 'highpass' : 'lowpass'; filter.frequency.value = cutoff;
+    const gain = this.ctx.createGain(); gain.gain.value = volume;
+    source.connect(filter); filter.connect(gain); gain.connect(this.master); source.start();
+    source.onended = () => { source.disconnect(); filter.disconnect(); gain.disconnect(); };
+  }
+
+  playSplash() {
+    this.noiseBurst(0.48, 0.32, 1600);
+    this.tone(250, 65, 0.22, 'sine', 0.2);
+    [660, 880, 540].forEach((f, i) => this.bell(f, 0.12, 0.045, 0.07 + i * 0.045));
+  }
+
+  playWoodThud() {
+    this.tone(145, 62, 0.18, 'triangle', 0.23);
+    this.tone(290, 120, 0.09, 'sine', 0.12);
+    this.noiseBurst(0.08, 0.08, 780);
+  }
+
+  playLeafRustle() { this.noiseBurst(0.36, 0.16, 2200, true); }
+
+  playCloudFall(starlight = false) {
+    this.noiseBurst(0.42, 0.09, 550);
+    [880, 660, starlight ? 1320 : 440].forEach((f, i) => this.bell(f, 0.36, 0.065, i * 0.08));
+  }
+
   playCheckpoint() {
     [659.25, 880, 1174.66].forEach((f, i) => this.bell(f, 0.35, 0.1, i * 0.055));
   }

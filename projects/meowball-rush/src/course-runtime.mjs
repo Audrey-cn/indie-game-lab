@@ -1,5 +1,91 @@
 import { polylineLength, samplePath, computeLaunchVelocity } from './course-math.mjs';
 
+// Ground motion is shared by the browser and deterministic input-only harness.
+// The motor is intentionally weaker than 16deg rolling gravity: climbs need a run-up.
+export const ROLLING_PHYSICS = Object.freeze({ gravity:26, inertia:5/7, motor:4.05, inputRange:18, airControl:.24 });
+const MATERIALS = Object.freeze({
+  grass: { rolling:.36, drag:.12, grip:3.2, traction:1, restitution:.045 },
+  carpet: { rolling:.64, drag:.22, grip:4.2, traction:.96, restitution:.025 },
+  wood: { rolling:.13, drag:.055, grip:2.1, traction:1, restitution:.075 },
+  stone: { rolling:.19, drag:.075, grip:2.55, traction:1, restitution:.065 },
+  brass: { rolling:.12, drag:.045, grip:1.9, traction:1, restitution:.085 },
+  ice: { rolling:.035, drag:.018, grip:.15, traction:.78, restitution:.095 },
+  honey: { rolling:.58, drag:2.0, grip:3.4, traction:.72, restitution:.018 },
+  mud: { rolling:.78, drag:1.65, grip:3.7, traction:.66, restitution:.02 },
+});
+export function materialPhysics(kind='wood') {
+  if(kind==='ice_ramp')return MATERIALS.ice;
+  if(kind==='ramp'||kind==='trough'||kind==='elevator'||kind==='cloud')return MATERIALS.wood;
+  return MATERIALS[kind] || MATERIALS.wood;
+}
+export function surfaceGradient(surface) {
+  return { x:surface?.slopeX || 0,z:surface?.slopeZ || 0 };
+}
+export function rollingSurfaceSpeed(ball, surface) {
+  const s=surfaceGradient(surface),vy=s.x*ball.vx+s.z*ball.vz;
+  return Math.hypot(ball.vx,vy,ball.vz);
+}
+export function rollingDownhill(surface, ball) {
+  const s=surfaceGradient(surface);
+  return !!surface && -(s.x*ball.vx+s.z*ball.vz)>.01;
+}
+export function integrateRollingMotion(ball, surface, driveX, driveZ, dt, stats={}) {
+  const p=ROLLING_PHYSICS, raw=Math.hypot(driveX,driveZ), power=Math.min(1,raw/p.inputRange);
+  const dx=raw>1e-8?driveX/raw:0,dz=raw>1e-8?driveZ/raw:0;
+  if(!ball.grounded || !surface) {
+    const airDrag=Math.exp(-.035*dt);
+    ball.vx=(ball.vx+dx*power*p.motor*p.airControl*(stats.accel||1)*dt)*airDrag;
+    ball.vz=(ball.vz+dz*power*p.motor*p.airControl*(stats.accel||1)*dt)*airDrag;
+    ball.vy-=p.gravity*dt;
+    return;
+  }
+  const s=surfaceGradient(surface),m=materialPhysics(surface.kind),grade2=s.x*s.x+s.z*s.z;
+  // Transport tangent velocity across normals without losing energy at every bank row.
+  const oldY=(ball.rollSlopeX??s.x)*ball.vx+(ball.rollSlopeZ??s.z)*ball.vz;
+  const newY=s.x*ball.vx+s.z*ball.vz, oldSpeed=Math.hypot(ball.vx,oldY,ball.vz),newSpeed=Math.hypot(ball.vx,newY,ball.vz);
+  const transport=newSpeed>1e-8?oldSpeed/newSpeed:1;
+  ball.vx*=transport;ball.vz*=transport;
+  const dirY=s.x*dx+s.z*dz,tangentNorm=Math.hypot(dx,dirY,dz)||1;
+  const alongTangent=(ball.vx*dx+ball.vz*dz+(s.x*ball.vx+s.z*ball.vz)*dirY)/tangentNorm;
+  const torque=Math.max(0,Math.min(1,(10.2*(stats.topSpeed||1)-alongTangent)/.9));
+  const motor=p.motor*power*m.traction*(stats.accel||1)*torque/tangentNorm;
+  const narrow=!!surface.route && (surface.halfWidth??surface.route.width/2)<=1.4;
+  const precisionGrip=narrow?1.45:1;
+
+  const gravity=p.gravity*p.inertia/(1+grade2);
+  ball.vx+=(dx*motor-s.x*gravity)*dt;
+  ball.vz+=(dz*motor-s.z*gravity)*dt;
+  if(power>.02) {
+    // Grip removes sideways slip without deleting the forward momentum of a banked turn.
+    const side=-dz*ball.vx+dx*ball.vz;
+    const lost=side*(1-Math.exp(-m.grip*precisionGrip*(stats.grip||1)*power*dt));
+    ball.vx+=dz*lost;ball.vz-=dx*lost;
+    const along=ball.vx*dx+ball.vz*dz;
+    if(along<0 && dirY<=.01) {
+      const brake=Math.min(-along,(narrow?7.4:5.2)*m.traction*(stats.grip||1)*power*dt);
+      ball.vx+=dx*brake;ball.vz+=dz*brake;
+    }
+  }
+  const speed=rollingSurfaceSpeed(ball,surface);
+  if(speed>1e-8) {
+    const afterDrag=speed*Math.exp(-m.drag*dt),afterRoll=Math.max(0,afterDrag-m.rolling*dt);
+    const ratio=afterRoll/speed;ball.vx*=ratio;ball.vz*=ratio;
+  }
+  ball.vy=s.x*ball.vx+s.z*ball.vz;
+  ball.rollSlopeX=s.x;ball.rollSlopeZ=s.z;
+}
+export function resolveRollingLanding(ball, surface, { bounce=true }={}) {
+  const s=surfaceGradient(surface),m=materialPhysics(surface.kind),norm=Math.hypot(s.x,1,s.z);
+  const nx=-s.x/norm,ny=1/norm,nz=-s.z/norm;
+  const normalSpeed=ball.vx*nx+ball.vy*ny+ball.vz*nz,impact=Math.max(0,-normalSpeed);
+  ball.vx-=nx*Math.min(0,normalSpeed);ball.vy-=ny*Math.min(0,normalSpeed);ball.vz-=nz*Math.min(0,normalSpeed);
+  const rebound=bounce && impact>3.2?Math.min(.95,impact*m.restitution):0;
+  if(rebound>.3) {ball.vx+=nx*rebound;ball.vy+=ny*rebound;ball.vz+=nz*rebound;}
+  else ball.vy=s.x*ball.vx+s.z*ball.vz;
+  ball.rollSlopeX=s.x;ball.rollSlopeZ=s.z;ball.landingImpact=impact;
+  return { impact,rebound:rebound>.3?rebound:0,grounded:rebound<=.3 };
+}
+
 export function findChuteEntry(track, ball) {
   if (ball.chuteCooldown > 0 || ball.chuteRide || ball.popTimer > 0) return null;
   return (track.chutes || []).find(c => {
@@ -18,9 +104,25 @@ export function captureChute(ball, chute) {
   return ride;
 }
 export function advanceChute(ball, ride, dt, rawSway = 0) {
-  const speed = ride.chute.speed || 13;
+  const topSpeed = ride.chute.speed || 13;
+  const exitSpeed = Math.max(2,Math.min(topSpeed,ride.chute.exitSpeed || topSpeed));
+  const brakeDistance = Math.max(1,ride.chute.brakeDistance || 12);
+  const deceleration = (topSpeed*topSpeed-exitSpeed*exitSpeed)/(2*brakeDistance);
+  const brakeStart = Math.max(0,ride.length-brakeDistance);
+  let seconds=dt;
+  if(ride.distance<brakeStart) {
+    const cruiseSeconds=Math.min(seconds,(brakeStart-ride.distance)/topSpeed);
+    ride.distance+=topSpeed*cruiseSeconds;seconds-=cruiseSeconds;
+  }
+  if(seconds>0) {
+    const speed=Math.sqrt(exitSpeed*exitSpeed+2*deceleration*Math.max(0,ride.length-ride.distance));
+    const nextSpeed=Math.max(exitSpeed,speed-deceleration*seconds);
+    ride.distance+=(speed+nextSpeed)*.5*seconds;
+  }
   ride.elapsed += dt;
-  ride.distance = Math.min(ride.length, ride.distance + speed * dt);
+  ride.distance = Math.min(ride.length,ride.distance);
+  const speed=Math.sqrt(exitSpeed*exitSpeed+2*deceleration*Math.min(brakeDistance,Math.max(0,ride.length-ride.distance)));
+  ride.speed=speed;
   const p = samplePath(ride.chute.points, ride.distance);
   const capture = Math.max(0, 1 - ride.elapsed / 0.22) ** 2;
   const envelope = Math.sin(Math.PI * ride.distance / ride.length);

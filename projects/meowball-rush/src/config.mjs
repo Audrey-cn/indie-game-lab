@@ -1,6 +1,6 @@
-import { polylineLength, computeLaunchVelocity } from "./course-math.mjs";
+import { polylineLength, computeLaunchVelocity, prepareRouteGeometry, samplePath, nearestRouteSurface } from "./course-math.mjs";
 
-// Meowball Rush v3.0.0 — 9 Collectible WitchSpring Kittens + 10 Progressive Courses (Tutorial -> Grand Finale)
+// Meowball Rush v3.1.0 — ten four-act courses, from a gentle meadow to the royal finale.
 
 export const CATS = [
   {
@@ -178,9 +178,9 @@ export const CATS = [
 
 
 // Each stage is authored independently from its approved top/side-view blueprint.
-// 95m * 1.20^9 = 490.18m: the strict per-stage growth requirement takes precedence
-// over the incompatible approximate 380–450m finale range. One table controls this choice.
-export const COURSE_LENGTH_TARGETS = Array.from({ length: 10 }, (_, i) => 95 * 1.2 ** i);
+// Explicit pacing targets preserve a readable opening and a substantial final cup.
+// Each course adds new playable sections before normalization; these are not stretched copies.
+export const COURSE_LENGTH_TARGETS = [165, 195, 235, 280, 330, 390, 460, 540, 625, 740];
 const DAY = { skyTop: 0x75c9ff, skyBottom: 0xe9f9ff, fogColor: 0xd7f2eb, sunColor: 0xffefd0 };
 const HOME = { skyTop: 0xf5cf9e, skyBottom: 0xfff4d8, fogColor: 0xf5e2ca, sunColor: 0xffe1aa };
 const NIGHT = { skyTop: 0x101739, skyBottom: 0x604789, fogColor: 0x302855, sunColor: 0xc8e9ff };
@@ -211,20 +211,23 @@ function makeStage(index, id, name, worldType, subtitle, blueprint) {
     bonusTime: 65 + index * 12, deathY: -16, index };
 }
 function route(t, id, section, kind, width, controls, extra = {}) {
-  controls = controls.map(p => ({ ...p }));
-  // Six-metre tangent runways make every capture and release direction continuous.
+  controls = controls.filter((p, i) => !i || Math.hypot(p.x-controls[i-1].x,p.y-controls[i-1].y,p.z-controls[i-1].z)>1e-6).map(p => ({ ...p }));
+  // Adaptive tangent runways preserve capture/release direction without overshooting
+  // the next control on short receiving decks.
   for (const c of t.chutes) {
     const first=c.points[0],second=c.points[1],last=c.points.at(-1),before=c.points.at(-2);
     const same=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z)<1e-6;
     if(same(controls.at(-1),first)){
       const n=Math.hypot(second.x-first.x,second.z-first.z),dx=(second.x-first.x)/n,dz=(second.z-first.z)/n;
       const p=controls.at(-2),distance=Math.hypot(first.x-p.x,first.z-p.z)||1;
-      if(((first.x-p.x)*dx+(first.z-p.z)*dz)/distance<.995||Math.abs(p.y-first.y)>.01)controls.splice(-1,0,P(first.x-dx*4,first.y,first.z-dz*4));
+      const runway=Math.min(4,distance*.45);
+      if(((first.x-p.x)*dx+(first.z-p.z)*dz)/distance<.995||Math.abs(p.y-first.y)>.01)controls.splice(-1,0,P(first.x-dx*runway,first.y,first.z-dz*runway));
     }
     if(same(controls[0],last)){
       const n=Math.hypot(last.x-before.x,last.z-before.z),dx=(last.x-before.x)/n,dz=(last.z-before.z)/n;
       const p=controls[1],distance=Math.hypot(p.x-last.x,p.z-last.z)||1;
-      if(((p.x-last.x)*dx+(p.z-last.z)*dz)/distance<.995||Math.abs(p.y-last.y)>.01)controls.splice(1,0,P(last.x+dx*6,last.y,last.z+dz*6));
+      const runway=Math.min(4,distance*.45);
+      if(((p.x-last.x)*dx+(p.z-last.z)*dz)/distance<.995||Math.abs(p.y-last.y)>.01)controls.splice(1,0,P(last.x+dx*runway,last.y,last.z+dz*runway));
     }
   }
   const points = smoothPath(controls);
@@ -233,11 +236,13 @@ function route(t, id, section, kind, width, controls, extra = {}) {
     const same=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z)<1e-6;
     if(same(points.at(-1),first)){
       const n=Math.hypot(next.x-first.x,next.z-first.z),tx=(next.x-first.x)/n,tz=(next.z-first.z)/n;
-      for(let i=Math.max(0,points.length-4);i<points.length;i++){const d=Math.hypot(points[i].x-first.x,points[i].z-first.z);points[i]=P(first.x-tx*d,first.y,first.z-tz*d);}
+      let distance=0,nextSample={...points.at(-1)};
+      for(let i=points.length-2;i>=Math.max(0,points.length-4);i--){const original={...points[i]};distance+=Math.hypot(nextSample.x-original.x,nextSample.z-original.z);points[i]=P(first.x-tx*distance,first.y,first.z-tz*distance);nextSample=original;}
     }
     if(same(points[0],last)){
       const n=Math.hypot(last.x-before.x,last.z-before.z),tx=(last.x-before.x)/n,tz=(last.z-before.z)/n;
-      for(let i=0;i<Math.min(4,points.length);i++){const d=Math.hypot(points[i].x-last.x,points[i].z-last.z);points[i]=P(last.x+tx*d,last.y,last.z+tz*d);}
+      let distance=0,previous={...points[0]};
+      for(let i=1;i<Math.min(4,points.length);i++){const original={...points[i]};distance+=Math.hypot(original.x-previous.x,original.z-previous.z);points[i]=P(last.x+tx*distance,last.y,last.z+tz*distance);previous=original;}
     }
   }
   const r = { id, section, kind, width, points, walls: width >= 3.8, ...extra };
@@ -273,7 +278,7 @@ function chute(t, id, material, center, radius, drop, turns = 1, startAngle = Ma
   const count = Math.ceil(turns * 144);
   for (let i = 0; i <= count; i++) points.push(pointAt(i / count));
   points.push(P(last.x + ex * 3, last.y, last.z + ez * 3), P(last.x + ex * 7, last.y, last.z + ez * 7));
-  const c = { id, material, points, center: { ...center }, radius, drop, turns, width: 3.6, speed: 13 + t.index * 0.55, entryRadius: 1.8, receiving: { ...points.at(-1) } };
+  const c = { id, material, points, center: { ...center }, radius, drop, turns, width: 3.6, speed: 13 + t.index * 0.55, exitSpeed:6, brakeDistance:12, entryRadius: 1.8, receiving: { ...points.at(-1) } };
   t.chutes.push(c); return c;
 }
 function ride(t, c) { t.primaryPath.push({ type: 'chute', id: c.id }); plaza(t, c.receiving, 'wood', 8, 9, 'chute-receiver'); }
@@ -291,15 +296,15 @@ function dawnValley() {
 }
 function livingRoom() {
   const t = makeStage(1,'garden','02 · 魔女客厅大冒险','indoor_home','编织地毯 · 书本斜坡 · 青玻璃螺旋与玩具火车','stage02-cozy-living-room');
-  const c = chute(t,'cyan-glass','glass',P(16,12,-29),5,5.2,1,Math.PI);
-  route(t,'woven-rug','woven_rug','wood',6,[P(0,4,0),P(-4,4,-4),P(-4,4,-10)]);
-  route(t,'book-ramp','stacked_books','wood',4.8,[P(-4,4,-10),P(-5,6,-15),P(-2,9,-20),P(3,12,-23)]);
-  route(t,'coffee-table','coffee_table','wood',7,[P(3,12,-23),P(8,12,-22),P(11,12,-20),c.points[0]]);
-  prop(t,'turntable',P(6.7,12,-22.2),{r:2,omega:0.65}); prop(t,'toy_mouse',P(9.2,12,-23),{fx:1.5,fz:-3.5});
+  const c = chute(t,'cyan-glass','glass',P(30,12,-29),5,5.2,1,Math.PI);
+  route(t,'woven-rug','woven_rug','carpet',6,[P(0,5.2,0),P(-4,4.7,-4),P(-4,4,-10)]);
+  route(t,'book-ramp','stacked_books','wood',4.8,[P(-4,4,-10),P(-4,4.4,-20),P(-22,6,-32),P(-18,7.6,-48),P(-3,9.2,-50),P(10,10.8,-42),P(12,12,-30),P(3,12,-27),P(3,12,-23)]);
+  route(t,'coffee-table','coffee_table','wood',6.4,[P(3,12,-23),P(3,12,-13),P(10,12,-7),P(20,12,-10),P(25,12,-17),c.points[0]]);
+  prop(t,'turntable',P(3,12,-13),{r:2,omega:0.65}); prop(t,'toy_mouse',P(10,12,-7),{fx:1.5,fz:-3.5});
   ride(t,c);
-  route(t,'toy-train','toy_train','wood',4,[c.receiving,P(13,6.8,-45),P(23,6.8,-48),P(31,6.8,-42),P(29,6.8,-34)]);
-  landmark(t,'coffee_table',P(5,12,-23)); landmark(t,'teacup',P(17,5,-20));
-  t.start=P(0,4.62,0);t.finish=P(29,6.8,-34);t.goalStyle='purple_cushion'; return t;
+  route(t,'toy-train','toy_train','wood',4,[c.receiving,P(25,6.8,-44),P(34,6.8,-51),P(43,6.8,-46),P(45,6.8,-36)]);
+  landmark(t,'coffee_table',P(13,12,-13)); landmark(t,'teacup',P(17,5,-20));
+  t.start=P(0,5.82,0);t.finish=P(45,6.8,-36);t.goalStyle='purple_cushion'; return t;
 }
 function bakeryStreet() {
   const t=makeStage(2,'honey','03 · 鹅卵石面包老街','town_street','鸭宝游行 · 双拱运河S桥 · 喷泉环岛与石沿','stage03-bakery-street');
@@ -310,8 +315,8 @@ function bakeryStreet() {
   route(t,'fountain-roundabout','fountain_roundabout','stone',5,[P(-3,6,-49),P(-6,6,-55),P(-2,6,-61),mainExit]);
   route(t,'stone-curb','narrow_stone_curb','stone',2.1,[mainExit,P(18,6,-62),P(23,6,-56)]);orbit(t,P(16,6,-62),8);
   route(t,'festival-banner','festival_banner','stone',6,[P(23,6,-56),P(28,6,-52),P(31,6,-55)]);
-  route(t,'awning-shortcut','bakery_awning','wood',3.4,[P(9,6,-38),P(15,7.5,-42),P(18,7.8,-49),P(18,6,-62)],{secret:true,walls:false});
-  launch(t,'willow_branch',P(14,7.1,-41),P(18,7.8,-49),0.68,{optional:true,variant:'bakery_awning',r:1.4});
+  route(t,'awning-shortcut','bakery_awning','wood',3.4,[P(15,10.5,-43),P(21,10.5,-49),P(24,10.5,-56)],{secret:true,walls:false,detached:true});
+  launch(t,'willow_branch',P(9,6,-38),P(15,10.5,-43),0.9,{optional:true,variant:'bakery_awning',r:.4});
   landmark(t,'fountain',P(2.5,6,-56));landmark(t,'canal',P(3,4,-35));
   t.start=P(0,10.62,0);t.finish=P(31,6,-55);t.goalStyle='festival_banner';return t;
 }
@@ -328,7 +333,7 @@ function treePasture() {
 function sweetKitchen() {
   const t=makeStage(4,'clockwork','05 · 厨房甜点大作战','indoor_home','格纹餐桌 · 吐司机弹射 · 煎饼转盘与蜂蜜玻璃管','stage05-sweet-kitchen');
   const c=chute(t,'amber-honey','honey',P(24,14,-40),5.4,5,1,Math.PI);
-  route(t,'tablecloth','checkered_tablecloth','wood',6.6,[P(0,7,0),P(-4,7,-6),P(1,7,-12),P(4,7,-16)]);
+  route(t,'tablecloth','checkered_tablecloth','carpet',6.6,[P(0,7,0),P(-4,7,-6),P(1,7,-12),P(4,7,-16)]);
   plaza(t,P(4,7,-16),'wood',7,7,'toaster-dock');
   launch(t,'toaster',P(4,7,-16),P(9,14,-21),1.05,{r:1.25});plaza(t,P(9,14,-21),'wood',10,9,'upper-counter');
   route(t,'upper-counter','upper_kitchen_counter','wood',6.4,[P(9,14,-21),P(14,14,-24),P(18,14,-27)]);
@@ -342,8 +347,8 @@ function clocktowerRoofs() {
   const t=makeStage(5,'pendulum','06 · 钟楼运河与屋顶','town_street','瓦屋弯道 · 烟囱暖流捷径 · 齿轮钟摆与窗沿','stage06-clocktower-rooftops');
   route(t,'roof-bank','terracotta_rooftops','wood',5.4,[P(0,14,0),P(-3,13,-8),P(0,12,-17),P(9,12,-24)],{bank:.5});
   route(t,'balcony-eaves','forked_balcony','wood',2.5,[P(9,12,-24),P(19,12,-22),P(25,12.5,-28),P(24,13,-36)]);orbit(t,P(15,12,-23),8);
-  route(t,'chimney-shortcut','chimney_updraft','wood',2.7,[P(9,12,-24),P(12,12,-31),P(16,12,-35)],{secret:true,walls:false});
-  launch(t,'wind_cloud',P(16,12,-35),P(24,13,-36),.88,{optional:true,variant:'chimney',r:1.2});
+  route(t,'chimney-shortcut','chimney_updraft','wood',2.7,[P(13,16,-30),P(17,16,-34),P(20,16,-36)],{secret:true,walls:false,detached:true});
+  launch(t,'wind_cloud',P(20,16,-36),P(24,13,-36),.88,{optional:true,variant:'chimney',r:.65});
   route(t,'clock-gear-deck','clocktower_gear_deck','brass',7.5,[P(24,13,-36),P(27,13,-44),P(22,13,-50),P(14,13,-51)]);
   t.gears.push({x:23,y:13,z:-44,r:3.3,h:.7,omega:.55},{x:19,y:13,z:-49,r:2.7,h:.7,omega:-.6});
   t.hammers.push({x:23,y:17,z:-42,len:3.3,speed:1.4,amp:.65,phase:0,axis:'z'},{x:19,y:17,z:-49,len:3.3,speed:1.3,amp:.6,phase:Math.PI,axis:'x'});
@@ -354,16 +359,16 @@ function clocktowerRoofs() {
 }
 function skyIslands() {
   const t=makeStage(6,'foundry','07 · 浮空云海跳岛','sky_floating','三级翡翠岛 · 蘑菇胖云弹射 · 双环彩虹与无栏云桥','stage07-sky-cloud-islands');
-  const c=chute(t,'double-rainbow','rainbow',P(31,15,-49),6,6,2,Math.PI);
+  const c=chute(t,'double-rainbow','rainbow',P(40,15,-63),6,6,2,Math.PI);
   route(t,'emerald-island-one','emerald_island','grass',6.7,[P(0,9,0),P(1,9,-5),P(5,9,-9)]);
   plaza(t,P(5,9,-9),'grass',9,9,'island-one');mushroom(t,P(5,9,-9),P(12,11,-17),.93);plaza(t,P(12,11,-17),'grass',9,9,'island-two');
   route(t,'emerald-island-two','emerald_island','grass',6.2,[P(12,11,-17),P(16,11,-20),P(18,11,-26)]);
-  mushroom(t,P(18,11,-26),P(25,13,-33),.93);plaza(t,P(25,13,-33),'grass',10,9,'island-three');
-  route(t,'emerald-island-three','cloud_updraft','grass',6.4,[P(25,13,-33),P(22,13.5,-37),P(25,15,-43),c.points[0]]);
-  launch(t,'wind_cloud',P(22,13.5,-37),P(25,15,-43),.76,{optional:true,r:1.4});ride(t,c);
-  route(t,'cloud-beam','guardless_cloud_beam','cloud',1.65,[c.receiving,P(35,9,-61),P(48,9,-61),P(53,9,-56)],{walls:false});orbit(t,P(43,9,-61),12);
-  route(t,'sky-shrine','sky_shrine','grass',6,[P(53,9,-56),P(57,10,-51),P(60,10.5,-46)]);
-  t.start=P(0,9.62,0);t.finish=P(60,10.5,-46);t.goalStyle='sky_shrine';return t;
+  mushroom(t,P(18,11,-26),P(25,13,-33),.93);plaza(t,P(25,13,-33),'grass',16,16,'island-three');
+  route(t,'emerald-island-three','cloud_updraft','grass',6.4,[P(25,13,-33),P(32,13,-40),P(36,13.5,-48),P(34,15,-54),c.points[0]]);
+  launch(t,'wind_cloud',P(32,13,-40),P(36,13.5,-48),.76,{optional:true,r:1.4});ride(t,c);
+  route(t,'cloud-beam','guardless_cloud_beam','cloud',1.65,[c.receiving,P(38,9,-79),P(51,9,-81),P(60,9,-75)],{walls:false});orbit(t,P(48,9,-80),12);
+  route(t,'sky-shrine','sky_shrine','grass',6,[P(60,9,-75),P(65,10,-68),P(69,10.5,-61)]);
+  t.start=P(0,9.62,0);t.finish=P(69,10.5,-61);t.goalStyle='sky_shrine';return t;
 }
 function frostAttic() {
   const t=makeStage(7,'aurora','08 · 冬日暖炉与冰川阁楼','hybrid_winter','暖炉阁楼 · 冰雪半管 · 冰晶螺旋与极光木屋','stage08-hearth-frost-attic');
@@ -417,10 +422,278 @@ function grandFestival() {
   t.start=P(0,8.62,0);t.finish=P(94,14,-98);t.goalStyle='royal_double_arch';return t;
 }
 
+// Every extension is a new, hand-placed play space beyond the original goal. The
+// return bends, texture changes and quieter precision link give longer courses
+// breathing room between their signature mechanisms and the final sprint.
+const COURSE_EXTENSIONS = [
+  [
+    ['windmill-flower-loop','windmill_flower_loop','grass',6.4,[[35,7.4,-59],[42,7.2,-66],[39,7,-75]]],
+    ['lily-step-bridge','lily_step_bridge','wood',3.8,[[44,7,-82],[52,7,-85]]],
+    ['sunflower-finale','sunflower_festival','grass',6.8,[[59,7.3,-90],[66,7.6,-88],[72,7.8,-95]]],
+  ],
+  [
+    ['sofa-cushion-loop','sofa_cushion_loop','wood',5.8,[[47,6.8,-26],[62,6.8,-20],[74,6.8,-33]]],
+    ['ribbon-reel','ribbon_reel','wood',3.5,[[82,6.8,-45],[78,6.8,-57]]],
+    ['cushion-parade','cushion_parade','wood',5.8,[[85,7,-67],[97,7.2,-66],[104,7.2,-57]]],
+  ],
+  [
+    ['market-crescent','market_crescent','stone',5.8,[[42,6,-50],[53,6.2,-56],[55,6,-65]]],
+    ['canal-balustrade','canal_balustrade','stone',3.1,[[52,6,-73],[55,6,-80]]],
+    ['bakers-procession','bakers_procession','stone',6.4,[[63,6.3,-86],[73,6.4,-83],[80,6.5,-90]]],
+  ],
+  [
+    ['clover-pasture-loop','clover_pasture_loop','grass',6.8,[[66,8,-42],[77,7.6,-49],[80,7.3,-58]]],
+    ['shepherd-log','shepherd_log','wood',2.7,[[77,7.3,-66],[81,7.3,-73]]],
+    ['cloud-sheep-finale','cloud_sheep_festival','grass',6.8,[[90,7.5,-79],[100,8,-74],[107,8,-82]]],
+  ],
+  [
+    ['sugar-cookie-slalom','sugar_cookie_slalom','wood',5.8,[[45,10,-37],[56,9.8,-41],[60,9.6,-51]]],
+    ['wafer-bridge','wafer_bridge','wood',2.6,[[57,9.6,-60],[62,9.6,-67]]],
+    ['icing-procession','icing_procession','wood',6.2,[[70,10,-73],[79,10.4,-69],[87,10.5,-76]]],
+  ],
+  [
+    ['copper-roof-loop','copper_roof_loop','wood',5.6,[[33,15,-61],[44,14.7,-66],[46,14.5,-77]]],
+    ['bell-balcony','bell_balcony','stone',2.5,[[43,14.5,-86],[48,14.5,-93]]],
+    ['sunset-belfry-run','sunset_belfry_run','brass',6,[[57,15,-99],[66,15.4,-94],[74,15.5,-102]]],
+  ],
+  [
+    ['rainbow-garden-loop','rainbow_garden_loop','grass',6.2,[[74,10.5,-39],[86,10,-47],[89,9.8,-60]]],
+    ['cloud-needle','cloud_needle','cloud',2.4,[[84,9.8,-70],[88,9.8,-80]]],
+    ['sunrise-shrine-run','sunrise_shrine_run','grass',6.5,[[100,10,-86],[111,10.5,-81],[119,11,-90]]],
+  ],
+  [
+    ['frozen-lake-crescent','frozen_lake_crescent','ice',7.2,[[69,9,-30],[81,8.5,-40],[84,8.2,-53]]],
+    ['frost-fence-walk','frost_fence_walk','wood',2.5,[[78,8.2,-64],[83,8.2,-74]]],
+    ['northern-lights-run','northern_lights_run','ice',6.6,[[96,8.5,-81],[107,9,-75],[116,9.2,-85]]],
+  ],
+  [
+    ['comet-reading-terrace','comet_reading_terrace','crystal',6,[[-10,13.6,-32],[-25,14.4,-37],[-29,14.5,-50]]],
+    ['gilt-book-balcony','gilt_book_balcony','wood',2.4,[[-24,14.5,-62],[-31,14.5,-73]]],
+    ['planetarium-procession','planetarium_procession','crystal',6.4,[[-45,14.7,-80],[-57,15,-74],[-68,15.3,-85]]],
+  ],
+  [
+    ['royal-rose-loop','royal_rose_loop','grass',6.4,[[107,14,-91],[121,13.7,-101],[125,13.5,-115]]],
+    ['coronation-starwalk','coronation_starwalk','neon',2.3,[[119,13.5,-128],[125,13.5,-139]]],
+    ['witch-crown-procession','witch_crown_procession','crystal',7.4,[[140,14,-147],[154,14.5,-139],[166,15,-150]]],
+  ],
+];
+
+const COURSE_IDENTITIES = [
+  { palette:[0x8fc968,0xf4cd69,0xffa4bd], surfacePattern:'flower_petals',edgeStyle:'meadow_hedge',lighting:'golden_morning',acts:['花径试滚','溪桥轻转','柳枝借力','向日葵庆典'] },
+  { palette:[0xb88964,0x89d6e1,0xd3a4e6], surfacePattern:'woven_rug',edgeStyle:'rug_piping',lighting:'honey_window',acts:['绒毯起步','玻璃回旋','玩具列车','抱枕巡游'] },
+  { palette:[0xad9d8c,0x68c5ce,0xe8b56d], surfacePattern:'cobblestone',edgeStyle:'canal_stone',lighting:'bakery_afternoon',acts:['面包香街','双拱运河','喷泉石沿','市集游行'] },
+  { palette:[0x8fbd67,0x9e6d44,0xe8c68c], surfacePattern:'clover_meadow',edgeStyle:'oak_rail',lighting:'pasture_sunbeams',acts:['牧道登高','古橡树旋滑','独木试胆','胖云羊牧场'] },
+  { palette:[0xd3a06c,0xf1bb73,0xf8a2ae], surfacePattern:'gingham',edgeStyle:'icing_rail',lighting:'warm_kitchen',acts:['格纹餐桌','吐司飞跃与蜂蜜旋滑','砧板与蛋糕微控','糖霜巡游'] },
+  { palette:[0xb97455,0xc89b55,0x82b6c7], surfacePattern:'terracotta_tiles',edgeStyle:'roof_copper',lighting:'clocktower_sunset',acts:['瓦屋顺风','齿轮钟摆','窗沿慢行','暮光钟楼'] },
+  { palette:[0x8ed6ac,0xffc9ed,0xe7e8ff], surfacePattern:'cloud_stars',edgeStyle:'cloud_rope',lighting:'opalescent_sunrise',acts:['三级翡翠岛','双环彩虹','云桥微操','晨星神殿'] },
+  { palette:[0x99e5ee,0xd1a372,0xceb7f7], surfacePattern:'frost_crystals',edgeStyle:'frost_rail',lighting:'hearth_aurora',acts:['暖炉阁楼','冰碗与冰晶旋滑','雪松桥微控','极光湖畔'] },
+  { palette:[0x9d8ac9,0xe1bc68,0x7dbadc], surfacePattern:'constellation_pages',edgeStyle:'gilt_books',lighting:'starlight_indigo',acts:['升空书架','振翅魔法书','星辉螺旋','行星仪巡游'] },
+  { palette:[0xd19cdb,0xf2cf76,0x93d8d2], surfacePattern:'royal_stars',edgeStyle:'royal_gold',lighting:'festival_twilight',acts:['花谷街灯','图书室飞跃','皇家双螺旋','魔女加冕礼'] },
+];
+const COURSE_LIGHTING = [
+  {skyTop:0x83d5f5,skyBottom:0xfff3cb,fogColor:0xddeed3,sunColor:0xffe3a6},
+  {skyTop:0xe6be94,skyBottom:0xfff1d5,fogColor:0xf1dfca,sunColor:0xffd6a3},
+  {skyTop:0x87c7db,skyBottom:0xffe6c0,fogColor:0xe2dfcf,sunColor:0xffdbac},
+  {skyTop:0x9bcbd3,skyBottom:0xeef3ce,fogColor:0xd2e6c1,sunColor:0xffedc0},
+  {skyTop:0xe5b6a1,skyBottom:0xffedcf,fogColor:0xf4d8ba,sunColor:0xffd49b},
+  {skyTop:0x8a99c4,skyBottom:0xf5c29e,fogColor:0xc2b8c6,sunColor:0xffbd8c},
+  {skyTop:0x8ebfe9,skyBottom:0xffddec,fogColor:0xd4ddf7,sunColor:0xfff1dd},
+  {skyTop:0x253d6b,skyBottom:0x8a8fb5,fogColor:0x647b9c,sunColor:0xd5f5ff},
+  {skyTop:0x151533,skyBottom:0x625080,fogColor:0x363054,sunColor:0xdfd4ff},
+  {skyTop:0x4d4d8c,skyBottom:0xe3a8cd,fogColor:0x9e8cbb,sunColor:0xffdcb9},
+];
+
+function addCourseFinale(t) {
+  const originalFinish={...t.finish};
+  for (const [id,section,kind,width,controls] of COURSE_EXTENSIONS[t.index]) {
+    const authored=controls.map(([x,y,z])=>P(x,y,z));
+    const previous=t.routes.filter(r=>!r.secret).at(-1),last=previous.points.at(-1),before=previous.points.at(-2);
+    const dx=last.x-before.x,dz=last.z-before.z,run=Math.hypot(dx,dz)||1,runway=Math.max(previous.width,width)*.9+1.2;
+    // A new act continues the arriving tangent. Reversing over the old finish
+    // creates overlapping collision rails even when the centerlines only meet once.
+    authored[0]=P(last.x+dx/run*runway,last.y+(last.y-before.y)/run*runway,last.z+dz/run*runway);
+    const points=[{...t.finish},...authored];
+    const added=route(t,id,section,kind,width,points,{walls:width>=3.5,extension:true});
+    let distance=0,prior={...added.points[0]};
+    for(let i=1;i<Math.min(4,added.points.length);i++) {
+      const original={...added.points[i]};distance+=Math.hypot(original.x-prior.x,original.z-prior.z);
+      added.points[i]=P(last.x+dx/run*distance,last.y+(last.y-before.y)/run*distance,last.z+dz/run*distance);prior=original;
+    }
+    t.finish={...points.at(-1)};
+  }
+  t.originalFinish=originalFinish;
+  landmark(t,'act_gate',originalFinish,{label:COURSE_IDENTITIES[t.index].acts[3]});
+  landmark(t,'finale_beacon',{...t.finish},{label:COURSE_IDENTITIES[t.index].acts[3]});
+}
+
+function authorCoursePacing(t) {
+  const identity=COURSE_IDENTITIES[t.index], core=t.routes.filter(r=>!r.secret&&!r.extension);
+  const coreActs=[
+    [0,1,2],[0,0,1,2],[0,1,1,2,2],[0,1,2],[0,1,2,2],
+    [0,0,1,2,2],[0,0,1,2,2],[0,1,2,2],[0,1,1,1,1,2,2],[0,0,1,1,2,2],
+  ][t.index];
+  t.visualIdentity={...identity,palette:[...identity.palette]};
+  Object.assign(t,COURSE_LIGHTING[t.index]);
+  t.acts=identity.acts.map((name,i)=>({id:`${t.id}-act-${i+1}`,name,role:['opening','signature','microcontrol','finale'][i],routeIds:[],pathIds:[]}));
+  for(const r of t.routes) {
+    const index=core.indexOf(r);
+    r.actIndex=r.extension?3:r.secret?1:coreActs[index];
+    r.surfacePattern=identity.surfacePattern;
+    r.edgeStyle=identity.edgeStyle;
+    r.surfaceColor=identity.palette[0];
+    r.accentColor=identity.palette[r.actIndex===3?2:1];
+    if(!r.secret)t.acts[r.actIndex].routeIds.push(r.id);
+  }
+  let actIndex=0;
+  for(const step of t.primaryPath) {
+    if(step.type==='route')actIndex=t.routes.find(r=>r.id===step.id).actIndex;
+    else if(step.type==='chute')actIndex=1;
+    else if(step.type==='launch') {
+      const p=t.props.find(p=>p.id===step.id);
+      if(!step.optional&&(p.type==='toaster'||p.variant==='library_jump'))actIndex=1;
+    }
+    step.actIndex=actIndex;
+    if(!step.optional)t.acts[actIndex].pathIds.push(step.id);
+  }
+  for(const act of t.acts)act.lengthMeters=t.primaryPath.filter(p=>!p.optional&&p.actIndex===t.acts.indexOf(act)).reduce((sum,p)=>sum+(p.type==='route'?polylineLength(t.routes.find(r=>r.id===p.id).points):p.type==='chute'?polylineLength(t.chutes.find(c=>c.id===p.id).points):0),0);
+  // Distance-based recovery points cover the new finale as well as the original
+  // signature set piece. Every candidate is a broad floor or a chute arrival deck.
+  const candidates=[];let progress=0;
+  for(const step of t.primaryPath) {
+    if(step.type==='route') {
+      const r=t.routes.find(r=>r.id===step.id);let local=0;
+      for(let i=1;i<r.points.length;i++) {
+        const a=r.points[i-1],p=r.points[i];local+=Math.hypot(p.x-a.x,p.y-a.y,p.z-a.z);
+        if(r.width>=3.5)candidates.push({...p,progress:progress+local,actIndex:r.actIndex});
+      }
+      progress+=local;
+    } else if(step.type==='chute') {
+      const c=t.chutes.find(c=>c.id===step.id);progress+=polylineLength(c.points);
+      candidates.push({...c.receiving,progress,actIndex:1});
+    }
+  }
+  t.checkpoints=[];
+  for(const fraction of [.28,.53,.78]) {
+    const available=candidates.filter(p=>!t.checkpoints.some(cp=>Math.abs(cp.progress-p.progress)<t.length*.1));
+    const candidate=available.reduce((best,p)=>!best||Math.abs(p.progress-t.length*fraction)<Math.abs(best.progress-t.length*fraction)?p:best,null);
+    if(candidate)t.checkpoints.push({...candidate});
+  }
+  t.checkpoints.sort((a,b)=>a.progress-b.progress);
+  const narrowLength=t.routes.filter(r=>!r.secret&&r.width<=2.6).reduce((sum,r)=>sum+polylineLength(r.points),0);
+  const stickyTime=t.routes.reduce((sum,r)=>sum+polylineLength(r.points)*(r.kind==='honey'?.7:r.kind==='mud'?.45:0),0);
+  t.parSeconds=Math.ceil(t.length/(3.8+t.index*.04)+18+t.chutes.length*4+narrowLength*.12+stickyTime);
+  t.bonusTime=Math.ceil(t.parSeconds*1.25+20);
+}
+
+function authorFallZones(t) {
+  const all=t.routes.flatMap(r=>r.points), minY=Math.min(...all.map(p=>p.y));
+  const bounds=(points,padding=4)=>{
+    const x0=Math.min(...points.map(p=>p.x))-padding,x1=Math.max(...points.map(p=>p.x))+padding;
+    const z0=Math.min(...points.map(p=>p.z))-padding,z1=Math.max(...points.map(p=>p.z))+padding;
+    return {x:(x0+x1)/2,z:(z0+z1)/2,w:x1-x0,d:z1-z0};
+  };
+  t.fallZones=[];
+  const zone=(type,routeIds,label,drop,priority=20)=>{
+    const routes=t.routes.filter(r=>routeIds.includes(r.id)), points=routes.flatMap(r=>r.points);
+    if(!points.length)return;
+    const y=Math.min(...points.map(p=>p.y))-drop;
+    t.fallZones.push({id:`${t.id}-${type}-${t.fallZones.length}`,type,...bounds(points,Math.max(4,...routes.map(r=>r.width*.65))),y,triggerY:y,label,routeIds,priority,fallback:false});
+  };
+  if(t.index===0) {
+    zone('water',['brook-bridge'],'溪水溅起小水花',2.6,30);
+    zone('water',['lily-step-bridge'],'睡莲溪轻轻接住你',2.6,30);
+    zone('bush',['willow-meadow','windmill-flower-loop'],'蓬松花丛接住小猫',1.8,10);
+  }
+  if(t.index===2)for(const id of ['twin-arches','canal-balustrade'])zone('water',[id],'运河里扑通一声',2.8,30);
+  if(t.index===3) {
+    for(const id of ['ravine-log','shepherd-log'])zone('water',[id],'山溪溅起亮晶晶的水花',2.8,30);
+    zone('bush',['sunny-pasture','clover-pasture-loop'],'三叶草丛沙沙响',1.8,10);
+  }
+  if(t.index===7) {
+    zone('indoor',['hearth-attic'],'落回暖炉旁的软地毯',2.8,20);
+    for(const id of ['snow-pine-bridge','frost-fence-walk'])zone('water',[id],'冰湖溅起雪色水花',2.8,30);
+  }
+  if(t.index===9)zone('indoor',['library-interior','library-sky-dock'],'书室软垫轻轻接住你',2.8,20);
+  const fallbackType=[0,2,3,5,7].includes(t.index)?'bush':[1,4].includes(t.index)?'indoor':'cloud';
+  const label=['花丛沙沙接住你','落回客厅软地毯','街角花坛接住你','牧场灌木接住你','落回厨房软垫','屋顶软篷接住你','胖云轻轻托住你','蓬松雪堆接住你','星云轻轻托住你','庆典彩云接住你'][t.index];
+  const nominalY=minY-(fallbackType==='cloud'?6:fallbackType==='indoor'?2.8:2.5);
+  // Keep broad foundations below the water/catch patches laid into them. A low
+  // fallback must never steal a water contact before the ball reaches its surface.
+  const y=t.fallZones.length?Math.min(nominalY,...t.fallZones.map(z=>z.y-.35)):nominalY;
+  const variant={2:'flowerbed',5:'awning',7:'snow',8:'starlight',9:'starlight'}[t.index];
+  t.fallZones.push({id:`${t.id}-fallback`,type:fallbackType,...bounds(all,20),y,triggerY:y,label,routeIds:[],priority:0,fallback:true,...(variant?{variant}:{})});
+}
+
+function authorClimbAssists(t) {
+  // A downhill rug feeds a visible ribbon pad before the long book ascent;
+  // the ice bowl keeps its momentum-dependent return bank, with a rescue pad
+  // partway uphill so a careful player is never stranded after braking.
+  for(const id of t.index===1?['book-ramp']:t.index===7?['window-bowl']:[]) {
+    const r=t.routes.find(r=>r.id===id), candidates=[];
+    for(let i=1;i<r.points.length-1;i++) {
+      const a=r.points[i-1],b=r.points[i+1],run=Math.hypot(b.x-a.x,b.z-a.z);
+      if((b.y-a.y)/run>Math.tan(8*Math.PI/180))candidates.push(i);
+    }
+    for(const fraction of [.2,.65]) {
+      const index=candidates[Math.floor((candidates.length-1)*fraction)];
+      if(index===undefined)continue;
+      const p=r.points[index],a=r.points[index-1],b=r.points[index+1],n=Math.hypot(b.x-a.x,b.z-a.z)||1;
+      t.boosts.push({id:`${t.id}-climb-ribbon-${t.boosts.length}`,x:p.x,y:p.y,z:p.z,w:4.4,d:5.5,fx:(b.x-a.x)/n*11,fz:(b.z-a.z)/n*11,role:'climb-assist',routeId:id});
+    }
+  }
+}
+
+function insertSurfaceStretch(t,routeId,kind,length) {
+  const index=t.routes.findIndex(r=>r.id===routeId),original=t.routes[index],total=polylineLength(original.points);
+  const start=total*.38,end=Math.min(total*.8,start+length),cuts=[0,start,end,total],parts=[];
+  const distances=[0];
+  for(let i=1;i<original.points.length;i++){const a=original.points[i-1],b=original.points[i];distances.push(distances.at(-1)+Math.hypot(b.x-a.x,b.y-a.y,b.z-a.z));}
+  for(let i=0;i<3;i++) {
+    const points=[samplePath(original.points,cuts[i]),...original.points.filter((_,j)=>distances[j]>cuts[i]+1e-6&&distances[j]<cuts[i+1]-1e-6),samplePath(original.points,cuts[i+1])];
+    parts.push({...original,id:i===0?original.id:`${original.id}-${i===1?kind:'exit'}`,kind:i===1?kind:original.kind,points});
+  }
+  t.routes.splice(index,1,...parts);
+  const primary=t.primaryPath.findIndex(p=>p.type==='route'&&p.id===routeId);
+  t.primaryPath.splice(primary,1,...parts.map(r=>({type:'route',id:r.id})));
+}
+
+function authorDetachedShortcut(t,scale) {
+  if(![2,5].includes(t.index))return;
+  const bakery=t.index===2,secret=t.routes.find(r=>r.id===(bakery?'awning-shortcut':'chimney-shortcut'));
+  const parent=t.routes.find(r=>r.id===(bakery?'twin-arches':'roof-bank'));
+  const anchor={x:9*scale,z:(bakery?-38:-24)*scale},points=parent.points;
+  let index=0;
+  for(let i=1;i<points.length;i++)if(Math.hypot(points[i].x-anchor.x,points[i].z-anchor.z)<Math.hypot(points[index].x-anchor.x,points[index].z-anchor.z))index=i;
+  const p=points[index],a=points[Math.max(0,index-1)],b=points[Math.min(points.length-1,index+1)],length=Math.hypot(b.x-a.x,b.z-a.z)||1;
+  const nx=-(b.z-a.z)/length,nz=(b.x-a.x)/length,target=secret.points[0];
+  const side=Math.sign((target.x-p.x)*nx+(target.z-p.z)*nz)||1,offset=parent.width*.35;
+  const takeoff={x:p.x+nx*offset*side,z:p.z+nz*offset*side};
+  const surface=nearestRouteSurface([parent],takeoff.x,takeoff.z,Infinity);
+  takeoff.y=surface?.y??p.y;
+  let helper;
+  if(bakery) {
+    helper=t.props.find(p=>p.variant==='bakery_awning');
+    Object.assign(helper,takeoff,{target:{...target},flightTime:.9,r:.4},computeLaunchVelocity(takeoff,target,.9));
+    const returning=t.routes.find(r=>r.id==='festival-banner').points.at(-1);
+    launch(t,'willow_branch',{...secret.points.at(-1)},{...returning},.9,{optional:true,variant:'bakery_awning_return',r:.55,actIndex:1});
+  } else {
+    helper=launch(t,'wind_cloud',takeoff,{...target},.9,{optional:true,variant:'chimney_takeoff',r:.4,actIndex:1});
+  }
+  helper.offCenter=true;
+  helper.secretEntry=true;
+}
+
 function finishAuthoredStage(t) {
+  addCourseFinale(t);
+  if(t.index===1) {
+    const seen=new WeakSet(),height=p=>{if(p&&typeof p==='object'&&Number.isFinite(p.y)&&!seen.has(p)){seen.add(p);p.y=4+(p.y-4)*.8;}};
+    for(const list of [t.routes,t.chutes])for(const p of list){for(const point of p.points)height(point);height(p.center);height(p.receiving);if(p.drop)p.drop*=.8;}
+    for(const list of [t.platforms,t.props,t.mushrooms,t.gears,t.hammers,t.landmarks,t.cameraZones])for(const p of list){height(p);height(p.target);}
+    height(t.finish);height(t.originalFinish);t.start.y=4+(t.start.y-.62-4)*.8+.62;
+  }
   // Scale horizontal dimensions only; all elevation differences and ball-sized widths
   // remain intentional. Launch impulses are solved again after scaling.
-  const primaryRoutes=t.routes.filter(r=>!r.secret);
+  let primaryRoutes=t.routes.filter(r=>!r.secret);
   const measured=(scale)=>{
     let length=0;
     for(const path of [...primaryRoutes,...t.chutes])for(let i=1;i<path.points.length;i++){
@@ -435,11 +708,15 @@ function finishAuthoredStage(t) {
   const scalePoint=(p)=>{if(p&&typeof p==='object'&&!seen.has(p)&&Number.isFinite(p.x)&&Number.isFinite(p.z)){seen.add(p);p.x*=scale;p.z*=scale;}};
   for(const r of t.routes)for(const p of r.points)scalePoint(p);
   for(const c of t.chutes){for(const p of c.points)scalePoint(p);scalePoint(c.center);scalePoint(c.receiving);c.radius*=scale;}
-  for(const list of [t.platforms,t.props,t.mushrooms,t.gears,t.hammers,t.landmarks,t.cameraZones])for(const p of list){scalePoint(p);scalePoint(p.target);}
+  for(const list of [t.platforms,t.props,t.mushrooms,t.gears,t.hammers,t.landmarks,t.cameraZones,t.boosts])for(const p of list){scalePoint(p);scalePoint(p.target);}
   scalePoint(t.start);scalePoint(t.finish);
+  scalePoint(t.originalFinish);
   for(const p of [...t.props,...t.mushrooms])if(p.target&&p.flightTime)Object.assign(p,computeLaunchVelocity(p,p.target,p.flightTime));
   for(const z of t.cameraZones)z.r=Math.max(z.r,z.r*scale*.85);
   for(const p of t.platforms){if(p.role.includes('island')){p.w=Math.max(p.w,p.w*Math.min(scale,1.4));p.d=Math.max(p.d,p.d*Math.min(scale,1.4));}}
+  if(t.index===3)insertSurfaceStretch(t,'clover-pasture-loop','mud',8);
+  if(t.index===4)insertSurfaceStretch(t,'sugar-cookie-slalom','honey',11);
+  primaryRoutes=t.routes.filter(r=>!r.secret);
   for(const r of primaryRoutes.filter(r=>r.width<=2.6)){
     for(let i=0;i<r.points.length;i+=Math.max(1,Math.floor(r.points.length/4))){
       const p=r.points[i];
@@ -470,9 +747,15 @@ function finishAuthoredStage(t) {
   for(let i=0;i<primaryRoutes.length;i++){
     const r=primaryRoutes[i],mid=r.points[Math.floor(r.points.length*.55)];
     t.stars.push({...mid,y:mid.y+1.05});
-    if(i>0&&i%2===0&&r.width>=3.5)t.checkpoints.push({...r.points[0]});
   }
-  for(const c of t.chutes)t.checkpoints.push({...c.receiving});
+  authorCoursePacing(t);
+  authorFallZones(t);
+  authorClimbAssists(t);
+  // Detached landing mouths must use the exact Float32 center vertex rendered
+  // by Three.js; a double endpoint can otherwise sit a micron beyond its cap.
+  for(const r of t.routes.filter(r=>r.detached))for(const p of [r.points[0],r.points.at(-1)])for(const axis of ['x','y','z'])p[axis]=Math.fround(p[axis]);
+  prepareRouteGeometry(t.routes,t.chutes);
+  authorDetachedShortcut(t,scale);
   t.tips=[{...P(first.x,first.y,first.z),r:4,msg:t.index===0?'🐾 WASD / 方向键推球；拖动视角，轻轻试试花谷弯道！':`✨ ${t.subtitle}`}];
   return t;
 }
