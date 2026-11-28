@@ -3,11 +3,17 @@
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createHash } from "node:crypto";
-import { getRouteRibbonRows, getChuteShellRows, prepareRouteGeometry } from "../src/course-math.mjs";
+import { getRouteRibbonRows, getChuteShellRows, prepareRouteGeometry, nearestRouteSurface } from "../src/course-math.mjs";
 import { nearestSceneryClearance } from "../src/scenery-clearance.mjs";
+import { collideRouteGuardrails } from "../src/course-runtime.mjs";
 import { verifyRibbonMesh, verifyMeshCheckerFixtures, verifyMeshPairSeparation } from "./mesh-checks.mjs";
 import "./verify-fall-feedback.mjs";
-import { createRouteRibbonGeometry, createChuteShellGeometry } from "../src/v3-worlds.mjs";
+import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleScenery } from "../src/v3-worlds.mjs";
+import { createDirector, updateDirector, triggerSetpiece } from "../src/director.mjs";
+import { createCameraOcclusion, isCameraOccluder } from "../src/camera-occlusion.mjs";
+import { createCameraSightline } from "../src/camera-sightline.mjs";
+import { verifyCameraOcclusion } from "./verify-camera-occlusion.mjs";
+import { verifyMushroomContact } from "./verify-mushroom-contact.mjs";
 import "./verify-assets.mjs";
 const { buildTrackScene, getSideWallOpenings, getEndWallOpenings } = await import("../src/cel-builder.mjs");
 import { TRACKS } from "../src/config.mjs";
@@ -27,6 +33,173 @@ const close = (actual, expected, label, tolerance = 0.00001) => {
 };
 
 const results = [];
+await verifyCameraOcclusion();
+let cameraSamples = 0, cameraRays = 0, cameraPaths = 0, cameraContainmentChecks = 0;
+const cameraFailures = [];
+const sightRay = new THREE.Raycaster(), eye = new THREE.Vector3(), focus = new THREE.Vector3();
+const viewDirection = new THREE.Vector3(), viewRight = new THREE.Vector3(), viewUp = new THREE.Vector3(), sightTarget = new THREE.Vector3();
+const sightCamera=new THREE.PerspectiveCamera(),sightFrustum=new THREE.Frustum(),sightProjection=new THREE.Matrix4(),sightBounds=new THREE.Box3();
+const bubbleSphere=new THREE.Sphere(),bubbleEntry=new THREE.Vector3();
+let sightMeshes=[];
+const silhouette = [[0,0],[1,0],[-1,0],[0,1],[0,-1],[.707,.707],[-.707,.707],[.707,-.707],[-.707,-.707]];
+const hierarchy = node => {
+  const names = [];
+  for (let p = node; p; p = p.parent) if (p.name) names.unshift(p.name);
+  return names.join('/') || node.geometry.type;
+};
+function sightBlockers(group, pose, ball) {
+  const hits = new Set();
+  eye.set(pose.x,pose.y,pose.z);focus.set(ball.x,ball.y,ball.z);
+  sightCamera.position.copy(eye);sightCamera.lookAt(focus);sightCamera.near=.001;sightCamera.far=eye.distanceTo(focus)+.62;
+  sightCamera.fov=2*Math.asin(Math.min(.99,.63/eye.distanceTo(focus)))*180/Math.PI;sightCamera.aspect=1;sightCamera.updateProjectionMatrix();sightCamera.updateMatrixWorld(true);
+  sightFrustum.setFromProjectionMatrix(sightProjection.multiplyMatrices(sightCamera.projectionMatrix,sightCamera.matrixWorldInverse));
+  // Exact Raycaster triangles remain the assertion. This conservative cone
+  // broad phase reduces repeated triangle work on remote world geometry.
+  const candidates=sightMeshes.filter(mesh=>{
+    if(!isVisible(mesh))return false;
+    const materials=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+    if(!materials.some(m=>m.visible&&(!m.transparent||m.opacity>=.85)))return false;
+    if(!mesh.geometry.boundingBox)mesh.geometry.computeBoundingBox();
+    sightBounds.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+    return sightBounds.containsPoint(eye)||sightFrustum.intersectsBox(sightBounds);
+  });
+  viewDirection.subVectors(focus,eye).normalize();viewRight.crossVectors(viewDirection,THREE.Object3D.DEFAULT_UP).normalize();viewUp.crossVectors(viewRight,viewDirection).normalize();
+  bubbleSphere.center.copy(focus);bubbleSphere.radius=ball.r||.62;
+  for (const [x,y] of silhouette) {
+    // Stop at the bubble's front surface so its honest floor/contact surface is
+    // retained. Diagonal vectors are normalized to sample the actual .62m rim.
+    const offset=Math.hypot(x,y)||1,rx=x/offset*.62,ry=y/offset*.62;
+    sightTarget.copy(focus).addScaledVector(viewRight,rx).addScaledVector(viewUp,ry);
+    sightRay.set(eye,sightTarget.sub(eye).normalize());sightRay.near=.01;
+    // At finite camera distance even an equator-plane rim ray enters the front
+    // of the sphere before reaching its endpoint. A guard behind that entry is
+    // concealed by the bubble, rather than an obstruction in front of it.
+    assert.ok(sightRay.ray.intersectSphere(bubbleSphere,bubbleEntry),'silhouette ray misses bubble');
+    sightRay.far=eye.distanceTo(bubbleEntry)-.015;
+    for(const hit of sightRay.intersectObjects(candidates,false)) {
+      if(!hit.object.isMesh || !isVisible(hit.object)) continue;
+      const m=Array.isArray(hit.object.material)?hit.object.material[hit.face.materialIndex]:hit.object.material;
+      // Transparent glass is intentionally visible through. Every opaque mesh,
+      // including receiving decks, upper roads, outlines and walls, is tested.
+      if(m.visible && (!m.transparent || m.opacity>=.85)) hits.add(hit.object);
+    }
+    cameraRays++;
+  }
+  return [...hits];
+}
+function recordSight(group, pose, ball, label) {
+  cameraSamples++;
+  const blockers=sightBlockers(group,pose,ball);
+  if(blockers.length)cameraFailures.push({label,ball:[ball.x,ball.y,ball.z],eye:[pose.x,pose.y,pose.z],blockers:blockers.map(hierarchy)});
+  return blockers;
+}
+function verifyCameraScene(track,group,dynamicMeshes) {
+  const safety=createCameraOcclusion(group),sightline=createCameraSightline(group),sky=group.getObjectByName('storybook-sky');
+  sightMeshes=[];group.traverse(mesh=>{if(mesh.isMesh)sightMeshes.push(mesh);});
+  const resetPickups=()=>{for(const star of dynamicMeshes.stars){star.collected=false;star.mesh.visible=true;}};
+  const frame=(ball,elapsed)=>{
+    animateFairytaleScenery(dynamicMeshes,elapsed,1/60);
+    for(const gear of dynamicMeshes.gears)gear.mesh.rotation.y=gear.def.omega*elapsed;
+    for(const hammer of dynamicMeshes.hammers){
+      const angle=Math.sin(elapsed*hammer.def.speed+hammer.def.phase)*hammer.def.amp;
+      hammer.pivot.rotation.z=angle;
+      hammer.worldHead.set(hammer.def.x+Math.sin(angle)*hammer.def.len,hammer.def.y-Math.cos(angle)*hammer.def.len,hammer.def.z);
+      // LOS observes the post-physics ball. Match the main collision boundary:
+      // a resting path fixture cannot remain embedded inside an opaque hammer.
+      if(!ball.chuteRide&&!ball.launchAssist){
+        const dx=ball.x-hammer.worldHead.x,dy=ball.y-hammer.worldHead.y,dz=ball.z-hammer.worldHead.z,d=Math.hypot(dx,dy,dz),hit=.62+.92;
+        if(d<hit){const inverse=1/(d||.001);ball.x=hammer.worldHead.x+dx*inverse*(hit+.08);ball.y=hammer.worldHead.y+dy*inverse*(hit+.08);ball.z=hammer.worldHead.z+dz*inverse*(hit+.08);ball.grounded=false;ball.supportRoute=null;ball.supportPlatform=null;}
+      }
+    }
+    for(const pin of dynamicMeshes.rollingPins||[]){const offset=Math.sin(elapsed*pin.def.speed+(pin.def.phase||0))*pin.def.ampZ;pin.mesh.position.z=pin.def.z+offset;pin.roller.rotation.x=offset/.48;}
+    for(const vent of dynamicMeshes.steamVents||[])vent.plume.visible=(elapsed%vent.def.period)/vent.def.period<vent.def.duty;
+    for(const cloud of dynamicMeshes.clouds)cloud.mesh.position.x=cloud.baseX+Math.sin(elapsed*.3+cloud.seed)*1.4;
+    for(const floater of dynamicMeshes.floaters||[])floater.mesh.position.y=floater.baseY+Math.sin(elapsed*.8+floater.seed)*.45;
+    if(dynamicMeshes.portal)dynamicMeshes.portal.rotation.z=elapsed*2;
+    // Match updatePhysics pickup ordering, then updateVisuals bob/visibility.
+    // A candy inside the bubble is already collected before a rendered frame.
+    for(const star of dynamicMeshes.stars){
+      if(Math.hypot(ball.x-star.def.x,ball.y-star.def.y,ball.z-star.def.z)<.62+.9)star.collected=true;
+      star.mesh.visible=!star.collected;
+      if(!star.collected){star.mesh.rotation.y=elapsed*2.6;star.mesh.position.y=star.def.y+Math.sin(elapsed*4+star.def.x)*.16;}
+    }
+    sky?.position.set(ball.x,ball.y,ball.z);group.updateMatrixWorld(true);
+  };
+  // Starts/reset poses must be authored clear before either safety mechanism.
+  for(const aspect of [1.6,.62])for(const dt of [1/120,1/60,1/25]) {
+    safety.reset();sightline.reset();resetPickups();const ball={...track.start,r:.62,vx:0,vz:0};frame(ball,0);
+    const pose=updateDirector(createDirector(track.startYaw||0),{ball,track,dt,aspect});
+    recordSight(group,pose,ball,`${track.id}: authored start ${aspect}/${dt}`);
+    const untouched=sightline.resolve(ball,pose,dt);
+    assert.ok(untouched.sightline.clear&&!untouched.sightline.compressed,`${track.id}: authored start needs a rigid safety correction ${JSON.stringify(untouched.sightline)}`);
+    // A FrontSide box can enclose the eye without returning any front-face
+    // hits. Check its exact local volume independently of renderer-side rays.
+    for(const mesh of sightMeshes)if(isVisible(mesh)&&mesh.geometry.type==='BoxGeometry') {
+      const materials=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+      if(!materials.some(m=>m.visible&&(!m.transparent||m.opacity>=.85)))continue;
+      mesh.geometry.computeBoundingBox();cameraContainmentChecks++;
+      const localEye=mesh.worldToLocal(new THREE.Vector3(pose.x,pose.y,pose.z));
+      if(mesh.geometry.boundingBox.containsPoint(localEye))cameraFailures.push({label:`${track.id}: start camera inside closed mesh`,blockers:[hierarchy(mesh)]});
+    }
+  }
+  // Visit every authored path, including secret routes, chute entrances/exits
+  // and both road edges. Integrate director state at every geometry point;
+  // assertions at every geometry sample avoid the static-camera/teleport shortcut.
+  const flights=[...track.props,...track.mushrooms].filter(def=>def.target&&def.flightTime).map(def=>({
+    id:`flight-${def.id}`,sourceId:def.id,ballistic:true,points:Array.from({length:Math.ceil(def.flightTime*60)+1},(_,i)=>{
+      const t=Math.min(def.flightTime,i/60);return{x:def.x+def.vx*t,y:def.y+def.vy*t-13*t*t,z:def.z+def.vz*t};
+    }),
+  }));
+  const paths=[...track.routes,...track.chutes,...flights],runs=paths.flatMap(path=>(track.chutes.includes(path)||path.ballistic?[0]:[-.32,0,.32]).map(lane=>({paths:[path],lane})));
+  // Preserve one director through the actual itinerary as well as testing
+  // independent reset/edge approaches. Launch arcs trigger the same setpiece.
+  runs.push({lane:0,paths:track.primaryPath.filter(step=>!step.optional).map(step=>paths.find(path=>path.id===step.id||path.sourceId===step.id)).filter(Boolean)});
+  for(const run of runs) {
+    const {lane}=run;cameraPaths+=run.paths.length;safety.reset();sightline.reset();resetPickups();const director=createDirector(track.startYaw||0);let elapsed=0;
+    for(const path of run.paths){
+    if(path.ballistic)triggerSetpiece(director,1.2);
+    for(let i=0;i<path.points.length;i++) {
+      const p=path.points[i],prev=path.points[Math.max(0,i-1)],f=path.points[Math.min(path.points.length-1,i+1)];
+      const dx=f.x-prev.x,dz=f.z-prev.z,length=Math.hypot(dx,dz)||1,tx=dx/length,tz=dz/length;
+      const dt=path.ballistic?1/60:Math.max(1/120,Math.hypot(p.x-prev.x,p.y-prev.y,p.z-prev.z)/8);elapsed+=dt;
+      const data=track.chutes.includes(path)||path.ballistic?null:getRouteRibbonRows(path),side=Math.sign(lane);
+      // Center a full-radius ball just inside either legal edge. Fixed row
+      // columns put a narrow-beam ball halfway over its banked guard/skirt.
+      const offset=data?side*Math.max(0,(side<0?data.leftWidths[i]:data.rightWidths[i])-.62)*.9:0;
+      const point={x:p.x+(data?.frames[i].nx??0)*offset,y:p.y,z:p.z+(data?.frames[i].nz??0)*offset};
+      const ball={x:point.x,y:point.y+.62,z:point.z,r:.62,vx:tx*8,vz:tz*8,vy:(p.y-prev.y)/dt,routeTangent:{x:tx,z:tz}};
+      if(data){
+        // Ground stations are valid contact poses, not an invented full-course
+        // physics rollout. At a dock edge the sphere follows its solid top or
+        // corner envelope instead of teleporting through a descending-pad lip.
+        const floor=nearestRouteSurface([path],ball.x,ball.z,Infinity)?.y??point.y;
+        ball.y=floor+.62;ball.grounded=true;ball.supportRoute=path;
+        for(const platform of track.platforms){
+          if(ball.y<platform.y-(platform.h||.6)/2)continue;
+          const dx=Math.max(0,Math.abs(ball.x-platform.x)-platform.w/2),dz=Math.max(0,Math.abs(ball.z-platform.z)-platform.d/2),distance=Math.hypot(dx,dz);
+          if(distance>=.62)continue;
+          const top=platform.y+Math.sqrt(.62**2-distance**2);
+          if(top>ball.y){ball.y=top;ball.supportRoute=null;ball.supportPlatform=platform;}
+        }
+        if(collideRouteGuardrails(ball,ball.supportRoute)){
+          const contact=nearestRouteSurface([path],ball.x,ball.z,Infinity);
+          if(contact)ball.y=contact.y+.62;
+        }
+      }
+      if(track.chutes.includes(path)){ball.chuteRide={};ball.chuteTangent={x:tx,z:tz};}
+      if(path.ballistic)ball.launchAssist={};
+      frame(ball,elapsed);
+      const desired=updateDirector(director,{ball,track,dt,elapsed,forwardInput:1});
+      const pose=sightline.resolve(ball,desired,dt);safety.update(ball,pose,dt);
+      if(!pose.sightline.clear)cameraFailures.push({label:`${track.id}/${path.id}[${i}] lane ${lane}: rigid silhouette cone unresolved`,ball:[ball.x,ball.y,ball.z],eye:[pose.x,pose.y,pose.z],desired:{...desired},blockers:pose.sightline.blockers,reason:pose.sightline.reason,blockerNames:pose.sightline.blockerNames});
+      const blockers=recordSight(group,pose,ball,`${track.id}/${path.id}[${i}] lane ${lane}`);
+      for(const mesh of blockers)if(isCameraOccluder(mesh,group))assert.fail(`${track.id}: scenery safety missed ${hierarchy(mesh)}`);
+    }
+    }
+  }
+  safety.dispose();
+  console.log(`${track.id}: completed authored-start and every-path camera LOS audit`);
+}
 const motifHashes=new Set(),edgeProfiles=new Set(),stageSignatures=new Set();
 let verifiedTriangles=0,intersectionPairs=0,crossShellPairs=0,crossRoutePairs=0,crossSurfacePairs=0,seamCount=0,closedGuardEnds=0,checkedScenery=0;
 verifyMeshCheckerFixtures();
@@ -137,6 +310,7 @@ assert.equal(TRACKS.length, 10, 'v3 needs all ten approved stages');
 for (const [stage, track] of TRACKS.entries()) {
   assert.equal(track.worldType, expectedWorlds[stage], `${track.id}: wrong blueprint environment`);
   const { group, dynamicMeshes } = buildTrackScene(track);
+  verifyMushroomContact(dynamicMeshes);
   verifyHazardEntries(track, dynamicMeshes);
   group.updateMatrixWorld(true);
   let meshes = 0, vertices = 0;
@@ -216,8 +390,9 @@ for (const [stage, track] of TRACKS.entries()) {
     const body=mesh.children.find(node=>node.userData.routeBody);assert.ok(body,`${label}: missing continuous beveled extrusion`);
     checkGeometry(body.geometry,`${label}: skirt/guard`,true);
     for(const [name,rowIndex]of[['start',0],['end',data.rows.length-1]]){
-      if(!route.walls||!data.seams[name]?.guardTransition)continue;
+      if(!route.walls)continue;
       const cap=body.geometry.userData.endCaps.find(cap=>cap.row===rowIndex);
+      if(!cap){assert.ok(!data.seams[name]?.guardTransition,`${label}: guarded transition has no closure`);continue;}
       assert.ok(cap?.indexCount>=6,`${label}: raised guard ends in an open cross-section`);closedGuardEnds++;
       const vertices=body.geometry.attributes.position,index=body.geometry.index,row=data.rows[rowIndex],f=data.frames[rowIndex],origin=row[0];
       const coordinate=p=>(p.x-origin.x)*f.nx+(p.z-origin.z)*f.nz;
@@ -280,7 +455,7 @@ for (const [stage, track] of TRACKS.entries()) {
     const radius=Math.hypot(size.x,size.z)/2+(entry.mesh.userData.motionRadius||0);
     assert.ok(radius<=entry.radius+.0001,`${track.id}/${entry.mesh.name}: stored clearance omits rendered footprint`);
     const hit=nearestSceneryClearance(track,{x:center.x,z:center.z,radius});
-    assert.ok(hit.margin>=-.0001,`${track.id}/${entry.mesh.name}: rendered scenery crosses corridor ${hit.pathId} by ${-hit.margin}m`);checkedScenery++;
+    assert.ok(hit.margin>=track.cameraSceneryReach-.0001,`${track.id}/${entry.mesh.name}: rendered scenery crosses camera corridor ${hit.pathId} by ${track.cameraSceneryReach-hit.margin}m`);checkedScenery++;
   }
   for(const zone of track.fallZones||[]){
     assert.equal(zone.triggerY,zone.y,`${track.id}: visible fall contact differs from runtime threshold`);
@@ -295,11 +470,17 @@ for (const [stage, track] of TRACKS.entries()) {
   if (track.worldType === 'indoor_home') {
     assert.ok(world.getObjectByName('room-floor'), `${track.id}: miniature room floor missing`);
     assert.ok(world.getObjectByName('sunlit-window'), `${track.id}: sunlit room window missing`);
+    for(const name of ['sunlit-room-wall','sunlit-room-side-wall','sunlit-window']) {
+      const panel=world.getObjectByName(name);
+      assert.equal(panel.geometry.type,'PlaneGeometry',`${track.id}/${name}: closed room shell hides outside cameras`);
+      assert.equal(panel.material.side,THREE.FrontSide,`${track.id}/${name}: room cutaway renders its outside face`);
+    }
   }
   if (track.worldType === 'town_street') {
     assert.ok(world.getObjectByName('town-canal'), `${track.id}: town canal missing`);
     assert.ok(world.getObjectByName('half-timbered-house'), `${track.id}: pastel half-timbered houses missing`);
   }
+  verifyCameraScene(track,group,dynamicMeshes);
   results.push({stage:stage+1, track:track.id, world:track.worldType, routes:track.routes.length,
     chutes:dynamicMeshes.chutes.length, props:dynamicMeshes.fairytaleProps.length, meshes, vertices});
   const disposed = new Set();
@@ -327,6 +508,8 @@ assert.equal(motifHashes.size,10,'all ten stages need distinct rendered motif pi
 assert.equal(edgeProfiles.size,10,'all ten stages need distinct physical guard profiles');
 assert.ok(closedGuardEnds>10,'guard transition cap coverage is too small');
 assert.ok(seamCount>40,'seam coverage misses authored section transitions');
+console.log(JSON.stringify({cameraSamples,cameraRays,cameraPaths,cameraContainmentChecks,cameraFailures:cameraFailures.length,firstFailures:cameraFailures.slice(0,20)}));
+assert.equal(cameraFailures.length,0,`camera LOS: ${JSON.stringify(cameraFailures.slice(0,12))}`);
 console.log(JSON.stringify({verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
 console.table(results);
 console.log(`Passed v3 Node structural and geometry checks for all ${TRACKS.length} scenes. WebGL visual appearance remains unverified.`);

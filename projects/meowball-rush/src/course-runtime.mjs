@@ -1,4 +1,56 @@
-import { polylineLength, samplePath, computeLaunchVelocity } from './course-math.mjs';
+import { polylineLength, samplePath, computeLaunchVelocity, getRibbonBoundarySegments } from './course-math.mjs';
+
+// Guardrails are vertical constraints. Their visible top/bevel is never a
+// supporting surface: this response changes XZ only, including on a bank.
+export function resolveHorizontalGuardrail(ball, nx, nz, penetration, { restitution=.18, tangentialRetention=.94 }={}) {
+  const length=Math.hypot(nx,nz);
+  if(length<1e-9 || penetration<=0)return false;
+  nx/=length;nz/=length;
+  ball.x-=nx*penetration;ball.z-=nz*penetration;
+  const outward=ball.vx*nx+ball.vz*nz;
+  if(outward>0) {
+    // Resting contact cancels tiny motor/gravity pushes without repeatedly
+    // scrubbing forward speed or creating a frame-rate dependent rail chatter.
+    const impact=outward>.12,retention=impact?tangentialRetention:1;
+    const tangentX=ball.vx-nx*outward,tangentZ=ball.vz-nz*outward;
+    ball.vx=tangentX*retention-nx*outward*(impact?restitution:0);
+    ball.vz=tangentZ*retention-nz*outward*(impact?restitution:0);
+  }
+  return true;
+}
+
+export function collideRouteGuardrails(ball, route, previousX=ball.x, previousZ=ball.z) {
+  if(!route?.walls || !ball.grounded)return false;
+  const edges=getRibbonBoundarySegments(route);
+  let contacted=false;
+  // Project all active edge half-planes to convergence. Two fixed passes leave
+  // small penetrations at mitered/tapered corners and re-trigger every frame.
+  for(let pass=0;pass<12;pass++) {
+    let corrected=false;
+    for(const edge of edges) {
+      const dx=edge.b.x-edge.a.x,dz=edge.b.z-edge.a.z,len2=dx*dx+dz*dz;
+      if(len2<1e-8)continue;
+      const signed=(ball.x-edge.a.x)*edge.nx+(ball.z-edge.a.z)*edge.nz;
+      if(signed<=-ball.r+1e-8)continue;
+      const previous=(previousX-edge.a.x)*edge.nx+(previousZ-edge.a.z)*edge.nz;
+      const crossing=previous<=-ball.r && signed>previous;
+      const fraction=crossing?(-ball.r-previous)/(signed-previous):1;
+      const hitX=previousX+(ball.x-previousX)*fraction,hitZ=previousZ+(ball.z-previousZ)*fraction;
+      const hitU=((hitX-edge.a.x)*dx+(hitZ-edge.a.z)*dz)/len2;
+      const currentU=((ball.x-edge.a.x)*dx+(ball.z-edge.a.z)*dz)/len2;
+      // A sweep can cross the *extension* just before an adjoining edge starts
+      // and finish on that finite edge. Its final overlap still needs solving.
+      const u=hitU>=-1e-6 && hitU<=1+1e-6?hitU:currentU;
+      if(u< -1e-6 || u>1+1e-6 || (!crossing && signed>ball.r+.15))continue;
+      const floor=edge.a.y+(edge.b.y-edge.a.y)*Math.max(0,Math.min(1,u));
+      if(Math.abs(ball.y-ball.r-floor)>1.25)continue;
+      corrected=resolveHorizontalGuardrail(ball,edge.nx,edge.nz,signed+ball.r+1e-8)||corrected;
+      contacted=true;
+    }
+    if(!corrected)break;
+  }
+  return contacted;
+}
 
 // Ground motion is shared by the browser and deterministic input-only harness.
 // The motor is intentionally weaker than 16deg rolling gravity: climbs need a run-up.

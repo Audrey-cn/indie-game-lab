@@ -1538,6 +1538,8 @@ export function buildTrackScene(track) {
   // 4. Bouncy Red-Cap Spotted Mushrooms!
   for (const m of track.mushrooms) {
     const mg = new THREE.Group();
+    mg.name = 'mushroom-launch-pad';
+    mg.userData.cameraOccluder = true;
     mg.position.set(m.x, m.y, m.z);
     const stem = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.52, 0.65, 12), toonMat(0xfff1d6)), 1.06));
     stem.position.y = 0.25;
@@ -1550,6 +1552,20 @@ export function buildTrackScene(track) {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), toonMat(0xffffff));
       dot.position.set(Math.cos(a) * 0.72, 0.85, Math.sin(a) * 0.72);
       mg.add(dot);
+    }
+    // The launch solver places the bubble bottom at m.y. Keep the mushroom's
+    // sculpture below that exact contact, including its outline and stretch.
+    // A shallow spotted cap marks the spring on top of the receiving deck.
+    mg.updateMatrixWorld(true);
+    const contactTop = new THREE.Box3().setFromObject(mg, true).max.y;
+    for (const child of mg.children) child.position.y -= contactTop - m.y + .02;
+    const pad = new THREE.Mesh(new THREE.CircleGeometry(m.r * .92, 24), toonMat(0xff4268, 0xff2244, .15));
+    pad.rotation.x = -Math.PI / 2; pad.position.y = .008; mg.add(pad);
+    for (let i = 0; i < 5; i++) {
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(.14, 8), toonMat(0xffffff));
+      const a = i / 5 * Math.PI * 2;
+      dot.position.set(Math.cos(a) * m.r * .48, .012, Math.sin(a) * m.r * .48);
+      dot.rotation.x = -Math.PI / 2; mg.add(dot);
     }
     group.add(mg);
     dynamicMeshes.mushrooms.push({ mesh: mg, def: m, bounceAnim: 0 });
@@ -1576,6 +1592,8 @@ export function buildTrackScene(track) {
   // 7. Grand Storybook Golden Archway Finish Portal!
   const f = track.finish;
   const portalGroup = new THREE.Group();
+  portalGroup.name = 'finish-portal';
+  portalGroup.userData.decorativeProp = true;
   portalGroup.position.set(f.x, f.y, f.z);
   const portalArchHolder = new THREE.Group();
   for (const s of [-2.05, 2.05]) {

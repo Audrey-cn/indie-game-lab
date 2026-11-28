@@ -1,6 +1,6 @@
 import { polylineLength, computeLaunchVelocity, prepareRouteGeometry, samplePath, nearestRouteSurface } from "./course-math.mjs";
 
-// Meowball Rush v3.1.0 — ten four-act courses, from a gentle meadow to the royal finale.
+// Meowball Rush v3.1.1 — ten four-act courses, from a gentle meadow to the royal finale.
 
 export const CATS = [
   {
@@ -181,6 +181,9 @@ export const CATS = [
 // Explicit pacing targets preserve a readable opening and a substantial final cup.
 // Each course adds new playable sections before normalization; these are not stretched copies.
 export const COURSE_LENGTH_TARGETS = [165, 195, 235, 280, 330, 390, 460, 540, 625, 740];
+// Reserve the default camera boom as well as the physical rolling corridor.
+// Longer player-controlled orbit views use the runtime scenery cutaway.
+export const SCENERY_CAMERA_REACH = 14;
 const DAY = { skyTop: 0x75c9ff, skyBottom: 0xe9f9ff, fogColor: 0xd7f2eb, sunColor: 0xffefd0 };
 const HOME = { skyTop: 0xf5cf9e, skyBottom: 0xfff4d8, fogColor: 0xf5e2ca, sunColor: 0xffe1aa };
 const NIGHT = { skyTop: 0x101739, skyBottom: 0x604789, fogColor: 0x302855, sunColor: 0xc8e9ff };
@@ -208,7 +211,7 @@ function makeStage(index, id, name, worldType, subtitle, blueprint) {
     ...(worldType === 'indoor_home' ? HOME : worldType === 'starlight_library' || worldType === 'hybrid_winter' ? NIGHT : DAY),
     routes: [], platforms: [], chutes: [], props: [], cameraZones: [], primaryPath: [], landmarks: [],
     boosts: [], mushrooms: [], gears: [], hammers: [], rollingPins: [], bumpers: [], steamVents: [], stars: [], checkpoints: [], tips: [],
-    bonusTime: 65 + index * 12, deathY: -16, index };
+    bonusTime: 65 + index * 12, deathY: -16, cameraSceneryReach: SCENERY_CAMERA_REACH, index };
 }
 function route(t, id, section, kind, width, controls, extra = {}) {
   controls = controls.filter((p, i) => !i || Math.hypot(p.x-controls[i-1].x,p.y-controls[i-1].y,p.z-controls[i-1].z)>1e-6).map(p => ({ ...p }));
@@ -374,7 +377,9 @@ function frostAttic() {
   const t=makeStage(7,'aurora','08 · 冬日暖炉与冰川阁楼','hybrid_winter','暖炉阁楼 · 冰雪半管 · 冰晶螺旋与极光木屋','stage08-hearth-frost-attic');
   const c=chute(t,'turquoise-ice','ice',P(28,12,-38),6,4.5,1.25,Math.PI);
   route(t,'hearth-attic','fireplace_attic','wood',6.6,[P(0,13,0),P(2,13,-7),P(8,13,-12)]);
-  route(t,'window-bowl','icy_halfpipe_bowl','ice',7.6,[P(8,13,-12),P(15,9,-16),P(23,7.5,-13),P(31,7.5,-20),P(31,8,-28),P(22,11.4,-28),P(22,12,-30),c.points[0]],{bank:1.0});
+  // Give the banked U-turn a real radius: a single sharp control pinched the
+  // inner bank into the bubble's view at a legal edge station.
+  route(t,'window-bowl','icy_halfpipe_bowl','ice',7.6,[P(8,13,-12),P(15,9,-16),P(23,7.5,-13),P(31,7.5,-20),P(31,7.7,-22),P(29.24,8.8,-26.24),P(25,10.3,-28),P(22,11.4,-28),P(22,12,-30),c.points[0]],{bank:1.0});
   prop(t,'snow_bunny',P(26,7.5,-15),{patrol:2.4,speed:1.1,r:1.05});prop(t,'penguin',P(31,7.7,-25),{patrol:2,speed:1.35,r:1.05});ride(t,c);
   route(t,'snow-pine-bridge','snow_pine_bridge','wood',2.6,[c.receiving,P(38,7.5,-43),P(44,8,-47)]);orbit(t,P(39,7.5,-44),8);
   route(t,'aurora-lodge','aurora_lodge','ice',5.8,[P(44,8,-47),P(49,8.3,-41),P(55,9,-36)]);
@@ -713,7 +718,12 @@ function finishAuthoredStage(t) {
   scalePoint(t.originalFinish);
   for(const p of [...t.props,...t.mushrooms])if(p.target&&p.flightTime)Object.assign(p,computeLaunchVelocity(p,p.target,p.flightTime));
   for(const z of t.cameraZones)z.r=Math.max(z.r,z.r*scale*.85);
-  for(const p of t.platforms){if(p.role.includes('island')){p.w=Math.max(p.w,p.w*Math.min(scale,1.4));p.d=Math.max(p.d,p.d*Math.min(scale,1.4));}}
+  for(const p of t.platforms){if(p.role.includes('island')){
+    // Keep receivers generous without extending the upper island backwards
+    // through the preceding launch arc. The authored 16m island is the cap.
+    p.w=Math.min(16,Math.max(p.w,p.w*Math.min(scale,1.4)));
+    p.d=Math.min(16,Math.max(p.d,p.d*Math.min(scale,1.4)));
+  }}
   if(t.index===3)insertSurfaceStretch(t,'clover-pasture-loop','mud',8);
   if(t.index===4)insertSurfaceStretch(t,'sugar-cookie-slalom','honey',11);
   primaryRoutes=t.routes.filter(r=>!r.secret);

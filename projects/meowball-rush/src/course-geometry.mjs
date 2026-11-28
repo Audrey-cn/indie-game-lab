@@ -79,7 +79,9 @@ export function routeBodyGeometry(route) {
     // cross-section. The open neighbour emits no duplicate coplanar face.
     if (seam && !(route.walls && seam.guardTransition)) continue;
     const f = frames[i], origin = rows[i][0];
-    const ring = [...rings[i], ...rows[i].slice(1, columns).map(p => ({ ...p })).reverse()];
+    // The body ring ends at the left top. Continue across the floor left to
+    // right; reversing these samples makes a self-crossing cap above a bank.
+    const ring = [...rings[i], ...rows[i].slice(1, columns).map(p => ({ ...p }))];
     const contour = ring.map(p => new THREE.Vector2((p.x - origin.x) * f.nx + (p.z - origin.z) * f.nz, p.y - origin.y));
     const cap = THREE.ShapeUtils.triangulateShape(contour, []), start = positions.length / 3;
     for (const p of ring) { positions.push(p.x, p.y, p.z); uv.push(0, 0); }

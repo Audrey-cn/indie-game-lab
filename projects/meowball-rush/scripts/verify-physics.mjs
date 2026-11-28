@@ -8,6 +8,8 @@ import * as courseConfig from '../src/config.mjs';
 import { createRouteRibbonGeometry } from '../src/v3-worlds.mjs';
 const { CATS, TRACKS } = courseConfig;
 import './verify-assets.mjs';
+import { verifyCameraStability } from './verify-camera.mjs';
+import { verifyCameraSightline } from './verify-camera-sightline.mjs';
 const trackBuilder = await import('../src/cel-builder.mjs');
 
 const source = readFileSync(new URL('../src/main.mjs', import.meta.url), 'utf8');
@@ -87,7 +89,8 @@ function makeHarness(track, cat = CATS[0]) {
     if (state.timeLeft > 0) context.updatePhysics(dt);
     else { state.phase = 'ended'; state.cleared = false; }
     if (directorApi && state.director) {
-      const pose=directorApi.updateDirector(state.director,{ball:b,track,dt,elapsed:state.elapsed,aspect:1.6});
+      const pose=directorApi.updateDirector(state.director,{ball:b,track,dt,elapsed:state.elapsed,aspect:1.6,
+        lateralInput:state.input.lateralInput,forwardInput:state.input.forwardInput});
       state.viewYaw=Math.atan2(pose.x-pose.lookX,pose.z-pose.lookZ);
     }
     for (const k of ['x', 'y', 'z', 'vx', 'vy', 'vz']) assert(Number.isFinite(b[k]), `Non-finite ball.${k}`);
@@ -424,6 +427,93 @@ check('trough solid rails both sides at variable dt', () => {
   return { receipts };
 });
 
+check('guardrail impacts retain tangential travel without vertical energy or rail-top support', () => {
+  const receipts=[];
+  for(const hz of [120,60,25]) for(const side of [-1,1]) for(const speed of [2.5,7,14]) for(const degrees of [10,35,65]) {
+    const dt=1/hz, angle=degrees*Math.PI/180;
+    const route={id:'flat-guard-test',kind:'wood',width:8,walls:true,bank:0,points:[{x:0,y:8,z:30},{x:0,y:8,z:-100}]};
+    const vx=side*speed*Math.sin(angle),vz=-speed*Math.cos(angle);
+    const start={x:side*(4-.62-Math.abs(vx)*dt*.4),y:8.62,z:0};
+    const hit=makeHarness(testTrack([],{routes:[route],start}));
+    const clearRoute={...route,walls:false};
+    const free=makeHarness(testTrack([],{routes:[clearRoute],start}));
+    for(const h of [hit,free]) {h.b.grounded=true;h.b.supportRoute=h===hit?route:clearRoute;h.b.vx=vx;h.b.vz=vz;h.b.surfaceKind='wood';}
+    free.step(dt);hit.step(dt);
+    const restitution=-hit.b.vx/free.b.vx,retention=hit.b.vz/free.b.vz;
+    assert(restitution>=.15 && restitution<=.20,`${hz}Hz ${speed}m/s ${degrees}deg: guard restitution ${restitution}, want .15..20`);
+    assert(Math.abs(retention-.94)<1e-7,`${hz}Hz: guard scrubs tangential motion by ${retention}, want .94`);
+    assert(Math.abs(hit.b.x)<=3.38+1e-6,`${hz}Hz: center escaped halfWidth-radius`);
+    assert(hit.b.grounded && hit.b.supportRoute===route,'rail graze lost floor support');
+    assert(Math.abs(hit.b.vy)<.08 && Math.abs(hit.b.y-8.62)<.08,'rail graze added height/vertical velocity');
+    assert.equal(hit.state.pops,0);
+    receipts.push({hz,side,speed,degrees,restitution:+restitution.toFixed(3),tangentialRetention:+retention.toFixed(3)});
+  }
+  return {cases:receipts.length,restitution:receipts[0].restitution,tangentialRetention:receipts[0].tangentialRetention};
+});
+
+check('horizontal guardrail response preserves vertical state and resting tangential speed',()=>{
+  assert.equal(typeof runtimeApi.resolveHorizontalGuardrail,'function');
+  const hit={x:4,z:2,y:8.62,vx:5,vz:-7,vy:-.9,r:.62,grounded:true};
+  runtimeApi.resolveHorizontalGuardrail(hit,1,0,.62);
+  assert(Math.abs(hit.x-3.38)<1e-9 && hit.z===2,'guardrail correction is not horizontal');
+  assert(Math.abs(hit.vx+.9)<1e-9 && Math.abs(hit.vz+6.58)<1e-9,'guardrail response loses normal/tangential contract');
+  assert.equal(hit.y,8.62);assert.equal(hit.vy,-.9);assert.equal(hit.grounded,true);
+  const resting={x:3.39,z:0,y:8.62,vx:.04,vz:-4,vy:.75,r:.62,grounded:true};
+  for(let frame=0;frame<240;frame++) {
+    resting.x=3.39;resting.vx=.04;
+    runtimeApi.resolveHorizontalGuardrail(resting,1,0,.01);
+  }
+  assert.equal(resting.vx,0,'resting contact chatters inward');
+  assert.equal(resting.vz,-4,'resting contact repeatedly damps forward movement');
+  assert.equal(resting.y,8.62);assert.equal(resting.vy,.75);
+  return{impactRestitution:.18,tangentialRetention:.94,restingFrames:240};
+});
+
+check('flat, sloped and curved guardrail grazing stays grounded without sticking or jitter', () => {
+  const receipts=[];
+  for(const shape of ['flat','sloped','curved']) for(const hz of [120,60,25]) for(const side of [-1,1]) for(const speed of [2.5,7,14]) for(const degrees of [10,35,65]) {
+    const dt=1/hz, angle=degrees*Math.PI/180;
+    const points=Array.from({length:31},(_,i)=>{const z=30-i*5,x=shape==='curved'?12*Math.sin(i/12):0;return{x,y:shape==='flat'?8:8+.11*x-.13*z,z};});
+    const route={id:`${shape}-graze`,kind:'wood',width:8,walls:true,bank:shape==='curved'?.22:0,points};
+    const edge=courseMath.getRibbonBoundarySegments(route).find(e=>e.index===5 && e.side===side);
+    const start={x:(edge.a.x+edge.b.x)/2-edge.nx*(.62+.012),z:(edge.a.z+edge.b.z)/2-edge.nz*(.62+.012)};
+    const floor=courseMath.nearestRouteSurface([route],start.x,start.z,Infinity);
+    start.y=floor.y+.62;
+    const h=makeHarness(testTrack([],{routes:[route],start}));
+    h.b.grounded=true;h.b.supportRoute=route;h.b.surfaceKind='wood';
+    h.b.vx=floor.tx*speed*Math.cos(angle)+edge.nx*speed*Math.sin(angle);
+    h.b.vz=floor.tz*speed*Math.cos(angle)+edge.nz*speed*Math.sin(angle);
+    h.b.vy=floor.slopeX*h.b.vx+floor.slopeZ*h.b.vz;
+    let maxHeightError=0,maxExcessVy=0,reverseFrames=0,contacts=0;
+    for(let frame=0;frame<hz*2;frame++) {
+      const before={x:h.b.x,z:h.b.z};
+      const support=h.context.sampleTrackSurface(h.b.x,h.b.y,h.b.z,h.b.r);
+      assert(support,`${shape}/${hz}Hz: missing support before graze`);
+      h.step(dt,(support.tx+support.normalX*side*.38)*18,(support.tz+support.normalZ*side*.38)*18,18);
+      const after=h.context.sampleTrackSurface(h.b.x,h.b.y,h.b.z,h.b.r);
+      assert(after && h.b.grounded && h.b.supportRoute===route,`${shape}/${hz}Hz/${speed}/${degrees}: graze became a fall or landing`);
+      const error=Math.abs(h.b.y-h.b.r-after.y),excess=h.b.vy-(after.slopeX*h.b.vx+after.slopeZ*h.b.vz);
+      maxHeightError=Math.max(maxHeightError,error);maxExcessVy=Math.max(maxExcessVy,excess);
+      if((h.b.x-before.x)*support.tx+(h.b.z-before.z)*support.tz<-.0001)reverseFrames++;
+      for(const e of courseMath.getRibbonBoundarySegments(route)) {
+        const dx=e.b.x-e.a.x,dz=e.b.z-e.a.z,u=((h.b.x-e.a.x)*dx+(h.b.z-e.a.z)*dz)/(dx*dx+dz*dz);
+        if(u<0 || u>1)continue;
+        const distance=(h.b.x-e.a.x)*e.nx+(h.b.z-e.a.z)*e.nz;
+        if(distance>-.8) {contacts++;assert(distance<=-h.b.r+1e-5,`${shape}/${hz}Hz/side${side}/${speed}mps/${degrees}deg/frame${frame}/edge${e.index}: guard containment error ${distance+h.b.r} at ${h.b.x},${h.b.z}, previous ${before.x},${before.z}`);}
+      }
+      assert(error<.08,`${shape}/${hz}Hz: rail changed floor height by ${error}`);
+      assert(excess<=.08,`${shape}/${hz}Hz: rail injected ${excess}m/s above floor tangent`);
+    }
+    const progress=(h.b.x-start.x)*floor.tx+(h.b.z-start.z)*floor.tz;
+    assert(progress>1.3,`${shape}/${hz}Hz: stuck while grazing, progress=${progress}`);
+    assert(reverseFrames===0,`${shape}/${hz}Hz: longitudinal jitter (${reverseFrames} reversing frames)`);
+    assert(contacts>0,`${shape}/${hz}Hz: fixture never grazed guardrail`);
+    assert.equal(h.state.pops,0);assert.equal(h.events.length,0,'guardrail grazing triggered a pop/fall event');
+    receipts.push({shape,hz,maxHeightError,maxExcessVy,progress});
+  }
+  return {cases:receipts.length,maxHeightError:Math.max(...receipts.map(r=>r.maxHeightError)),maxExcessVy:Math.max(...receipts.map(r=>r.maxExcessVy)),minProgress:Math.min(...receipts.map(r=>r.progress))};
+});
+
 check('solid wall rebound and connected side doorway', () => {
   const receipts = [];
   for (const side of [-1, 1]) {
@@ -542,7 +632,9 @@ check('v3 camera modes prioritize chute and setpiece, preserve manual orbit, and
   const chute=(TRACKS.flatMap(t=>t.chutes||[]))[0];assert(chute,'courses have no chute');
   ball.chuteRide={chute,distance:2,t:0.1};pose=updateDirector(d,{ball,track,dt:1/60,elapsed:5,aspect:1.6});assert.equal(d.mode,'LOCKED_CHUTE');
   for(const k of ['x','y','z','lookX','lookY','lookZ','fov'])assert(Number.isFinite(pose[k]),`invalid camera ${k}`);
-  ball.chuteRide=null;ball.x=30;pose=updateDirector(d,{ball,track,dt:1/60,elapsed:5.1,aspect:1.6});assert.equal(d.mode,'DEFAULT_FOLLOW');
+  ball.chuteRide=null;ball.x=30;
+  for(let frame=0;frame<25;frame++)pose=updateDirector(d,{ball,track,dt:1/60,elapsed:5.1+frame/60,aspect:1.6});
+  assert.equal(d.mode,'DEFAULT_FOLLOW');
 });
 
 check('v3 every sampled route floor matches the actual runtime surface query', () => {
@@ -725,7 +817,7 @@ check('v3 fairytale helpers and patrols apply bounded, cooldown-protected safe i
   assert(contacts>=21,'missing fairytale contacts');return{contacts};
 });
 
-check('v3 cozy indoor camera scale, speed pullback and default recenter',()=>{
+check('v3 cozy indoor camera scale, speed pullback and default deadzone',()=>{
   const {createDirector,updateDirector}=directorApi;
   const ball={x:0,y:4.62,z:0,vx:0,vy:0,vz:-4,r:0.62,grounded:true};
   const simulate=(worldType,speed)=>{const d=createDirector(0);for(let i=0;i<600;i++)updateDirector(d,{ball:{...ball,vz:-speed},track:{worldType,cameraZones:[]},dt:1/60,elapsed:i/60});return d;};
@@ -733,7 +825,53 @@ check('v3 cozy indoor camera scale, speed pullback and default recenter',()=>{
   near(inside.distance/outside.distance,0.85,'cozy indoor framing',0.001);assert(fast.distance>outside.distance+2,'speed does not pull camera back');
   const d=createDirector(0),track={worldType:'grounded_nature',cameraZones:[]};
   for(let i=0;i<30;i++)updateDirector(d,{ball,track,dt:1/60,manualDelta:0.02,elapsed:i/60});const rotated=d.yaw;assert(rotated>0.2,'default follow refuses manual rotation');
-  for(let i=0;i<600;i++)updateDirector(d,{ball,track,dt:1/60,elapsed:1+i/60});assert(Math.abs(d.yaw)<0.05,'default camera fails to gently recenter after release');
+  for(let i=0;i<600;i++)updateDirector(d,{ball,track,dt:1/60,forwardInput:1,elapsed:1+i/60});
+  assert(Math.abs(d.yaw)<=22*Math.PI/180+.01 && Math.abs(d.yaw)>.2,'default follow ignores its angular deadzone');
+});
+
+check('v3 camera stability across actual rendered heading and inputs',verifyCameraStability);
+check('v3 rigid camera sightline preserves yaw and the visible ball',verifyCameraSightline);
+check('mushroom flight arcs never pass through opaque receiving docks',()=>{
+  let samples=0;
+  const center=new THREE.Vector3(),closest=new THREE.Vector3(),box=new THREE.Box3();
+  for(const track of TRACKS)for(const launch of track.mushrooms)for(const hz of [120,60,25]) {
+    for(let frame=0;frame<=Math.ceil(launch.flightTime*hz);frame++) {
+      const t=Math.min(launch.flightTime,frame/hz),r=.62;
+      center.set(launch.x+launch.vx*t,launch.y+r+launch.vy*t-13*t*t,launch.z+launch.vz*t);
+      for(const p of track.platforms) {
+        box.min.set(p.x-p.w/2,p.y-(p.h||.6),p.z-p.d/2);
+        box.max.set(p.x+p.w/2,p.y,p.z+p.d/2);
+        box.clampPoint(center,closest);
+        assert(center.distanceTo(closest)>=r-.02,
+          `${launch.id}/${hz}Hz t=${t}: ball intersects receiving dock ${p.role}`);
+      }
+      samples++;
+    }
+  }
+  return{samples};
+});
+
+check('fresh keyboard, stick and gyro lateral intent cancels chute exit settling on the exit frame',()=>{
+  const track=TRACKS.find(t=>t.chutes.length),chute=track.chutes[0],receipts=[];
+  for(const hz of [120,60,25]) for(const control of ['keyboard','stick','gyro']) {
+    const dt=1/hz,h=makeHarness(track),p=chute.points[0];
+    Object.assign(h.b,{x:p.x,y:p.y+h.b.r,z:p.z});
+    const ride=runtimeApi.captureChute(h.b,chute);
+    h.step(dt);assert.equal(h.state.director.mode,'LOCKED_CHUTE');
+    ride.distance=ride.length-.001;
+    const yaw=h.state.viewYaw;
+    if(control==='keyboard')h.state.input.keys.add('KeyD');
+    if(control==='stick')h.state.input.ix=1;
+    if(control==='gyro'){h.context.gyroEnabled=true;h.context.gyroTiltX=18;}
+    h.step(dt);
+    assert.equal(h.b.chuteRide,null,`${control}/${hz}Hz: fixture did not exit chute this frame`);
+    assert.equal(h.state.input.lateralInput,1,`${control}/${hz}Hz: fresh exit-frame lateral intent was skipped`);
+    assert.notEqual(h.state.director.mode,'LOCKED_CHUTE',`${control}/${hz}Hz: exit settle fights fresh steering`);
+    const change=Math.atan2(Math.sin(h.state.viewYaw-yaw),Math.cos(h.state.viewYaw-yaw));
+    assert(Math.abs(change)<1e-10,`${control}/${hz}Hz: control basis rotated by ${change} on chute exit`);
+    receipts.push({hz,control,mode:h.state.director.mode});
+  }
+  return{cases:receipts.length,receipts};
 });
 
 function driveCourse(track, { dt=1/120, speed=4.2 }={}) {

@@ -1,4 +1,4 @@
-// Meowball Rush v3.1.0 — approved multi-view courses + Dynamic Camera Director.
+// Meowball Rush v3.1.1 — clear sightlines, grounded rails and stable steering.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -10,9 +10,11 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, TRACKS, migrateV3Save } from "./config.mjs";
 import { sfx } from "./audio.mjs";
 import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings, animateFairytaleScenery } from "./cel-builder.mjs";
-import { nearestRouteSurface, getRibbonBoundarySegments } from './course-math.mjs';
+import { nearestRouteSurface } from './course-math.mjs';
 import { createDirector, updateDirector, cameraRelativeInput, triggerSetpiece, CAMERA_MODES } from './director.mjs';
-import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, integrateRollingMotion, resolveRollingLanding } from './course-runtime.mjs';
+import { createCameraOcclusion } from './camera-occlusion.mjs';
+import { createCameraSightline } from './camera-sightline.mjs';
+import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, integrateRollingMotion, resolveRollingLanding, resolveHorizontalGuardrail, collideRouteGuardrails } from './course-runtime.mjs';
 import { generateClearPoster } from "./poster.mjs";
 import { FALL_MESSAGES, findFallZone, beginFallRecovery, advanceFallRecovery } from './fall-feedback.mjs';
 import { createFallEffect, updateFallEffects } from './fall-effects.mjs';
@@ -27,6 +29,8 @@ function loadGlbModel(key, onReady) {
   if (!url) return;
   if (loadedGlbCache[key]) {
     onReady(SkeletonUtils.clone(loadedGlbCache[key].scene), loadedGlbCache[key].animations);
+    cameraOcclusion?.refresh();
+    cameraSightline?.refresh();
     return;
   }
   if (pendingGlbLoads.has(key)) {
@@ -51,6 +55,8 @@ function loadGlbModel(key, onReady) {
     const callbacks = pendingGlbLoads.get(key);
     pendingGlbLoads.delete(key);
     for (const ready of callbacks) ready(SkeletonUtils.clone(wrapper), gltf.animations || []);
+    cameraOcclusion?.refresh();
+    cameraSightline?.refresh();
   }, undefined, (error) => {
     pendingGlbLoads.delete(key);
     console.warn(`Unable to load GLB model: ${key}`, error);
@@ -182,6 +188,8 @@ resize();
 // ===== GAME STATE =====
 let state = null;
 let trackRoot = null;
+let cameraOcclusion = null;
+let cameraSightline = null;
 let dynamicMeshes = null;
 let kittyRig = null;
 const trailPoints = [];
@@ -520,6 +528,8 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   const cat = getSelectedCat();
 
   if (state?.fallEffects) updateFallEffects(state.fallEffects, 2);
+  cameraOcclusion?.dispose();
+  cameraSightline?.reset();
   if (trackRoot) scene.remove(trackRoot);
   if (lobbyShowcaseRig) lobbyShowcaseRig.root.visible = false;
   if (kittyRig) {
@@ -539,6 +549,8 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
   trackRoot = built.group;
   dynamicMeshes = built.dynamicMeshes;
   scene.add(trackRoot);
+  cameraOcclusion = createCameraOcclusion(trackRoot);
+  cameraSightline = createCameraSightline(trackRoot);
 
   mountTrackModels(built);
 
@@ -679,29 +691,7 @@ function clampHorizontalSpeed(b, limit) {
 }
 
 function collideSideRails(b, previousX, previousZ) {
-  // Contact uses the actual mitered/tapered edge segments rendered by the
-  // sweep, including asymmetric inner corners and shared width transitions.
-  const route = b.supportRoute;
-  if (route?.walls && b.grounded) for (let pass = 0; pass < 2; pass++) {
-    for (const edge of getRibbonBoundarySegments(route)) {
-      const dx = edge.b.x - edge.a.x, dz = edge.b.z - edge.a.z, len2 = dx * dx + dz * dz;
-      if (len2 < 1e-8) continue;
-      const signed = (b.x - edge.a.x) * edge.nx + (b.z - edge.a.z) * edge.nz;
-      if (signed <= -b.r + 1e-6) continue;
-      const previous = (previousX - edge.a.x) * edge.nx + (previousZ - edge.a.z) * edge.nz;
-      const crossing = previous <= -b.r && signed > previous;
-      const fraction = crossing ? (-b.r - previous) / (signed - previous) : 1;
-      const hitX = previousX + (b.x - previousX) * fraction, hitZ = previousZ + (b.z - previousZ) * fraction;
-      const u = ((hitX - edge.a.x) * dx + (hitZ - edge.a.z) * dz) / len2;
-      if (u < -1e-6 || u > 1 + 1e-6 || (!crossing && signed > b.r + .15)) continue;
-      const floor = edge.a.y + (edge.b.y - edge.a.y) * Math.max(0, Math.min(1, u));
-      if (Math.abs(b.y - b.r - floor) > 1.25) continue;
-      const correction = signed + b.r;
-      b.x -= edge.nx * correction; b.z -= edge.nz * correction;
-      const outward = b.vx * edge.nx + b.vz * edge.nz;
-      if (outward > 0) { b.vx -= edge.nx * outward * 1.25; b.vz -= edge.nz * outward * 1.25; }
-    }
-  }
+  let contacted = collideRouteGuardrails(b, b.supportRoute, previousX, previousZ);
   for (const p of state.track.platforms) {
     if (!p.walls && p.kind !== "trough") continue;
     const floor = platformFloor(p, b.x, b.z).y;
@@ -716,11 +706,9 @@ function collideSideRails(b, previousX, previousZ) {
       const lateral = (b.x - p.x) * side;
       const previousLateral = (previousX - p.x) * side;
       if (lateral > limit && (previousLateral <= p.w * 0.5 || b.supportPlatform === p)) {
-        b.x = p.x + side * limit;
-        if (b.vx * side > 0) b.vx = -side * Math.abs(b.vx) * (p.kind === "trough" ? 0.48 : 0.3);
+        contacted = resolveHorizontalGuardrail(b, side, 0, lateral - limit) || contacted;
       } else if (lateral < p.w * 0.5 + b.r && previousLateral >= p.w * 0.5 + b.r) {
-        b.x = p.x + side * (p.w * 0.5 + b.r);
-        if (b.vx * side < 0) b.vx = side * Math.abs(b.vx) * 0.3;
+        contacted = resolveHorizontalGuardrail(b, -side, 0, p.w * 0.5 + b.r - lateral) || contacted;
       }
     }
   }
@@ -738,12 +726,21 @@ function collideSideRails(b, previousX, previousZ) {
       const lateral = (b.z - p.z) * side;
       const previousLateral = (previousZ - p.z) * side;
       if (lateral > limit && (previousLateral <= p.d * 0.5 || b.supportPlatform === p)) {
-        b.z = p.z + side * limit;
-        if (b.vz * side > 0) b.vz = -side * Math.abs(b.vz) * 0.3;
+        contacted = resolveHorizontalGuardrail(b, 0, side, lateral - limit) || contacted;
       } else if (lateral < p.d * 0.5 + b.r && previousLateral >= p.d * 0.5 + b.r) {
-        b.z = p.z + side * (p.d * 0.5 + b.r);
-        if (b.vz * side < 0) b.vz = side * Math.abs(b.vz) * 0.3;
+        contacted = resolveHorizontalGuardrail(b, 0, -side, p.d * 0.5 + b.r - lateral) || contacted;
       }
+    }
+  }
+  if (contacted && b.grounded) {
+    const floor = sampleTrackSurface(b.x, b.y, b.z, b.r);
+    if (floor && ((b.supportRoute && floor.route === b.supportRoute)
+      || (b.supportPlatform && floor.platform === b.supportPlatform))) {
+      // XZ projection changes bank height and tangent velocity. Follow the deck
+      // as continued rolling contact, never as a new landing or a rail-top step.
+      b.y = floor.y + b.r;
+      b.vy = floor.slopeX * b.vx + floor.slopeZ * b.vz;
+      b.rollSlopeX = floor.slopeX; b.rollSlopeZ = floor.slopeZ;
     }
   }
 }
@@ -985,6 +982,24 @@ function tick(ts) {
 
 function updatePhysics(dt) {
   const b = state.ball;
+  const inp = state.input;
+  // Gather Isometric Screen-Aligned Input (Mouse Push + WASD + Touch Drag!)
+  let kx = 0;
+  let kz = 0;
+  if (inp.keys.has("KeyW") || inp.keys.has("ArrowUp")) kz -= 1;
+  if (inp.keys.has("KeyS") || inp.keys.has("ArrowDown")) kz += 1;
+  if (inp.keys.has("KeyA") || inp.keys.has("ArrowLeft")) kx -= 1;
+  if (inp.keys.has("KeyD") || inp.keys.has("ArrowRight")) kx += 1;
+
+  // Convert screen-space mouse/keyboard/gyroscope into isometric world axes!
+  let rawX = (kx + (inp.ix || 0)) * 18 + inp.mouseAccX + (gyroEnabled ? gyroTiltX : 0);
+  let rawZ = (kz + (inp.iz || 0)) * 18 + inp.mouseAccZ + (gyroEnabled ? gyroTiltZ : 0);
+  // Preserve intent before dizzy effects or camera rotation. Keyboard, stick,
+  // mouse push and gyro all pause auto-yaw through this same normalized signal.
+  inp.lateralInput = Math.max(-1, Math.min(1, rawX / 18));
+  inp.forwardInput = Math.max(-1, Math.min(1, -rawZ / 18));
+  inp.mouseAccX *= Math.pow(0.02, dt);
+  inp.mouseAccZ *= Math.pow(0.02, dt);
   if (b.fallRecovery) {
     advanceFallRecovery(b, dt, state.checkpoint);
     return;
@@ -999,7 +1014,6 @@ function updatePhysics(dt) {
   const chute = findChuteEntry(state.track, b);
   if (chute) { captureChute(b, chute); advanceChute(b, b.chuteRide, dt); sfx.playBoost(); return; }
   const catStats = state.cat.stats;
-  const inp = state.input;
   const previousX = b.x;
   const previousZ = b.z;
   // Cruise is a motor torque target; external momentum decays through material forces.
@@ -1065,20 +1079,6 @@ function updatePhysics(dt) {
     }
     return;
   }
-
-  // Gather Isometric Screen-Aligned Input (Mouse Push + WASD + Touch Drag!)
-  let kx = 0;
-  let kz = 0;
-  if (inp.keys.has("KeyW") || inp.keys.has("ArrowUp")) kz -= 1;
-  if (inp.keys.has("KeyS") || inp.keys.has("ArrowDown")) kz += 1;
-  if (inp.keys.has("KeyA") || inp.keys.has("ArrowLeft")) kx -= 1;
-  if (inp.keys.has("KeyD") || inp.keys.has("ArrowRight")) kx += 1;
-
-  // Convert screen-space mouse/keyboard/gyroscope into isometric world axes!
-  let rawX = (kx + (inp.ix || 0)) * 18 + inp.mouseAccX + (gyroEnabled ? gyroTiltX : 0);
-  let rawZ = (kz + (inp.iz || 0)) * 18 + inp.mouseAccZ + (gyroEnabled ? gyroTiltZ : 0);
-  inp.mouseAccX *= Math.pow(0.02, dt);
-  inp.mouseAccZ *= Math.pow(0.02, dt);
 
   // Dizzy wobble!
   if (b.dizzyTimer > 0) {
@@ -1608,12 +1608,17 @@ function updateVisuals(dt) {
   // Director pose and the actual rendered yaw are also the movement basis.
   const inp = state.input;
   const keyOrbit = (inp.keys.has('KeyE') ? 1 : 0) - (inp.keys.has('KeyQ') ? 1 : 0);
-  const pose = updateDirector(state.director, { ball: b, track: state.track, dt,
+  const desiredPose = updateDirector(state.director, { ball: b, track: state.track, dt,
     elapsed: state.elapsed, aspect: camera.aspect,
     manualDelta: (inp.orbitX || 0) + keyOrbit * dt * 1.5,
     pitchDelta: inp.orbitY || 0, zoomDelta: inp.zoomDelta || 0,
+    lateralInput: inp.lateralInput || 0, forwardInput: inp.forwardInput || 0,
     orbitHeld: inp.orbitPointer != null || !!keyOrbit });
   inp.orbitX = 0; inp.orbitY = 0; inp.zoomDelta = 0;
+  animateFairytaleScenery(dynamicMeshes, state.elapsed, dt);
+  const sky = dynamicMeshes.sky;
+  if (sky) sky.position.set(b.x, b.y, b.z);
+  const pose = cameraSightline.resolve(b, desiredPose, dt);
   camera.position.set(pose.x, pose.y, pose.z);
   camera.lookAt(pose.lookX, pose.lookY, pose.lookZ);
   state.viewYaw = Math.atan2(pose.x - pose.lookX, pose.z - pose.lookZ);
@@ -1622,9 +1627,7 @@ function updateVisuals(dt) {
     camera.fov = pose.fov;
     camera.updateProjectionMatrix();
   }
-  animateFairytaleScenery(dynamicMeshes, state.elapsed, dt);
-  const sky = dynamicMeshes.sky;
-  if (sky) sky.position.set(b.x, b.y, b.z);
+  cameraOcclusion?.update(b, camera.position, dt);
   const orbitHint = document.getElementById('camera-hint');
   orbitHint.hidden = state.director.mode !== CAMERA_MODES.MANUAL_ORBIT;
   document.getElementById('hud').dataset.cameraMode = state.director.mode;
@@ -1813,6 +1816,8 @@ document.getElementById("sens-slider").oninput = (e) => {
   writeSave(save);
 };
 document.getElementById("btn-pause-lobby").onclick = () => {
+  cameraOcclusion?.reset();
+  cameraSightline?.reset();
   if (state) state.phase = "ended";
   sfx.playLobbyBgm();
   pauseScreen.hidden = true;
@@ -1822,6 +1827,8 @@ document.getElementById("btn-pause-lobby").onclick = () => {
   renderLobby();
 };
 document.getElementById("btn-res-lobby").onclick = () => {
+  cameraOcclusion?.reset();
+  cameraSightline?.reset();
   sfx.playLobbyBgm();
   resultScreen.hidden = true;
   lobbyScreen.hidden = false;

@@ -28,6 +28,13 @@ function mesh(parent, geometry, material, x=0,y=0,z=0, sx=1,sy=1,sz=1, name='') 
 }
 const box = (p,c,x,y,z,w,h,d,name='') => mesh(p,boxGeo,mat(c),x,y,z,w,h,d,name);
 const ball = (p,c,x,y,z,r=1,sx=1,sy=1,sz=1,name='') => mesh(p,sphereGeo,mat(c),x,y,z,r*sx,r*sy,r*sz,name);
+// Room shells are stage cutaways: show the interior-facing paper-thin panel,
+// never an outside face between a trailing camera and the miniature course.
+function roomPanel(parent,color,x,y,z,w,h,angle=0,name='') {
+  const material=mat(color).clone();material.side=THREE.FrontSide;
+  const panel=mesh(parent,new THREE.PlaneGeometry(w,h),material,x,y,z,1,1,1,name);
+  panel.rotation.y=angle;return panel;
+}
 function rod(parent,a,b,r,color) {
   const av=new THREE.Vector3(a.x,a.y,a.z), bv=new THREE.Vector3(b.x,b.y,b.z);
   const delta=bv.sub(av), length=delta.length();
@@ -350,13 +357,13 @@ function indoorWorld(track,group,isKitchen=false,scope=null) {
   const g=addEnvironment(group,isKitchen?'environment-sunlit-kitchen':'environment-sunlit-living-room');
   const points=(scope||track.routes).flatMap(r=>r.points),b=boundsOf(points,13),floor=b.minY-2.8,w=b.maxX-b.minX,d=b.maxZ-b.minZ;
   box(g,0xbc895e,(b.minX+b.maxX)/2,floor-.5,(b.minZ+b.maxZ)/2,w,.6,d,'room-floor');
-  box(g,0xf3dcba,(b.minX+b.maxX)/2,floor+12,b.minZ-1,w+2,24,.8,'sunlit-room-wall');
-  box(g,0xd3b591,b.minX-1,floor+12,(b.minZ+b.maxZ)/2,.8,24,d+2);
+  roomPanel(g,0xf3dcba,(b.minX+b.maxX)/2,floor+12,b.minZ-1,w+2,24,0,'sunlit-room-wall');
+  roomPanel(g,0xd3b591,b.minX-1,floor+12,(b.minZ+b.maxZ)/2,d+2,24,Math.PI/2,'sunlit-room-side-wall');
   for(const x of [b.minX+w*.22,b.minX+w*.72]){
-    box(g,0xb7e2e8,x,floor+12,b.minZ-.54,9,12,.1,'sunlit-window');
-    for(const side of [-1,1])box(g,0xfff1d1,x+side*4.7,floor+12,b.minZ-.3,.4,12.7,.4);
-    for(const yy of [floor+5.8,floor+12,floor+18.2])box(g,0xfff1d1,x,yy,b.minZ-.3,9.8,.35,.4);
-    box(g,0xfff1d1,x,floor+12,b.minZ-.3,.3,12,.4);
+    roomPanel(g,0xb7e2e8,x,floor+12,b.minZ-.54,9,12,0,'sunlit-window');
+    for(const side of [-1,1])roomPanel(g,0xfff1d1,x+side*4.7,floor+12,b.minZ-.3,.4,12.7);
+    for(const yy of [floor+5.8,floor+12,floor+18.2])roomPanel(g,0xfff1d1,x,yy,b.minZ-.3,9.8,.35);
+    roomPanel(g,0xfff1d1,x,floor+12,b.minZ-.3,.3,12);
   }
   const start=track.start;
   if(!scope){
@@ -372,12 +379,19 @@ function indoorWorld(track,group,isKitchen=false,scope=null) {
     }
     if(/coffee_table|upper_kitchen_counter|checkered_tablecloth/.test(route.section||'')){
       const rb=boundsOf(route.points),tw=rb.maxX-rb.minX+route.width+2,td=rb.maxZ-rb.minZ+route.width+2,tx=(rb.minX+rb.maxX)/2,tz=(rb.minZ+rb.maxZ)/2,top=rb.minY-.18;
-      box(g,isKitchen?0xe5bd84:0x9e6946,tx,top-.5,tz,tw,1,td,'giant-furniture-table');
-      for(const sx of [-1,1])for(const sz of [-1,1])box(g,0xa57a55,tx+sx*(tw/2-1),(top+floor)/2,tz+sz*(td/2-1),.6,top-floor,.6);
+      // A rectangle around a winding upper road filled the empty space between
+      // bends and hid the lower rug/book approaches. Sweep the support beneath
+      // the actual authored road instead; its underside is a camera cutaway.
+      const furnitureMaterial=mat(isKitchen?0xe5bd84:0x9e6946).clone();furnitureMaterial.side=THREE.FrontSide;
+      mesh(g,createRouteRibbonGeometry({...route,width:route.width+1.2}),furnitureMaterial,0,-.25,0,1,1,1,'giant-furniture-table');
+      for(const fraction of [.15,.85])for(const side of [-1,1]){
+        const i=Math.floor((route.points.length-1)*fraction),p=route.points[i],f=frame(route.points,i),height=p.y-.25-floor;
+        box(g,0xa57a55,p.x+f.nx*(route.width/2+.25)*side,floor+height/2,p.z+f.nz*(route.width/2+.25)*side,.6,height,.6);
+      }
       teacup(g,tx+tw*.36,top+.05,tz-td*.32,1.8);
       if(/checkered_tablecloth/.test(route.section||'')){
-        box(g,0xffeee1,tx,top+.035,tz,tw+.2,.04,td+.2,'checkered-dining-tablecloth');
-        for(let ix=0;ix<10;ix++)for(let iz=0;iz<10;iz++)if((ix+iz)%2===0)box(g,0xefaaaa,tx+(ix-4.5)*tw/10,top+.105,tz+(iz-4.5)*td/10,tw/10,.015,td/10);
+        const cloth=furnitureMaterial.clone();cloth.color.setHex(0xffeee1);
+        mesh(g,createRouteRibbonGeometry({...route,width:route.width+.8}),cloth,0,-.16,0,1,1,1,'checkered-dining-tablecloth');
       }
     }
   }
@@ -422,7 +436,7 @@ function winterWorld(track,group,dynamic) {
   const g=addEnvironment(group,'environment-hearth-frost-attic'),s=track.start;
   const hearth=track.fallZones?.find(z=>z.type==='indoor');
   box(g,0xaf7952,hearth?.x??s.x,(hearth?.y??s.y-3.42)-.6,hearth?.z??s.z+1,hearth?.w??16,.8,hearth?.d??15,'attic-oak-floor');
-  for(const side of [-1,1]){box(g,0xbd9670,s.x+side*8,s.y+3.3,s.z,.45,9,15);rod(g,{x:s.x+side*8,y:s.y+6,z:s.z-7},{x:s.x,y:s.y+12,z:s.z-7},.23,0x956c4b);}
+  for(const side of [-1,1]){roomPanel(g,0xbd9670,s.x+side*8,s.y+3.3,s.z,15,9,-side*Math.PI/2,'attic-cutaway-side-wall');rod(g,{x:s.x+side*8,y:s.y+6,z:s.z-7},{x:s.x,y:s.y+12,z:s.z-7},.23,0x956c4b);}
   const hearthProp=new THREE.Group();hearthProp.name='warm-attic-fireplace';hearthProp.userData.decorativeProp=true;g.add(hearthProp);
   box(hearthProp,0xc19b79,s.x-4,s.y+1.5,s.z+5,5,4,1.5);
   box(hearthProp,0x8b5d54,s.x-4,s.y+.7,s.z+5.8,3,2.5,.1);
@@ -668,7 +682,10 @@ function enforceSceneryClearance(track,world,dynamic) {
     const bounds=new THREE.Box3().setFromObject(node,true),center=bounds.getCenter(new THREE.Vector3());
     const size=bounds.getSize(new THREE.Vector3()),radius=Math.hypot(size.x,size.z)/2+(node.userData.motionRadius||0);
     const initial={x:center.x,z:center.z,radius,name:node.name};
-    const safe=resolveSceneryPosition(track,initial);
+    // Physical lane clearance alone left tall houses, bookcases and canopies
+    // inside the default trailing camera boom. Keep their whole footprint
+    // beyond that view corridor as well; manual long/low orbit uses runtime LOS.
+    const safe=resolveSceneryPosition(track,{...initial,radius:radius+(track.cameraSceneryReach??14)});
     // World groups are unscaled, but use parent-local displacements explicitly.
     const before=node.parent.worldToLocal(center.clone());
     const after=node.parent.worldToLocal(new THREE.Vector3(safe.x,center.y,safe.z));
