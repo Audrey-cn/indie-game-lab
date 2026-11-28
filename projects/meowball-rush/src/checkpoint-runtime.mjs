@@ -9,6 +9,7 @@ export function resetBallToCheckpoint(ball, checkpoint) {
     popTimer: 0, dizzyTimer: 0, boostFlash: 0, burstTimer: 0,
     hammerHitCd: 0, rollingPinHitCd: 0, bumperHitCd: 0,
     chuteCooldown: .35, rollSlopeX: 0, rollSlopeZ: 0, landingImpact: 0,
+    portalCooldown: .35, portalFlash: 0, portalSteering: 0,
   });
   ball.propCooldowns?.clear();
   ball.previousBottom = ball.y - ball.r;

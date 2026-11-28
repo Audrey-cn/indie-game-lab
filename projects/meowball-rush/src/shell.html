@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>魔女猫球 · Meowball Rush v3.2.0</title>
+  <title>魔女猫球 · Meowball Rush v4.0.0</title>
   <style>
     :root {
       --ink: #2b1e3a;
@@ -119,6 +119,18 @@
       background-size: cover; background-position: center;
     }
     .overlay[hidden] { display: none; }
+    #warp-flash { position: fixed; inset: 0; z-index: 40; pointer-events: none; opacity: 0;
+      background: radial-gradient(ellipse at center, #fff 0%, #ffffffe8 16%, var(--warp-color, #a5dfff) 60%, transparent 100%);
+      mix-blend-mode: screen; }
+    .flagship-bar { padding: 12px; margin-bottom: 12px; border-radius: 16px; border: 1px solid #ecd2ff;
+      background: linear-gradient(115deg, #fff8eced, #f3eaffed); }
+    .flagship-bar strong { display: block; font-size: 13px; color: #694375; margin-bottom: 9px; }
+    .flagship-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .flagship-actions button { cursor: pointer; border: 1px solid #ffffff; border-radius: 11px; padding: 10px 4px;
+      color: #594161; font: inherit; font-size: 12px; font-weight: 800; background: #ffffffbd;
+      box-shadow: 0 3px 10px #78508b15; transition: transform .15s, background .15s; }
+    .flagship-actions button:hover { transform: translateY(-2px); background: white; }
+    .flagship-actions button:focus-visible { outline: 3px solid #bd8ce9; outline-offset: 2px; }
     #lobby-screen {
       padding: max(14px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
       background: transparent !important;
@@ -331,6 +343,7 @@
     <div id="toast" hidden>✨ 提示</div>
     <div id="star-pop">⭐ +2.0s COMBO ×1</div>
 
+    <div id="warp-flash" aria-hidden="true"></div>
     <!-- WitchSpring Mobile/PC Storybook Lobby Hub -->
     <div class="overlay" id="lobby-screen">
       <div class="lobby-topbar">
@@ -342,9 +355,9 @@
       </div>
 
       <div class="hero-emblem">
-        <span class="badge-tag">MEOWBALL RUSH v3.2.0 · 六幕童话大冒险</span>
+        <span class="badge-tag">MEOWBALL RUSH v4.0.0 · 立体王牌世界</span>
         <h1 class="lobby-title">魔女猫球</h1>
-        <p class="lobby-sub">9 只萌猫 · 10 幕四段式童话冒险 · 蓄势爬坡与环游螺旋！</p>
+        <p class="lobby-sub">9 只萌猫 · 10 关童话冒险 · 三层微缩世界与星际传送！</p>
       </div>
 
       <div class="lobby-drawer">
@@ -355,6 +368,14 @@
 
         <!-- Tab 1: Progressive Track Cards -->
         <div class="tab-pane" id="pane-tracks">
+          <nav class="flagship-bar" aria-label="v4.0 立体王牌直通">
+            <strong>🌟 v4.0 立体王牌直通</strong>
+            <div class="flagship-actions">
+              <button data-flagship-track="4">🍯 厨房三层<br>05 · 直接出发</button>
+              <button data-flagship-track="3">🌳 古树速降<br>04 · 直接出发</button>
+              <button data-flagship-track="8">🪐 星际传送<br>09 · 直接出发</button>
+            </div>
+          </nav>
           <div class="track-cards" id="track-cards"></div>
           <div class="cta-row">
             <button class="gbtn gbtn-play" id="btn-tourney">🏆 10关大冒险</button>

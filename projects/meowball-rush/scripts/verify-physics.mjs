@@ -28,6 +28,7 @@ const moduleAt = async name => existsSync(new URL(`../src/${name}.mjs`, import.m
 const courseMath = await moduleAt('course-math');
 const directorApi = await moduleAt('director');
 const runtimeApi = await moduleAt('course-runtime');
+const portalApi = await moduleAt('portal-runtime');
 const timeApi = await moduleAt('time-runtime');
 const fallApi = await moduleAt('fall-feedback');
 const fallEffectsApi = await moduleAt('fall-effects');
@@ -59,7 +60,7 @@ function makeHarness(track, cat = CATS[0]) {
   };
   const events = [];
   const context = vm.createContext({
-    THREE, ...courseMath, ...directorApi, ...runtimeApi, ...timeApi, ...fallApi, ...fallEffectsApi, trackRoot: new THREE.Group(), state, dynamicMeshes,
+    THREE, ...courseMath, ...directorApi, ...runtimeApi, ...portalApi, ...timeApi, ...fallApi, ...fallEffectsApi, trackRoot: new THREE.Group(), state, dynamicMeshes,
     CATS, TRACKS, Math, console,
     getSideWallOpenings: (...args) => trackBuilder.getSideWallOpenings(...args),
     getEndWallOpenings: (...args) => trackBuilder.getEndWallOpenings(...args),
@@ -211,7 +212,7 @@ check('v3.2 authored rail-side bouncy props cannot pinch or embed the ball',()=>
     }
     maxCorrection=Math.max(maxCorrection,Math.hypot(h.b.x-x,h.b.z-z));cases++;
   }
-  assert.equal(cases,60);assert(maxCorrection<1.5,'prop correction skips too far along course');
+  assert.equal(cases,TRACKS.reduce((n,t)=>n+t.bumpers.length*3,0));assert(maxCorrection<1.5,'prop correction skips too far along course');
   return{cases,maxCorrection};
 });
 
@@ -241,6 +242,19 @@ check('v3.2 pendulums remain solid during hit cooldown including coincident cent
   return{cases:6};
 });
 
+check('v4 pendulum contacts preserve both the solid head and supporting tier floor',()=>{
+  let contacts=0;
+  for(const hz of [120,60,25])for(const height of [1.5,8,18,28])for(const cooldown of [false,true]){
+    const platform={...flat,y:height},hammer={x:0,y:height+4,z:0,len:3.3,speed:0,amp:0,phase:0};
+    const h=makeHarness(testTrack([platform],{start:{x:0,y:height+.62,z:.4},hammers:[hammer]}));
+    h.b.grounded=true;h.b.supportPlatform=platform;if(cooldown)h.b.hammerHitCd=.2;h.step(1/hz);
+    assert(h.b.y>=height+h.b.r-.00001,`${hz}Hz pendulum displacement drives ball below ${height}m supporting floor`);
+    const head=h.dynamicMeshes.hammers[0].worldHead;assert(Math.hypot(h.b.x-head.x,h.b.y-head.y,h.b.z-head.z)>=h.b.r+.92-.00001,'floor correction embeds ball in pendulum head');
+    assert(h.b.hammerHitCd>0,'fixture did not contact the pendulum');assert.equal(h.state.pops,0);contacts++;
+  }
+  return{contacts,rates:[120,60,25]};
+});
+
 check('v3.2 every slowdown leaves a whole-ball dry skill line on its actual floor',()=>{
   let zones=0,contacts=0;
   for(const track of TRACKS) {
@@ -257,12 +271,30 @@ check('v3.2 every slowdown leaves a whole-ball dry skill line on its actual floo
           const u=inset/width,x=a.x+(b.x-a.x)*u,z=a.z+(b.z-a.z)*u;
           const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);
           assert(floor,`${track.id}/${route.id}: dry lane floats off floor`);
-          assert.equal(floor.kind,inset<1.5?route.kind:route.slowZone.kind,`${track.id}/${route.id}: wrong material at ${inset}m from dry edge`);contacts++;
+          assert.equal(floor.kind,inset<1.5?route.kind:route.slowZone.kind,`${track.id}/${route.id}[${i}]: wrong material at ${inset}m from dry edge (sample distance ${floor.slowZoneDistance}, floor segment ${floor.segmentIndex})`);contacts++;
         }
       }
     }
   }
   return{zones,contacts};
+});
+
+check('v4 clipped asymmetric turns retain a real 1.5m dry skill lane on either edge',()=>{
+  let contacts=0;
+  for(const drySide of [-1,1]){
+    const route={id:`asymmetric-dry-${drySide}`,kind:'wood',width:6,points:[{x:0,y:8,z:8},{x:0,y:8,z:1},{x:1,y:8,z:0},{x:8,y:8,z:0}],slowZone:{kind:'honey',drySide,dryWidth:1.5}};
+    const data=courseMath.getRouteRibbonRows(route);
+    assert(data.leftWidths.some((width,i)=>Math.abs(width-data.rightWidths[i])>1),'fixture did not exercise asymmetric inner-corner clipping');
+    for(const index of [1,2]){
+      const row=data.rows[index],edge=row[drySide===1?data.columns:0],opposite=row[drySide===1?0:data.columns],width=Math.hypot(opposite.x-edge.x,opposite.z-edge.z);
+      for(const inset of [.13,.75,1.37,1.7]){
+        const fraction=inset/width,x=edge.x+(opposite.x-edge.x)*fraction,z=edge.z+(opposite.z-edge.z)*fraction;
+        const surface=courseMath.nearestRouteSurface([route],x,z,Infinity);assert(surface,'clipped turn lost a legal lane position');
+        assert.equal(surface.kind,inset<1.5?'wood':'honey',`${drySide} edge clipped turn misclassifies ${inset}m skill lane inset`);contacts++;
+      }
+    }
+  }
+  return{contacts,dryWidth:1.5};
 });
 
 check('rolling pin elastic rebound and contact cooldown', () => {
@@ -774,13 +806,13 @@ check('elevator riding full sine cycle', () => {
   return { receipts };
 });
 
-const names = ['01 · 晨曦花谷学园','02 · 魔女客厅大冒险','03 · 鹅卵石面包老街','04 · 树洞与胖云牧场','05 · 厨房甜点大作战','06 · 钟楼运河与屋顶','07 · 浮空云海跳岛','08 · 冬日暖炉与冰川阁楼','09 · 星光书塔螺旋升空','10 · 魔女大庆典总决赛'];
-const worlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','starlight_library','grand_medley'];
+const names = ['01 · 晨曦花谷学园','02 · 魔女客厅大冒险','03 · 鹅卵石面包老街','04 · 参天古树速降山谷','05 · 厨房一角三层微缩','06 · 钟楼运河与屋顶','07 · 浮空云海跳岛','08 · 冬日暖炉与冰川阁楼','09 · 星际宇宙传送城','10 · 魔女大庆典总决赛'];
+const worlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','cosmic_warp','grand_medley'];
 const distance3 = (a,b) => Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 function near(a,b,label,tol=1e-6) { assert(Math.abs(a-b)<=tol, `${label}: ${a} != ${b}`); }
 const finiteBall = b => {for(const key of ['x','y','z','vx','vy','vz']) assert(Number.isFinite(b[key]),`non-finite ball.${key}`);};
 
-check('v3 ten distinct blueprint courses and measured progressive lengths', () => {
+check('v4 ten distinct approved courses preserve original lengths and compact flagship footprints', () => {
   assert.equal(TRACKS.length,10); assert.equal(CATS.length,9);
   assert.ok(courseMath,'missing shared v3 course geometry functions');
   const signatures = new Set();
@@ -801,7 +833,8 @@ check('v3 ten distinct blueprint courses and measured progressive lengths', () =
     assert(track.bonusTime>=210&&track.bonusTime<=360);
     assert(track.spikes.length&&track.bumpers.length&&track.boosts.length,`${track.id}: missing action setpieces`);
     if(i>=2)assert(track.hammers.length&&track.rollingPins.length,`${track.id}: missing pendulum or rolling pin`);
-    if(i) {const growth=track.length/TRACKS[i-1].length;assert(growth>=1.07 && growth<=1.30,`${track.id}: length growth ${growth} outside v3.2 progressive growth`);}
+    if(!track.flagship) near(track.length,courseConfig.COURSE_LENGTH_TARGETS[i],`${track.id}: original v3 course length changed`,.03);
+    else {assert(track.length>=150&&track.length<=700,`${track.id}: flagship itinerary is not compact`);assert(!track.routes.some(r=>r.id.startsWith('adventure-')),`${track.id}: flagship was expanded away from its approved diorama`);}
     signatures.add(JSON.stringify(track.routes.map(r=>r.points.map(p=>[+p.x.toFixed(2),+p.y.toFixed(2),+p.z.toFixed(2)]))));
     for(const route of track.routes) {
       assert(route.width>1.24 && route.points.length>=2,`${track.id}/${route.id}: unusable route dimensions`);
@@ -945,15 +978,124 @@ check('v3 airborne surface queries do not teleport to distant floors',()=>{
   }
 });
 
-check('v3 floating spellbooks form four pads with three genuine airborne gaps',()=>{
-  const track=TRACKS[8],pads=track.routes.filter(r=>r.kind==='book' && r.section==='floating_spellbooks'),hops=track.props.filter(p=>p.type==='spellbook_bridge' && p.target);
-  assert.equal(pads.length,4,'library lacks separate spellbook pads');assert.equal(hops.length,3,'library lacks three authored book jumps');
-  for(const prop of hops){
-    assert.equal(prop.cinematic,false,'precision book jump locks manual camera');
-    const p={x:(prop.x+prop.target.x)/2,y:(prop.y+prop.target.y)/2,z:(prop.z+prop.target.z)/2},h=makeHarness(track);
-    Object.assign(h.b,{...p,y:p.y+h.b.r,grounded:false,previousBottom:p.y,supportRoute:null,supportPlatform:null});
-    assert(h.context.sampleTrackSurface(h.b.x,h.b.y,h.b.z,h.b.r)===null,`${prop.id}: continuous invisible floor fills the book jump gap`);
+check('v4 fresh saves unlock three flagships and lobby shortcuts launch them in one click',()=>{
+  const context=vm.createContext({TRACKS,save:{clearedTracks:[]}});
+  vm.runInContext(`${sourceBetween('function isTrackUnlocked(', 'function updateGyroUI(')};this.unlocked=isTrackUnlocked;`,context);
+  for(const index of [0,3,4,8])assert.equal(context.unlocked(index),true,`fresh save locks stage ${index+1}`);
+  for(const index of [1,2,5,6,7,9])assert.equal(context.unlocked(index),false,`original progression stage ${index+1} is unexpectedly unlocked`);
+  context.save.clearedTracks.push(0);assert.equal(context.unlocked(1),true,'original progression unlock no longer works');
+  const shell=readFileSync(new URL('../src/shell.html',import.meta.url),'utf8');
+  const indices=[...shell.matchAll(/data-flagship-track="(\d+)"/g)].map(match=>Number(match[1]));assert.deepEqual(indices,[4,3,8]);
+  assert(shell.includes('🌟 v4.0 立体王牌直通'),'lobby flagship bar title missing');
+  const buttons=indices.map(index=>({dataset:{flagshipTrack:String(index)}})),launches=[];
+  const clicks=vm.createContext({selectedPracticeTrack:0,document:{querySelectorAll:()=>buttons},Number,loadTrack:(...args)=>launches.push(args)});
+  vm.runInContext(sourceBetween("document.querySelectorAll('[data-flagship-track]')",'document.getElementById("btn-cat-go")'),clicks);
+  for(const button of buttons){assert.equal(typeof button.onclick,'function');button.onclick();}
+  assert.deepEqual(launches,indices.map(index=>[index,'practice',0]),'one-click flagship shortcuts do not launch their exact course');
+  return{unlockedStages:[4,5,9],oneClickLaunches:launches.length};
+});
+
+check('v4 flagship blueprints have actual playable stacked tiers and paired connections',()=>{
+  const expected=[{index:4,id:'A',heights:[24,12,1.5],start:24,goal:12,file:'flagship-a-kitchen-3tier.jpg'},
+    {index:3,id:'B',heights:[36,18,2],start:36,goal:2,file:'flagship-b-giant-tree-descent.jpg'},
+    {index:8,id:'C',heights:[8,28,16,22],start:8,goal:22,file:'flagship-c-cosmic-warp-city.jpg'}];
+  const receipts=[];
+  for(const spec of expected){
+    const track=TRACKS[spec.index];assert.equal(track.flagship,spec.id);assert.equal(track.unlockedByDefault,true);
+    assert.equal(track.blueprint,`docs/concept-art/v4-flagship/${spec.file}`);
+    near(track.start.y-.62,spec.start,`${track.id}: start tier`,.05);near(track.finish.y,spec.goal,`${track.id}: goal tier`,.05);
+    for(const height of spec.heights){
+      const floorMeters=track.routes.reduce((n,r)=>n+r.points.slice(1).reduce((sum,p,i)=>sum+(Math.abs(p.y-height)<.2&&Math.abs(r.points[i].y-height)<.2?distance3(p,r.points[i]):0),0),0);
+      assert(floorMeters>=5,`${track.id}: ${height}m tier has no substantial playable floor`);
+    }
+    if(spec.id==='A'){
+      const levels=[1.5,12,24];assert(levels.every((height,i)=>!i||height-levels[i-1]>=9));
+      assert(track.routes.some(r=>r.section.includes('under')&&r.points.some(p=>Math.abs(p.y-1.5)<.05)),'kitchen has no authored under-table route');
+      assert(track.chutes.some(c=>c.material==='honey'&&Math.abs(c.points[0].y-12)<.05&&Math.abs(c.receiving.y-1.5)<.05),'honey slide does not connect counter to floor');
+      assert(track.props.some(p=>p.type==='toaster'&&p.target),'missing sink-crossing toaster');
+      assert(track.props.some(p=>p.type==='toy_mouse'),'missing clockwork mouse');
+    }
+    if(spec.id==='B'){
+      assert(track.chutes.some(c=>c.material==='oak'&&Math.abs(c.turns-1.5)<1e-6),'hollow trunk slide is not 540 degrees');
+      assert(track.landmarks.some(l=>l.type==='giant_oak'&&l.height===42),'missing 42m ancient oak');
+      assert(track.props.some(p=>p.type==='wind_cloud'),'missing smiling cloud boost');
+      assert(track.props.some(p=>p.type==='sheep'),'missing solid sheep pasture');
+      assert(track.fallZones.some(z=>z.type==='water'),'waterfall has no splash fall zone');
+    }
+    if(spec.id==='C'){
+      assert.equal(track.worldType,'cosmic_warp');assert.deepEqual(track.portals.map(p=>p.id),['A','B','C']);
+      assert.deepEqual(track.portals.map(p=>p.exit.y),[28,16,22]);
+      assert.equal(new Set(track.portals.map(p=>p.color)).size,3,'portal pair colors are ambiguous');
+      assert.deepEqual(track.primaryPath.filter(s=>s.type==='portal').map(p=>p.id),['A','B','C']);
+      assert(track.chutes.some(c=>c.material==='rainbow'),'cosmic skyway has no rainbow spiral');
+    }
+    receipts.push({stage:spec.index+1,tiers:spec.heights,length:+track.length.toFixed(2)});
   }
+  return{receipts};
+});
+
+check('v4 stacked surfaces never capture upper floors through shared XZ footprints',()=>{
+  let contacts=0;
+  const routes=[1.5,12,24].map((y,i)=>({id:`layer-${i}`,kind:'wood',width:6,walls:false,points:[{x:0,y,z:10},{x:0,y,z:-10}]}));
+  const platforms=[1.5,12,24].map(y=>({kind:'wood',x:0,y,z:0,w:9,d:9,h:.65}));
+  for(const hz of [120,60,25])for(const y of [1.5,12,24]){
+    const h=makeHarness(testTrack(platforms,{routes,start:{x:0,y:y+.62,z:0}}));
+    Object.assign(h.b,{grounded:true,previousBottom:y,supportRoute:routes.find(r=>r.points[0].y===y)});
+    for(let i=0;i<hz;i++){
+      const floor=h.context.sampleTrackSurface(h.b.x,h.b.y,h.b.z,h.b.r);assert(floor,'stacked floor vanished');near(floor.y,y,'stacked support changed tier');
+      h.step(1/hz);near(h.b.y,y+h.b.r,'stacked ball snapped to another tier',.005);contacts++;
+    }
+    Object.assign(h.b,{y:y+3.62,grounded:false,previousBottom:y+3,supportRoute:null,supportPlatform:null});
+    assert.equal(h.context.sampleTrackSurface(h.b.x,h.b.y,h.b.z,h.b.r),null,'airborne query grabs distant stacked floor');
+  }
+  return{contacts,rates:[120,60,25]};
+});
+
+check('v4 native portal entry catches grazing crossings between input frames',()=>{
+  const portal={id:'sweep',label:'Sweep',color:0x49cfff,entry:{x:0,y:8,z:0,r:1.5},exit:{x:20,y:16,z:0,yaw:0,speed:7}};
+  for(const hz of [120,60,25]){
+    const dt=1/hz,h=makeHarness(testTrack([flat,{...flat,x:20,y:16,w:10,d:10}],{
+      portals:[portal],start:{x:1.4999,y:8.62,z:-15*dt/2}}));
+    h.b.grounded=true;h.b.vz=15;
+    assert.equal(portalApi.findPortalEntry(h.state.track,h.b),null,'grazing fixture starts inside entry');
+    h.step(dt);
+    assert.equal(h.b.warpCount,1,`${hz}Hz: actual main skips a portal crossed between frame endpoints`);
+    near(h.b.y,16+h.b.r+.04,'swept portal exit tier');assert.equal(h.events.length,0);
+  }
+  return{rates:[120,60,25],crossings:3};
+});
+
+check('v4 paired portals teleport with exact exit yaw, bounded speed, cooldown and safe steering',()=>{
+  assert(portalApi,'missing first-class portal runtime');
+  const track=TRACKS[8];let warps=0;
+  for(const portal of track.portals||[])for(const hz of [120,60,25]){
+    const dt=1/hz,director=directorApi.createDirector(2.1),ball={...portal.entry,y:portal.entry.y+.62,r:.62,vx:19,vy:-3,vz:-17,grounded:true,previousBottom:portal.entry.y};
+    assert.equal(portalApi.findPortalEntry(track,ball),portal,'entry trigger misses its own tier');
+    assert.equal(portalApi.findPortalEntry(track,{...ball,y:ball.y-8}),null,'portal captures another vertical layer');
+    assert.equal(portalApi.findPortalEntry(track,{...ball,x:portal.entry.x+3},{...ball,x:portal.entry.x-3}),portal,'fast portal crossing tunnels between input frames');
+    portalApi.capturePortal(ball,portal,director);
+    near(ball.x,portal.exit.x,'warp exit X');near(ball.z,portal.exit.z,'warp exit Z');near(ball.y,portal.exit.y+ball.r+.04,'warp exit Y');
+    const speed=Math.hypot(ball.vx,ball.vz);assert(speed>=6&&speed<=8,`unsafe exit speed ${speed}`);
+    near(ball.vx,-Math.sin(portal.exit.yaw)*speed,'warp exit velocity X');near(ball.vz,-Math.cos(portal.exit.yaw)*speed,'warp exit velocity Z');
+    near(Math.atan2(Math.sin(director.yaw-portal.exit.yaw),Math.cos(director.yaw-portal.exit.yaw)),0,'warp camera yaw');
+    assert(ball.portalFlash>=.44&&ball.portalSteering>=.44,'warp flash or steering protection omitted');
+    assert(ball.portalCooldown>=1,'portal has no re-entry cooldown');assert.equal(portalApi.findPortalEntry(track,{...ball,...portal.entry,y:portal.entry.y+.62}),null);
+    const damped=portalApi.dampPortalSteering(ball,Math.cos(portal.exit.yaw)*18,-Math.sin(portal.exit.yaw)*18,dt);
+    const lateral=damped.x*Math.cos(portal.exit.yaw)-damped.z*Math.sin(portal.exit.yaw);
+    assert(Math.abs(lateral)<5,'stale lateral input remains dangerous immediately after warp');
+    portalApi.advancePortal(ball,.45);near(ball.portalFlash,0,'warp flash duration');near(ball.portalSteering,0,'post-warp steering duration');
+    const restored=portalApi.dampPortalSteering(ball,7,-11);near(restored.x,7,'horizontal steering does not restore');near(restored.z,-11,'vertical steering does not restore');
+    const h=makeHarness(track);Object.assign(h.b,{...portal.entry,y:portal.entry.y+.62,r:.62,grounded:true});h.step(dt);
+    assert.equal(h.b.warpCount,1,'actual main physics does not natively traverse entry portal');
+    near(h.state.director.yaw,portal.exit.yaw,'actual main warp camera alignment',.005);
+    for(let i=0;i<Math.ceil(.45/dt);i++){
+      h.step(dt,Math.cos(portal.exit.yaw)*18,-Math.sin(portal.exit.yaw)*18,18);
+      if(h.b.portalSteering>0)near(h.state.director.yaw,portal.exit.yaw,'post-warp yaw drifts during protected steering',.005);
+    }
+    assert.equal(h.events.filter(e=>e.type==='fall').length,0,'post-warp runway causes a fall');assert.equal(h.state.pops,0,'post-warp ball pops');
+    assert(h.b.y>portal.exit.y-.5,'post-warp ball drops off destination');warps++;
+  }
+  assert.equal(warps,9,'A/B/C not tested at every required rate');return{warps,rates:[120,60,25]};
 });
 
 check('v3 actual keyboard movement uses rendered camera yaw and launchers trigger cinematics',()=>{
@@ -1183,16 +1325,24 @@ function driveCourse(track, { dt=1/120, speed=[2.9,2.75,3.3,3.6,4.1,5,5.4,6.2,6.
       points.push({...r.points.at(-1),kind:'surface',routeId:r.id,width:r.width,surfaceKind:r.kind});
     }else if(step.type==='chute') {
       const c=track.chutes.find(c=>c.id===step.id);points.push({...c.points[0],kind:'chute',chuteId:c.id},{...c.receiving,kind:'chute_exit',chuteId:c.id});
+    }else if(step.type==='portal') {
+      const portal=track.portals.find(p=>p.id===step.id);assert(portal,`${track.id}: missing portal ${step.id}`);
+      points.push({...portal.entry,kind:'portal',portalId:portal.id},{...portal.exit,kind:'portal_exit',portalId:portal.id});
     }else if(!step.optional) {
       const prop=(step.type==='mushroom'?track.mushrooms:track.props).find(p=>p.id===step.id);
       points.push({...prop,kind:'launch'},{...prop.target,kind:'landing'});
     }
   }
   assert(points?.length>5,`${track.id}: no authored traversal waypoints`);
-  let target=0, wasAssist=false, chuteRides=0, launches=0, previousRide=null, lastLaunch=null;const cameraModes=new Set();
+  let target=0, wasAssist=false, chuteRides=0, launches=0, portals=0, previousRide=null, lastLaunch=null;const cameraModes=new Set(),portalIds=[];
   const maxTime=Math.max(90,track.length/2.5+30);
   for(let frame=0;frame<maxTime/dt && h.state.phase==='playing';frame++) {
     const assisted=!!(h.b.chuteRide || h.b.launchAssist);
+    if((h.b.warpCount||0)>portals){
+      portals=h.b.warpCount;portalIds.push(h.b.lastPortal);
+      const exit=points.findIndex((p,i)=>i>=target&&p.kind==='portal_exit');
+      assert(exit>=0,`${track.id}: native warp has no matching authored itinerary exit`);target=exit;
+    }
     if(h.b.chuteRide && h.b.chuteRide!==previousRide) {
       chuteRides++;previousRide=h.b.chuteRide;
       const exit=points.findIndex((p,i)=>i>=target && p.kind==='chute_exit' && p.chuteId===h.b.chuteRide.chute.id);
@@ -1239,11 +1389,11 @@ function driveCourse(track, { dt=1/120, speed=[2.9,2.75,3.3,3.6,4.1,5,5.4,6.2,6.
     // Brake before narrow entries, launched gaps and sharp changes of direction.
     for(let i=target;i<Math.min(points.length,target+16);i++){
       const q=points[i],d=Math.hypot(q.x-h.b.x,q.z-h.b.z);
-      if(q.kind==='chute_exit'||q.kind==='landing')break;
+      if(q.kind==='chute_exit'||q.kind==='landing'||q.kind==='portal_exit')break;
       if(q.width<=3.0)desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.1**2+2*3*d));
       if(q.kind==='launch')desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.2**2+2*3*d));
     }
-    if(p.kind==='launch'||p.kind==='chute')desiredSpeed=Math.min(desiredSpeed,Math.max(1.6,distance*2));
+    if(p.kind==='launch'||p.kind==='chute'||p.kind==='portal')desiredSpeed=Math.min(desiredSpeed,Math.max(1.6,distance*2));
     else desiredSpeed=Math.min(desiredSpeed,Math.max(.4,distance*3));
     const vx=dx/(distance||1)*desiredSpeed,vz=dz/(distance||1)*desiredSpeed;
     const gain=h.b.grounded?14:6;
@@ -1255,20 +1405,23 @@ function driveCourse(track, { dt=1/120, speed=[2.9,2.75,3.3,3.6,4.1,5,5.4,6.2,6.
     if(h.state.pops)break;
     if(process.argv.includes(`--trace=${track.id}`) && frame%Math.round(1/dt)===0)console.log(JSON.stringify({trace:track.id,t:+h.state.elapsed.toFixed(2),target,p,aim,ax,az,supportRoute:h.b.supportRoute?.id,supportPlatform:h.b.supportPlatform?.role,ball:{x:h.b.x,y:h.b.y,z:h.b.z,grounded:h.b.grounded,vx:h.b.vx,vy:h.b.vy,vz:h.b.vz}}));
   }
-  return {track:track.id,hz:Math.round(1/dt),cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),remaining:+h.state.timeLeft.toFixed(2),penalties:h.state.timePenaltyTotal||0,target,targets:points.length,chuteRides,launches,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
+  return {track:track.id,hz:Math.round(1/dt),cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),remaining:+h.state.timeLeft.toFixed(2),penalties:h.state.timePenaltyTotal||0,target,targets:points.length,chuteRides,launches,portals,portalIds,falls:h.events.filter(e=>e.type==='fall').length,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
 }
 const rateArgument=process.argv.find(a=>a.startsWith('--route-hz='));
 const routeRates=rateArgument?[Number(rateArgument.split('=')[1])]:[120,60,25];
 for(const hz of routeRates)assert(hz>=25 && hz<=240,'route rate must be25..240Hz');
-for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.argv.some(a=>a.startsWith('--course='))||process.argv.includes(`--course=${t.id}`)))check(`v3.2 input-only complete course at${routeHz}Hz: ${track.id}`,()=>{
+for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.argv.some(a=>a.startsWith('--course='))||process.argv.includes(`--course=${t.id}`)))check(`v4.0 input-only complete course at${routeHz}Hz: ${track.id}`,()=>{
   const receipt=driveCourse(track,{dt:1/routeHz});
   assert(receipt.cleared,`course cannot finish through real movement: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.pops,0,`route pops: ${JSON.stringify(receipt)}`);
+  assert.equal(receipt.falls,0,`route falls: ${JSON.stringify(receipt)}`);
+  assert.equal(receipt.portals,(track.portals||[]).length,'complete run skipped paired portal');
+  assert.deepEqual(receipt.portalIds,(track.primaryPath||[]).filter(p=>p.type==='portal').map(p=>p.id),'complete run used wrong portal order');
   assert(receipt.seconds<=track.bonusTime+1/routeHz,`course exceeds authored time budget: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.chuteRides,(track.chutes||[]).length,'complete run skipped authored chute');
   if(track.chutes.length)assert(receipt.cameraModes.includes('LOCKED_CHUTE'),'complete run never enters chute camera');
   if(track.cameraZones.length)assert(receipt.cameraModes.includes('MANUAL_ORBIT'),'complete run never enters authored precision camera');
-  if(track.index===8){assert.equal(receipt.launches,3,'library traversal skips spellbook hops');assert(!receipt.cameraModes.includes('LOCKED_SETPIECE'),'book hops interrupt precision manual camera');}
+  if(track.flagship==='C')assert.equal(receipt.portals,3,'cosmic traversal must ride A, B and C natively');
   return receipt;
 });
 

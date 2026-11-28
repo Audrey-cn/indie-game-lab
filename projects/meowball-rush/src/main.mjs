@@ -1,4 +1,4 @@
-// Meowball Rush v3.2.0 — six-act adventures, storybook worlds and timed hazards.
+// Meowball Rush v4.0.0 — vertical flagship worlds and paired warp portals.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -10,11 +10,11 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { CATS, TRACKS, migrateV3Save } from "./config.mjs";
 import { sfx } from "./audio.mjs";
 import { buildTrackScene, createKittyBall, createRainbowRibbon, getSideWallOpenings, getEndWallOpenings, animateFairytaleScenery, activateCheckpoint } from "./cel-builder.mjs";
-import { nearestRouteSurface } from './course-math.mjs';
 import { createDirector, updateDirector, cameraRelativeInput, triggerSetpiece, CAMERA_MODES } from './director.mjs';
 import { createCameraOcclusion } from './camera-occlusion.mjs';
 import { createCameraSightline } from './camera-sightline.mjs';
-import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, collideFairytaleCritters, integrateRollingMotion, resolveRollingLanding, resolveHorizontalGuardrail, collideRouteGuardrails, updateSpikePhysics, reconcileBouncyBodies } from './course-runtime.mjs';
+import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, collideFairytaleCritters, integrateRollingMotion, resolveRollingLanding, resolveHorizontalGuardrail, collideRouteGuardrails, updateSpikePhysics, reconcileBouncyBodies, sampleRollingRouteSurface, isSurfaceInContactWindow, resolveSphereFloorContact } from './course-runtime.mjs';
+import { advancePortal, updatePortalPhysics, dampPortalSteering } from './portal-runtime.mjs';
 import { applyTimePenalty } from './time-runtime.mjs';
 import { animateSpikeTraps } from './spike-traps.mjs';
 import { generateClearPoster } from "./poster.mjs";
@@ -243,7 +243,7 @@ function getSelectedCat() {
 }
 
 function isTrackUnlocked(idx) {
-  if (idx === 0) return true;
+  if (idx === 0 || TRACKS[idx]?.unlockedByDefault) return true;
   return save.clearedTracks.includes(idx - 1);
 }
 
@@ -672,7 +672,7 @@ function showFairytaleEvent(event) {
   } else if (type === 'launch') {
     if (state.director) triggerSetpiece(state.director, prop.type === 'toaster' ? 1.5 : 1.2);
     sfx.playBoing();
-    showToast(prop.type === 'toaster' ? '🍞 吐司弹射！飞向上层甜点台！' : prop.type === 'willow_branch' ? '🌿 柳枝轻轻托起你！' : '☁️ 云朵打喷嚏，乘风起飞！');
+    showToast(prop.type === 'toaster' ? '🍞 吐司弹射！越过水槽！' : prop.type === 'steam_vent' ? '🌪️ 乘蒸汽龙卷风返回草莓蛋糕塔！' : prop.type === 'willow_branch' ? '🌿 柳枝轻轻托起你！' : '☁️ 云朵打喷嚏，乘风起飞！');
   } else if (type === 'helper') {
     sfx.playBoost();
     showStarPop(prop.type === 'hedgehog' ? '♡ 刺猬伙伴为你加油！' : '✦ 发条小鼠来帮忙！');
@@ -784,8 +784,8 @@ function sampleTrackSurface(x, y, z, r) {
   let bestY = -999;
   let bestSurf = null;
 
-  const routeFloor = nearestRouteSurface(tr.routes || [], x, z, y - r + 0.55,
-    { bottom: y - r, previousBottom: state.ball.previousBottom, grounded: state.ball.grounded, supportRoute: state.ball.supportRoute });
+  const queryBall = { ...state.ball, x, y, z, r };
+  const routeFloor = sampleRollingRouteSurface(tr.routes || [], queryBall);
   if (routeFloor) {
     bestY = routeFloor.y;
     bestSurf = { ...routeFloor, secret: routeFloor.route.secret, gearVx: 0, gearVz: 0 };
@@ -797,6 +797,7 @@ function sampleTrackSurface(x, y, z, r) {
     if (Math.abs(x - p.x) > hw || Math.abs(z - p.z) > hd) continue;
 
     const { y: surfY, slopeX, slopeZ } = platformFloor(p, x, z);
+    if (!isSurfaceInContactWindow(queryBall, surfY)) continue;
     // Only snap to surface if ball bottom is descending onto it or within tiny smooth bevel (<= 0.14m).
     // Taller 90-degree vertical steps are handled by true rigid-body momentum & radius climbing physics!
     const followingFloor = state.ball.grounded && state.ball.supportPlatform === p;
@@ -808,6 +809,7 @@ function sampleTrackSurface(x, y, z, r) {
   }
 
   for (const g of tr.gears) {
+    if (!isSurfaceInContactWindow(queryBall, g.y)) continue;
     const dx = x - g.x;
     const dz = z - g.z;
     const dist = Math.hypot(dx, dz);
@@ -1049,6 +1051,7 @@ function updatePhysics(dt) {
     return;
   }
   b.chuteCooldown = Math.max(0, (b.chuteCooldown || 0) - dt);
+  advancePortal(b, dt);
   b.launchLanding = Math.max(0, (b.launchLanding || 0) - dt);
   if (b.chuteRide && b.popTimer <= 0) {
     advanceChute(b, b.chuteRide, dt, (state.input.keys.has('KeyD') ? 1 : 0) - (state.input.keys.has('KeyA') ? 1 : 0));
@@ -1057,6 +1060,16 @@ function updatePhysics(dt) {
   if (b.launchAssist && b.popTimer <= 0) { advanceLaunch(b, dt); return; }
   const chute = findChuteEntry(state.track, b);
   if (chute) { captureChute(b, chute); advanceChute(b, b.chuteRide, dt); sfx.playBoost(); return; }
+  const onWarp = portal => {
+    state.viewYaw = portal.exit.yaw;
+    inp.mouseAccX = 0; inp.mouseAccZ = 0;
+    inp.orbitX = 0; inp.orbitY = 0;
+    const pair = dynamicMeshes.warpPortals?.find(p => p.def.id === portal.id);
+    if (pair) pair.pulse = 1;
+    sfx.playWarp();
+    showToast(`✦ ${portal.label} · 星光跃迁！`);
+  };
+  if (updatePortalPhysics(state.track, b, 0, { director: state.director, onWarp })) return;
   const catStats = state.cat.stats;
   const previousX = b.x;
   const previousZ = b.z;
@@ -1138,7 +1151,8 @@ function updatePhysics(dt) {
 
   // Rotate input by camera horizontal yaw (~34 deg) so pushing "Up" always rolls cleanly up-screen!
   const camYaw = state.viewYaw ?? state.director?.yaw ?? 0.58;
-  const drive = cameraRelativeInput(rawX, rawZ, camYaw);
+  const worldDrive = cameraRelativeInput(rawX, rawZ, camYaw);
+  const drive = dampPortalSteering(b, worldDrive.x, worldDrive.z);
   const driveX = drive.x;
   const driveZ = drive.z;
 
@@ -1243,6 +1257,10 @@ function updatePhysics(dt) {
     b.supportRoute = null;
   }
 
+  // Include the travelled chord: a fast, grazing entry can cross the pool
+  // between two non-overlapping endpoints, even at a high input rate.
+  if (updatePortalPhysics(state.track, b, 0, { director: state.director, onWarp,
+    previous: { x: previousX, y: b.previousBottom + b.r, z: previousZ } })) return;
   updateFairytalePhysics(state.track, b, state.elapsed, dt, showFairytaleEvent);
   updateSpikePhysics(state.track, b, state.elapsed, dt, showFairytaleEvent, {x:previousX,z:previousZ});
   if (b.launchAssist || state.phase !== 'playing') return;
@@ -1282,6 +1300,8 @@ function updatePhysics(dt) {
         b.y = hm.worldHead.y + ny * (hitDist + 0.08);
         b.z = hm.worldHead.z + nz * (hitDist + 0.08);
         b.grounded=false;b.supportPlatform=null;b.supportRoute=null;
+        resolveSphereFloorContact(b, hm.worldHead, hitDist + .08,
+          q => sampleTrackSurface(q.x, q.y, q.z, q.r));
         // A feedback cooldown never removes the pendulum's solid body.
         if(b.hammerHitCd>0) {
           const closing=relative.x*nx+relative.y*ny+relative.z*nz;
@@ -1387,6 +1407,7 @@ function updatePhysics(dt) {
   // A contact latch keeps the sound/toast from repeating every physics tick.
   for (const vent of dynamicMeshes.steamVents || []) {
     const def = vent.def;
+    if (def.target) continue; // Authored tier transfer uses the shared exact ballistic launch.
     const touching = vent.active && Math.hypot(b.x - def.x, b.z - def.z) < def.r + b.r * 0.35
       && b.y - b.r >= def.y - 0.15 && b.y - b.r < def.y + 2.5;
     if (touching) {
@@ -1696,6 +1717,10 @@ function updateVisuals(dt) {
     camera.updateProjectionMatrix();
   }
   cameraOcclusion?.update(b, camera.position, dt);
+  const flash = document.getElementById('warp-flash');
+  const flashLife = Math.max(0, Math.min(1, (b.portalFlash || 0) / .45));
+  flash.style.opacity = String(flashLife ** .65);
+  flash.style.setProperty('--warp-color', `#${(b.portalColor ?? 0xa5dfff).toString(16).padStart(6, '0')}`);
   const orbitHint = document.getElementById('camera-hint');
   orbitHint.hidden = state.director.mode !== CAMERA_MODES.MANUAL_ORBIT;
   document.getElementById('hud').dataset.cameraMode = state.director.mode;
@@ -1886,6 +1911,12 @@ document.querySelectorAll(".htab").forEach((b) => {
 });
 document.getElementById("btn-tourney").onclick = () => loadTrack(0, "tourney", 0);
 document.getElementById("btn-practice").onclick = () => loadTrack(selectedPracticeTrack, "practice", 0);
+document.querySelectorAll('[data-flagship-track]').forEach(button => {
+  button.onclick = () => {
+    selectedPracticeTrack = Number(button.dataset.flagshipTrack);
+    loadTrack(selectedPracticeTrack, 'practice', 0);
+  };
+});
 document.getElementById("btn-cat-go").onclick = () => loadTrack(selectedPracticeTrack, "practice", 0);
 document.getElementById("btn-res-share").onclick = async () => {
   if (!lastResultCtx) return;

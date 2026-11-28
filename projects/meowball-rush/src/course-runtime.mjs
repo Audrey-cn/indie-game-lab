@@ -1,5 +1,47 @@
 import { polylineLength, samplePath, computeLaunchVelocity, getRibbonBoundarySegments, nearestRouteSurface } from './course-math.mjs';
 
+// Contact queries are local to the sphere's tier. A stale pre-launch/warp
+// previousBottom cannot select an upper deck sharing the same XZ footprint.
+export function surfaceContactWindow(ball) {
+  const bottom = ball.y - ball.r;
+  const swept = Math.max(0, Math.min(2.5, (ball.previousBottom ?? bottom) - bottom));
+  return { min: bottom - .8, max: bottom + Math.max(.55, swept + .02) };
+}
+export function isSurfaceInContactWindow(ball, floorY) {
+  const w = surfaceContactWindow(ball);
+  return floorY >= w.min - 1e-6 && floorY <= w.max + 1e-6;
+}
+export function sampleRollingRouteSurface(routes, ball) {
+  const bottom = ball.y - ball.r;
+  return nearestRouteSurface(routes, ball.x, ball.z, bottom + .55, {
+    bottom, previousBottom: ball.previousBottom, grounded: ball.grounded,
+    supportRoute: ball.supportRoute, verticalWindow: surfaceContactWindow(ball),
+  });
+}
+
+// A radial hazard projection must satisfy the floor as well as the sphere.
+// Resolve their intersection horizontally rather than leaving the bubble
+// partially inside an opaque deck until the next physics frame.
+export function resolveSphereFloorContact(ball, center, radius, surfaceAt) {
+  let corrected = false;
+  for (let pass = 0; pass < 12; pass++) {
+    const floor = surfaceAt(ball);
+    if (!floor || ball.y - ball.r >= floor.y - 1e-7) break;
+    ball.y = floor.y + ball.r + 1e-6;
+    const dx = ball.x - center.x, dz = ball.z - center.z, dy = ball.y - center.y;
+    const distance = Math.hypot(dx, dz), required = Math.sqrt(Math.max(0, radius * radius - dy * dy));
+    if (distance < required) {
+      const fallback = ball.routeTangent || { x: 0, z: -1 }, length = Math.hypot(fallback.x, fallback.z) || 1;
+      const nx = distance > 1e-8 ? dx / distance : fallback.x / length;
+      const nz = distance > 1e-8 ? dz / distance : fallback.z / length;
+      ball.x = center.x + nx * (required + 1e-6);
+      ball.z = center.z + nz * (required + 1e-6);
+    }
+    corrected = true;
+  }
+  return corrected;
+}
+
 export const SPIKE_TIMING=Object.freeze({telegraph:.55,activeDuration:1.1,retractDuration:1.8});
 // Visuals and collision share this clock. phase is a time offset in seconds;
 // the entire retracted interval is harmless, including the brass floor plate.
@@ -484,7 +526,7 @@ export function updateFairytalePhysics(track, ball, elapsed, dt, onEvent = () =>
     const pos = fairytalePropPosition(prop, elapsed);
     if (Math.hypot(ball.x - pos.x, ball.z - pos.z) > (prop.r || 1.2) + ball.r * 0.4
       || Math.abs(ball.y - ball.r - prop.y) > 1.0) continue;
-    if (['toaster','willow_branch'].includes(prop.type) || (['wind_cloud','spellbook_bridge'].includes(prop.type) && (prop.target || prop.vy))) {
+    if (['toaster','willow_branch','steam_vent'].includes(prop.type) || (['wind_cloud','spellbook_bridge'].includes(prop.type) && (prop.target || prop.vy))) {
       if (prop.type === 'spellbook_bridge' && !ball.grounded) continue;
       if (ball.vy > 2) continue;
       // Start launches at their authored takeoff, preserving exact target reachability.

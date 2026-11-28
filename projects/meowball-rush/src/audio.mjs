@@ -207,6 +207,12 @@ class MeowAudio {
     [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => this.bell(f, 0.24, 0.09, i * 0.032));
   }
 
+  playWarp() {
+    this.tone(170, 1500, .38, 'sine', .14);
+    this.noiseBurst(.3, .055, 3200, true);
+    [659.25, 987.77, 1318.51, 1975.53].forEach((f, i) => this.bell(f, .45, .095, i * .055));
+  }
+
   playBoing() {
     this.tone(190, 620, 0.22, "sine", 0.24);
     this.bell(880, 0.24, 0.08, 0.06);

@@ -27,9 +27,22 @@ export function createDirector(yaw = 0) {
 export function triggerSetpiece(director, duration = 1.2) {
   director.setpieceTime = clamp(duration, 0.9, 1.5);
 }
+export function alignDirectorToWarp(d, ball, yaw, duration = .45) {
+  d.yaw = angle(yaw);
+  d.focus = { x: ball.x, y: ball.y, z: ball.z };
+  d.pose = null;
+  d.warpHold = duration;
+  d.warpYaw = d.yaw;
+  d.manualHold = 0;
+  d.followTurnTime = 0; d.followTurnSign = 0;
+  d.chuteExit = null; d.wasChuteRide = false; d.setpieceTime = 0;
+  d.distance = Math.max(MIN_DISTANCE, d.distance);
+}
 export function updateDirector(d, { ball: b, track, dt, elapsed = 0, manualDelta = 0,
   pitchDelta = 0, zoomDelta = 0, orbitHeld = false, aspect = 1.6,
   lateralInput = 0, forwardInput = 0 }) {
+  const warping = d.warpHold > 0;
+  if (warping) { d.yaw = d.warpYaw; d.warpHold = Math.max(0, d.warpHold - dt); }
   const zone = (track.cameraZones || []).find(z => z.type === 'orbit'
     && Math.hypot(b.x - z.x, b.z - z.z) <= (z.r || 5)
     && b.y >= (z.minY ?? z.y - 2) && b.y <= (z.maxY ?? z.y + 6));
@@ -64,7 +77,7 @@ export function updateDirector(d, { ball: b, track, dt, elapsed = 0, manualDelta
   // Ordinary/manual mode can then resume without either violating its minimum
   // or forcing an instantaneous 2.2m outward jump on release.
   d.mode = riding || d.chuteExit || d.distance < MIN_DISTANCE ? CAMERA_MODES.LOCKED_CHUTE : freeMode;
-  const locked = riding || !!d.chuteExit || freeMode === CAMERA_MODES.LOCKED_SETPIECE;
+  const locked = warping || riding || !!d.chuteExit || freeMode === CAMERA_MODES.LOCKED_SETPIECE;
   if (previousMode !== d.mode) {
     d.followTurnTime = 0;
     d.followTurnSign = 0;

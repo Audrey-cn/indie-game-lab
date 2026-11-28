@@ -1,6 +1,6 @@
 // v3 blueprint scenery. All navigable surfaces use the exact authored floor points.
 import * as THREE from 'three';
-import { getRouteFrame, getRouteRibbonRows, getChuteShellRows, getCompanionChute, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments } from './course-math.mjs';
+import { getRouteFrame, getRouteRibbonRows, getChuteShellRows, getCompanionChute, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments, samplePath, polylineLength } from './course-math.mjs';
 import { routeRibbonGeometry, chuteShellGeometry, routeBodyGeometry, surfaceOverlayGeometry } from './course-geometry.mjs';
 import { nearestSceneryClearance, resolveSceneryPosition } from './scenery-clearance.mjs';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -56,7 +56,7 @@ export const createChuteShellGeometry = chuteShellGeometry;
 const EDGE_COLORS = {
   meadow_hedge:0x73a85d,rug_piping:0x9c6a70,canal_stone:0xc4bba6,
   oak_rail:0x987252,icing_rail:0xf4d4ae,roof_copper:0x9e6b51,
-  cloud_rope:0xe6dacb,frost_rail:0x8dbecb,gilt_books:0xc7a15b,royal_gold:0xcda454,
+  cloud_rope:0xe6dacb,frost_rail:0x8dbecb,gilt_books:0xc7a15b,royal_gold:0xcda454,starlight_ring:0xe9c780,
 };
 const patternTextures = new Map();
 function coursePattern(pattern) {
@@ -71,6 +71,7 @@ function coursePattern(pattern) {
     else if(pattern==='cobblestone')shade=(y%16<2||(x+(Math.floor(y/16)%2)*16)%32<2)?.68:.94+Math.sin(x*.4+y*.7)*.035;
     else if(pattern==='terracotta_tiles')shade=(y%16<2||x%21<2)?.7:((x+y)%13===0?1:.93);
     else if(pattern==='frost_crystals'){const d=Math.abs((x%32)-16)+Math.abs((y%32)-16);shade=(d<2||Math.abs(d-11)<1)?.74:1;}
+    else if(pattern==='cosmic_stars'){const dx=x%32-16,dy=y%32-16,star=Math.abs(dx)*.6+Math.abs(dy);shade=(Math.abs(dx)<1.8&&Math.abs(dy)<8||Math.abs(dy)<1.8&&Math.abs(dx)<8)?.57:star<7&&star>5?.8:Math.hypot(x%23-6,y%27-8)<1.5?.63:1;}
     else if(pattern==='constellation_pages')shade=(y%12===0&&x>8&&x<55)?.78:((x%31===8&&y%29===6)?.6:1);
     else if(pattern==='cloud_stars'||pattern==='royal_stars'){const dx=x%32-16,dy=y%32-16;shade=(Math.abs(dx)<2&&Math.abs(dy)<9||Math.abs(dy)<2&&Math.abs(dx)<9)?.64:1;if(pattern==='royal_stars'&&(x<3||x>60||y%32<2))shade=.8;}
     else if(pattern==='flower_petals'){const dx=x%32-16,dy=y%32-16;shade=(Math.hypot(dx,dy)<3||Math.abs(Math.hypot(dx,dy)-7)<1)?.72:1;}
@@ -350,6 +351,13 @@ export function createFairytaleProp(def, supportRoute=null) {
     const puff=cloud(g,0,def.variant==='chimney'?2.4:1,0,def.variant==='chimney'?.55:.9,0xfff6fc,true);parts.cloud=puff;
     const gust=new THREE.Group();gust.name='sparkling-cloud-updraft';g.add(gust);parts.gust=gust;
     for(let i=0;i<3;i++){const points=[];for(let k=0;k<=16;k++){const t=k/16,a=t*Math.PI*2+i;points.push({x:Math.cos(a)*(.45+t*.4),y:.2+t*3.5,z:Math.sin(a)*(.45+t*.4)});}lineTube(gust,points,.045,[0xb7eaff,0xffe7ad,0xdeb6ff][i]);}
+  } else if(type==='steam_vent') {
+    const gust=new THREE.Group();gust.name='glowing-tornado-steam-launch';g.add(gust);parts.gust=gust;
+    const height=Math.max(5,(def.target?.y??def.y+10.5)-def.y);
+    for(let j=0;j<4;j++){
+      const ps=Array.from({length:90},(_,i)=>{const t=i/89,a=t*Math.PI*8+j*Math.PI/2,r=.75+t*1.1;return{x:Math.cos(a)*r,y:.2+t*height,z:Math.sin(a)*r};});
+      const steam=lineTube(gust,ps,.10,j%2?0xf7f4df:0xcdf0ef);steam.material=new THREE.MeshBasicMaterial({color:j%2?0xffe8ab:0xd9ffff,transparent:true,opacity:.6,depthWrite:false});
+    }
   } else if(type==='turntable') {
     const pancake=def.variant==='pancake',texture=runeTexture('record');
     const spinner=new THREE.Group();spinner.name='projected-turntable-surface';g.add(spinner);parts.spinner=spinner;
@@ -555,7 +563,7 @@ function finishScenery(track,group) {
   } else if(track.id.includes('living') || track.name.includes('客厅')) {
     ball(g,0xaa75bd,0,-.2,0,2.6,1.3,.18,1,'embroidered-purple-cushion');
     const rim=mesh(g,new THREE.TorusGeometry(2.3,.055,6,32),mat(0xf2d094),0,.04,0);rim.rotation.x=Math.PI/2;rim.scale.x=1.25;
-  } else if(track.name.includes('甜点')) {
+  } else if(track.goalStyle==='strawberry_cake' || track.name.includes('甜点')) {
     for(let i=0;i<3;i++){
       const r=3.6-i*.8;mesh(g,new THREE.CylinderGeometry(r,r,1,24),mat(i%2?0xf9c1bc:0xfff0dd),0,-3+i,0,1,1,1,'strawberry-cake-tier');
       for(let k=0;k<9-i*2;k++){const a=k*Math.PI*2/(9-i*2);ball(g,0xf16b79,Math.cos(a)*(r-.25),-2.42+i,Math.sin(a)*(r-.25),.25,1,1.3,1);}
@@ -587,11 +595,221 @@ function finishScenery(track,group) {
   return g;
 }
 
+// The v4 worlds use their approved side elevations directly. Large furniture,
+// the hollow oak and skyway foundations are authored structures, rather than
+// roadside props which the generic clearance pass is allowed to relocate.
+function structure(node, deck=false) {
+  node.userData.cameraOcclusionStructure=true;
+  if(deck)node.userData.cameraOcclusionDeck=true;
+  return node;
+}
+function flagshipKitchen(track,parent,dynamic) {
+  const g=addEnvironment(parent,'flagship-kitchen-three-tier-corner');
+  structure(g);
+  g.userData.blueprint=track.blueprint;g.userData.tiers=[24,12,1.5];
+  const anchor=track.worldAnchors?.table||{x:0,y:12,z:0,w:36,d:26};
+  const tx=anchor.x,tz=anchor.z,top=anchor.y??12,tw=anchor.w??36,td=anchor.d??26;
+  const floor=track.fallZones?.find(z=>z.fallback)?.y??0;
+  const footprint=boundsOf(allFloorPoints(track),5),minX=Math.min(-33,footprint.minX),maxX=Math.max(36,footprint.maxX),minZ=Math.min(-35,footprint.minZ),maxZ=Math.max(31,footprint.maxZ);
+  const roomW=maxX-minX,roomD=maxZ-minZ,roomX=(minX+maxX)/2,roomZ=(minZ+maxZ)/2;
+  box(g,0xe9d2ad,roomX,floor-.35,roomZ,roomW,.7,roomD,'room-floor');
+  for(let i=-5;i<=5;i++){
+    box(g,0xc8b48f,roomX+i*6,floor+.008,roomZ,.045,.012,roomD,'kitchen-tile-grout');
+    box(g,0xc8b48f,roomX,floor+.01,roomZ+i*6,roomW,.012,.045,'kitchen-tile-grout');
+  }
+  structure(roomPanel(g,0xf0dfbd,roomX,15,-33,roomW,32,0,'sunlit-room-wall'));
+  structure(roomPanel(g,0xd8c09e,minX,15,roomZ,roomD,32,Math.PI/2,'sunlit-room-side-wall'));
+  structure(roomPanel(g,0xb5e4e6,17,20,-32.9,11,14,0,'sunlit-window'));
+  for(const x of [11.3,17,22.7])box(g,0xffedc5,x,20,-32.78,.22,14.4,.12);
+  for(const y of [12.8,20,27.2])box(g,0xffedc5,17,y,-32.77,11.6,.22,.12);
+  // One giant dining table: its continuous solid underside sits more than
+  // nine metres above the lower route and fades throughout under-table play.
+  const table=new THREE.Group();table.name='giant-dining-table';g.add(table);
+  const tabletop=structure(box(table,0xbf8b52,tx,top-.36,tz,tw,.72,td,'giant-dining-tabletop'),true);
+  tabletop.userData.tabletopElevation=top;
+  for(const side of[-1,1]){
+    structure(box(table,0x95653c,tx,top-1.1,tz+side*(td/2-.55),tw-.6,.9,.65,'dining-table-underdeck-apron'),true);
+    for(const x of[-1,1]){
+      const lx=tx+x*(tw/2-2),lz=tz+side*(td/2-2),h=top-floor-.7;
+      structure(mesh(table,new THREE.CylinderGeometry(.52,.7,h,10),mat(0x98683e),lx,floor+h/2,lz,1,1,1,'giant-table-leg'));
+      for(const y of [floor+.5,top-2.0])structure(mesh(table,new THREE.TorusGeometry(.65,.10,6,16),mat(0xc2935c),lx,y,lz).rotateX(Math.PI/2));
+    }
+  }
+  for(const side of[-1,1]){
+    const chair=new THREE.Group();chair.name='giant-kitchen-chair';chair.position.set(side*22,0,0);g.add(chair);
+    structure(box(chair,0xa7784a,0,6.3,0,6,.6,7),true);
+    for(const x of[-2.4,2.4])for(const z of[-2.8,2.8])structure(box(chair,0x8f633d,x,3.1,z,.5,6.2,.5));
+    for(const z of[-2.8,2.8])structure(box(chair,0xbc925f,0,3.7,z,5.2,.35,.35,'chair-crossbar'));
+    structure(box(chair,0xb58753,side*2.5,9.3,0,.6,6,7));
+  }
+  const start=track.start;
+  const cabinet=new THREE.Group();cabinet.name='high-wall-cabinet';g.add(cabinet);
+  const cx=Math.max(-20,Math.min(8,start.x)),cz=Math.min(-25,start.z-4);
+  structure(box(cabinet,0x9e6e41,cx,25.2,cz,19,8,5));
+  for(const x of[-6,0,6]){
+    structure(box(cabinet,0xc6975b,cx+x,25.5,cz+2.6,5.6,6.2,.28));
+    ball(cabinet,0xe0b96e,cx+x+1.8,25.5,cz+2.85,.15);
+  }
+  structure(box(cabinet,0xc99b62,cx,23.55,cz+5,22,.7,5.5,'high-cabinet-start-shelf'),true);
+  for(let i=0;i<8;i++){
+    const jar=new THREE.Group();jar.name='shelf-spice-jar';jar.position.set(cx-9+i*2.4,24,cz+3.5);g.add(jar);
+    mesh(jar,new THREE.CylinderGeometry(.45,.45,1.65,12),new THREE.MeshToonMaterial({color:[0xd1ac64,0xa7bd79,0xc78d87][i%3],transparent:true,opacity:.8}),0,.9,0);
+    mesh(jar,new THREE.CylinderGeometry(.5,.5,.19,12),mat(0x9b754c),0,1.8,0);box(jar,0xffedc7,0,.9,.46,.6,.5,.025);
+  }
+  for(const route of track.routes.filter(r=>r.points.every(p=>Math.abs(p.y-12)<.1)&&/counter/.test(r.id+' '+r.section))){
+    const support=structure(mesh(g,createRouteRibbonGeometry({...route,width:route.width+1.1}),mat(0xe5c698),0,-.26,0,1,1,1,'sunlit-kitchen-counter'),true);support.material.side=THREE.DoubleSide;
+    for(const p of [route.points[0],route.points.at(-1)])structure(box(g,0xe4cfac,p.x,6,p.z,route.width+1.0,11.3,3.5,'counter-cupboard'));
+  }
+  const sink=track.worldAnchors?.sink||{x:5,y:12,z:-22};
+  structure(box(g,0xe1d5bd,sink.x,sink.y-.45,sink.z,9,.7,6),true);
+  const basin=mesh(g,new THREE.BoxGeometry(6,.4,3.7),new THREE.MeshToonMaterial({color:0x91c8d1,transparent:true,opacity:.52,depthWrite:false}),sink.x,sink.y-.12,sink.z);basin.name='kitchen-sink-water';
+  const tap=mesh(g,new THREE.TorusGeometry(.8,.13,8,20,Math.PI),mat(0xd1d4c0),sink.x,sink.y+1,sink.z-2);tap.rotation.y=Math.PI/2;
+  rod(g,{x:sink.x,y:sink.y,z:sink.z-2},{x:sink.x,y:sink.y+1,z:sink.z-2},.13,0xd1d4c0);
+  for(const [x,z,r]of[[-13,4,2.5],[8,-7,2.2],[12,7,1.6]]){
+    const tin=new THREE.Group();tin.name='floor-cookie-tin';tin.position.set(x,1.5,z);g.add(tin);
+    structure(mesh(tin,new THREE.CylinderGeometry(r,r,1.3,18),mat(0x8fa28e),0,.65,0));
+    structure(mesh(tin,new THREE.CylinderGeometry(r+.1,r+.1,.16,18),mat(0xc9b67c),0,1.36,0));
+    for(let i=0;i<8;i++){const a=i*Math.PI/4;ball(tin,0xf1d8a0,Math.cos(a)*r,.7,Math.sin(a)*r,.16);}
+  }
+  dynamic.flagshipStructures={table:tabletop,tiers:[24,12,1.5]};
+}
+function flagshipOak(track,parent,dynamic) {
+  const g=addEnvironment(parent,'flagship-ancient-oak-waterfall-valley');
+  structure(g);
+  g.userData.blueprint=track.blueprint;g.userData.tiers=[36,18,2];g.userData.oakHeight=42;
+  const ground=track.fallZones?.find(z=>z.fallback),b=boundsOf(allFloorPoints(track),9);
+  catchTerrain(track,g,b,ground?.y??0,0x81af64,'grounded-terrain',ground);
+  const s=track.start;
+  const houseGroup=new THREE.Group();houseGroup.name='canopy-treehouse';houseGroup.position.set(s.x-5,36,s.z-5);g.add(houseGroup);
+  structure(box(houseGroup,0xbc935d,0,1.8,0,7,3.6,6));
+  const roof=structure(mesh(houseGroup,new THREE.ConeGeometry(5.5,3.2,4),mat(0x83915b),0,4.4,0));roof.rotation.y=Math.PI/4;
+  box(houseGroup,0xefd69d,1.8,2.6,3.04,1.4,1.8,.1);box(houseGroup,0x76563c,-1,1.7,3.06,1.5,3.4,.12);
+  for(const route of track.routes.filter(r=>/branch|canopy/.test(r.id+' '+r.section))){
+    const branch=structure(lineTube(g,route.points.map(p=>({...p,y:p.y-1.1})),1.2,0x9a794a));branch.name='sweeping-ancient-oak-branch';
+  }
+  for(let i=0;i<9;i++){
+    const a=i*Math.PI*2/9;
+    const root=structure(lineTube(g,[{x:Math.cos(a)*8,y:8,z:Math.sin(a)*8},{x:Math.cos(a)*11,y:2.3,z:Math.sin(a)*11},{x:Math.cos(a)*16,y:.8,z:Math.sin(a)*16}],.9,0x927142));root.name='ancient-oak-buttress-root';
+  }
+  const waterfall=track.worldAnchors?.waterfall||{x:27,y:26,z:6};
+  const curtain=new THREE.Group();curtain.name='rushing-valley-waterfall';g.add(curtain);
+  for(let i=0;i<7;i++){
+    const ribbon=mesh(curtain,new THREE.PlaneGeometry(.7,25,1,12),new THREE.MeshToonMaterial({color:i%2?0x8cdbdf:0xb5f0ec,transparent:true,opacity:.68,side:THREE.DoubleSide,emissive:0x6bbcd2,emissiveIntensity:.15,depthWrite:false}),waterfall.x+(i-3)*.8,14,waterfall.z+Math.sin(i)*.2);
+    ribbon.name='waterfall-stream-ribbon';ribbon.userData.cameraOcclusionStructure=true;
+  }
+  for(let i=0;i<12;i++)ball(curtain,0xe8ffff,waterfall.x+Math.cos(i*2.4)*3.8,1+Math.sin(i)*.2,waterfall.z+Math.sin(i*2.4)*1.5,.5,1,.3,1);
+  for(let i=0;i<15;i++){
+    const a=i*2.399,x=Math.cos(a)*(25+i%3*3),z=Math.sin(a)*26;
+    structure(ball(g,0x9aa88b,x,1.4,z,2.1,1.2,.75,1,'mossy-valley-boulder'));
+    ball(g,0x86b35d,x-.3,2.8,z,.95,1.2,.3,1);
+    if(i%2===0){const t=tree(g,x,1,z,.8);t.userData.decorativeProp=false;structure(t);}
+  }
+  const bridge=track.routes.find(r=>/vine/.test(r.id+' '+r.section));
+  if(bridge){
+    const data=getRouteRibbonRows(bridge);
+    for(const column of [0,data.columns]){
+      const edge=data.rows.map(row=>({...row[column],y:row[column].y+1.3}));
+      structure(lineTube(g,edge,.07,0x8ca55d));
+      for(let i=0;i<edge.length;i+=Math.max(1,Math.floor(edge.length/14)))rod(g,data.rows[i][column],edge[i],.035,0xb4bd77);
+    }
+  }
+  dynamic.flagshipStructures={oakHeight:42,tiers:[36,18,2],waterfall:curtain};
+}
+function flagshipCosmos(track,parent,dynamic) {
+  const g=addEnvironment(parent,'flagship-pastel-cosmic-starport');
+  structure(g);
+  g.userData.blueprint=track.blueprint;g.userData.tiers=[8,28,16,22];
+  // Foundations follow the plaza footprints and leave the star ring open.
+  for(const p of track.platforms.filter(p=>p.w>=8)){
+    const r=Math.min(p.w,p.d)/2;
+    const island=structure(mesh(g,new THREE.ConeGeometry(r,3.8,16),mat(0xbaa2d6,.12),p.x,p.y-2.5,p.z));island.rotation.x=Math.PI;
+    mesh(g,new THREE.TorusGeometry(r*.82,.09,8,32),mat(0xf1d7a1,.3),p.x,p.y-.8,p.z).rotation.x=Math.PI/2;
+  }
+  const station=track.worldAnchors?.station||{x:24,y:16,z:-8};
+  const depot=new THREE.Group();depot.name='pastel-toy-skyway-station';depot.position.set(station.x+4,16,station.z-5);g.add(depot);
+  structure(box(depot,0xe4c6db,0,1.6,0,5,3.2,4));
+  structure(box(depot,0x9fbbd8,0,3.4,0,5.8,.4,4.8));
+  for(const x of[-1.5,1.5])box(depot,0xffecbd,x,1.9,2.03,.85,1.3,.08);
+  const trainRoute=track.routes.find(r=>/toy_train|skyway/.test(r.section+' '+r.id));
+  if(trainRoute){
+    const train=new THREE.Group();train.name='animated-pastel-toy-train';g.add(train);
+    const wheels=[];
+    for(let carriage=0;carriage<3;carriage++){
+      const car=new THREE.Group();car.position.z=-carriage*2.8;train.add(car);
+      box(car,[0x9dcfc4,0xe8b6c5,0xe8cd8f][carriage],0,.7,0,1.4,.85,2.3);
+      box(car,[0xc6a7d8,0xf5dcc4,0xa7b8df][carriage],0,1.5,-.3,1.45,.7,1.25);
+      box(car,0xf4e5bc,0,1.95,-.3,1.7,.2,1.6);
+      for(const side of[-1,1])for(const z of[-.7,.7]){
+        const wheel=mesh(car,new THREE.CylinderGeometry(.32,.32,.16,12),mat(0xc6a368),side*.78,.3,z);wheel.rotation.z=Math.PI/2;wheels.push(wheel);
+      }
+      if(!carriage)mesh(car,new THREE.CylinderGeometry(.22,.25,.7,10),mat(0xcca2bd),0,1.45,.7);
+    }
+    const path=trainRoute.points.map((p,i)=>{const f=frame(trainRoute.points,i);return{x:p.x+f.nx*(trainRoute.width/2+2.2),y:p.y,z:p.z+f.nz*(trainRoute.width/2+2.2)};});
+    for(const side of [-1,1]){
+      const rail=path.map((p,i)=>{const f=frame(path,i);return{x:p.x+f.nx*.58*side,y:p.y+.07,z:p.z+f.nz*.58*side};});
+      lineTube(g,rail,.045,0xb4997c);
+    }
+    const ties=Math.max(1,Math.floor(path.length/32));
+    for(let i=0;i<path.length;i+=ties){const p=path[i],f=frame(path,i);rod(g,{x:p.x-f.nx*.85,y:p.y-.02,z:p.z-f.nz*.85},{x:p.x+f.nx*.85,y:p.y-.02,z:p.z+f.nz*.85},.10,0xd3b790);}
+    dynamic.toyTrains=[{mesh:train,points:path,length:polylineLength(path),wheels,speed:2.4}];
+    const data=getRouteRibbonRows(trainRoute),stride=Math.max(1,Math.floor(data.rows.length/7));
+    for(let i=0;i<data.rows.length;i+=stride){const p=trainRoute.points[i];for(const side of[-1,1])structure(box(g,0xc3a8bc,p.x+data.frames[i].nx*(trainRoute.width*.5+1)*side,p.y/2-2,p.z+data.frames[i].nz*(trainRoute.width*.5+1)*side,.7,p.y-3,.8,'toy-skyway-viaduct-pier'));}
+  }
+  for(let i=0;i<24;i++){
+    const a=i*2.399,r=39+(i%3)*5,x=Math.cos(a)*r,z=Math.sin(a)*r;
+    const tower=new THREE.Group();tower.name='miniature-cosmic-city-tower';tower.position.set(x,3+(i%4)*2,z);g.add(tower);
+    const h=3+i%4;
+    structure(mesh(tower,new THREE.CylinderGeometry(1.2,1.4,h,12),mat([0xc0aedb,0xb9cfdf,0xe4c5d4][i%3]),0,h/2,0));
+    structure(mesh(tower,new THREE.SphereGeometry(1.4,16,8,0,Math.PI*2,0,Math.PI/2),mat(0xd5bbd9,.15),0,h,0,1,.7,1));
+    for(const y of [h*.3,h*.65])mesh(tower,new THREE.TorusGeometry(1.45,.045,6,20),mat(0xf8dfac,.4),0,y,0).rotation.x=Math.PI/2;
+  }
+  dynamic.flagshipStructures={tiers:[8,28,16,22],station:depot};
+}
+
+function portalLabel(parent,label,color,y) {
+  const canvas=document.createElement('canvas');canvas.width=256;canvas.height=96;
+  const ctx=canvas.getContext('2d');ctx.clearRect(0,0,256,96);ctx.font='bold 52px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff6df';ctx.fillText(label,128,48);
+  const sprite=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(canvas),color,transparent:true,depthWrite:false}));
+  sprite.name='warp-pair-label';sprite.position.y=y;sprite.scale.set(3.6,1.35,1);parent.add(sprite);
+}
+function addWarpPortals(track,parent,dynamic) {
+  dynamic.warpPortals=[];
+  for(const def of track.portals||[]){
+    const pair={def,ends:[],pulse:0};
+    for(const [kind,at]of [['entry',def.entry],['exit',def.exit]]){
+      const r=def.entry.r??1.7,color=def.color;
+      const g=new THREE.Group();g.name=`warp-portal-${def.id}-${kind}`;g.position.set(at.x,at.y+.08,at.z);g.userData.cameraOcclusionIgnore=true;g.userData.portalId=def.id;parent.add(g);
+      const plane=new THREE.Group();plane.name=kind==='entry'?'glowing-warp-pool':'vertical-starlight-ring';g.add(plane);
+      if(kind==='entry')plane.rotation.x=-Math.PI/2;
+      else {plane.position.y=r;plane.rotation.y=at.yaw??0;}
+      const core=mesh(plane,new THREE.CircleGeometry(r*.94,48),new THREE.MeshBasicMaterial({color,transparent:true,opacity:.36,side:THREE.DoubleSide,depthWrite:false}),0,0,0);
+      core.name='swirling-translucent-portal-core';
+      const halo=mesh(plane,new THREE.TorusGeometry(r,.11,8,64),mat(color,.9));halo.name='glowing-portal-halo';
+      const runes=new THREE.Group();runes.name='rotating-portal-rune-halo';plane.add(runes);
+      for(let i=0;i<12;i++){
+        const a=i*Math.PI/6,mark=mesh(runes,new THREE.OctahedronGeometry(.12,0),mat(i%2?0xffeac5:color,.9),Math.cos(a)*r*1.23,Math.sin(a)*r*1.23,.04,1,.6,.35);mark.rotation.z=a;
+      }
+      const spirals=[];
+      for(let j=0;j<3;j++){
+        const points=Array.from({length:44},(_,i)=>{const t=i/43,a=t*Math.PI*3.5+j*Math.PI*2/3;return{x:Math.cos(a)*r*t*.9,y:Math.sin(a)*r*t*.9,z:.05};});
+        const line=lineTube(plane,points,.032,color);line.material=new THREE.MeshBasicMaterial({color,transparent:true,opacity:.65,depthWrite:false});spirals.push(line);
+      }
+      const sparks=new THREE.Group();sparks.name='rising-vortex-sparkles';g.add(sparks);
+      for(let i=0;i<18;i++){const spark=mesh(sparks,new THREE.OctahedronGeometry(.07,0),mat(i%3?color:0xfff3d0,1));spark.userData.seed=i;spark.castShadow=false;}
+      portalLabel(g,kind==='entry'?(def.label||def.id):`${def.id}′`,color,kind==='entry'?3.7:r*2+1);
+      g.traverse(node=>{node.castShadow=false;node.receiveShadow=false;});
+      pair.ends.push({mesh:g,plane,core,halo,runes,spirals,sparks,r});
+    }
+    dynamic.warpPortals.push(pair);
+  }
+}
+
 export function addV3Platform(track,p,parent,materials) {
   const g=new THREE.Group();g.name=`v3-dock-${p.kind}`;g.position.set(p.x,p.y,p.z);parent.add(g);
   const color=p.kind==='ice'?0xbceff4:p.kind==='crystal'?0xbdb3e1:p.kind==='cloud'?0xe9f2ff:p.kind==='wood'?0xd8aa78:p.kind==='brass'?0xe6c57c:track.worldType==='town_street'?0xe7d4b4:track.worldType==='indoor_home'?0xd5aa7c:0x9bd97f;
   const floor=box(g,color,0,-(p.h||.6)/2,0,p.w,p.h||.6,p.d,'receiving-platform-floor');
   floor.material=floor.material.clone();floor.material.polygonOffset=true;floor.material.polygonOffsetFactor=1;floor.material.polygonOffsetUnits=1;
+  if(track.flagship)g.userData.cameraOcclusionDeck=true;
   if(track.worldType==='sky_floating'){
     const r=Math.min(p.w,p.d)*.45;mesh(g,new THREE.ConeGeometry(r,4,7),mat(0xa17c69),0,-2.3,0).rotation.x=Math.PI;
     for(const side of [-1,1])ball(g,0x75bb73,side*p.w*.36,.07,p.d*.32,.55,1,.5,1);
@@ -607,7 +825,9 @@ export function buildV3World(track,group,dynamic,materials) {
   dynamic.routes=[];dynamic.chutes=[];dynamic.fairytaleProps=[];
   for(const route of track.routes||[]){
     const kind=route.kind,material=kind==='book'?mat(0xffedbc,.12):route.section==='terracotta_rooftops'?mat(0xcf805a):kind==='ice'||kind==='ice_bowl'?mat(0xb8eaf1,.13):kind==='wood'?materials.wood:kind==='cloud'?mat(0xd4e7ff,.2):kind==='crystal'||kind==='neon'?mat(0xc4b8e5,.2):kind==='brass'?materials.brass:kind==='mud'?materials.mud:track.worldType==='town_street'?materials.stoneCurb:mat(0xf2dca4);
-    dynamic.routes.push({def:route,mesh:ribbon(group,route,material)});
+    const routeMesh=ribbon(group,route,material);
+    if(track.flagship)routeMesh.userData.cameraOcclusionDeck=true;
+    dynamic.routes.push({def:route,mesh:routeMesh});
     if(kind==='book') {
       const a=route.points[0],b=route.points.at(-1),p=route.points[Math.floor(route.points.length/2)];
       const pad=book(group,p.x,Math.min(...route.points.map(q=>q.y))-.9,p.z,route.width+.12,Math.hypot(b.x-a.x,b.z-a.z),.32,0x9c78bd);
@@ -617,6 +837,7 @@ export function buildV3World(track,group,dynamic,materials) {
       const honey=route.slowZone.kind==='honey';
       const pool=mesh(group,surfaceOverlayGeometry(route,{slowZone:'sticky'}),overlayMaterial(honey?0xd79737:0x906444,coursePattern(honey?'viscous_honey':'viscous_mud'),.88),0,0,0,1,1,1,'viscous-ground-overlay');pool.userData.supportRoute=route;
       const dry=mesh(group,surfaceOverlayGeometry(route,{slowZone:'dry'}),overlayMaterial(honey?0xffe4b5:0xd9d7aa,coursePattern('wood_grain')),0,0,0,1,1,1,'dry-skill-line');dry.userData.supportRoute=route;
+      if(track.flagship)for(const overlay of [pool,dry]){overlay.userData.cameraOcclusionDeck=true;overlay.userData.route=route;}
       dynamic.slowZones??=[];dynamic.slowZones.push({def:route.slowZone,route,pool,dry});
     }else if(['honey','mud'].includes(route.kind)){
       const pool=mesh(group,surfaceOverlayGeometry(route),overlayMaterial(route.kind==='honey'?0xffc861:0xb18b68,coursePattern(route.kind==='honey'?'viscous_honey':'viscous_mud'),.34),0,0,0,1,1,1,'viscous-ground-overlay');pool.userData.supportRoute=route;
@@ -634,6 +855,11 @@ export function buildV3World(track,group,dynamic,materials) {
       geo.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));
     }
     const shell=mesh(chuteGroup,geo,material,0,0,0,1,1,1,'chute-half-pipe-shell');shell.castShadow=false;
+    if(track.flagship && def.material==='oak'){shell.userData.cameraOcclusionDeck=true;shell.userData.route=def;}
+    if(track.flagship==='A' && def.material==='honey'){
+      const curve=new THREE.CatmullRomCurve3(def.points.map(p=>new THREE.Vector3(p.x,p.y+def.width*.35,p.z)),false,'centripetal');
+      const glass=mesh(chuteGroup,new THREE.TubeGeometry(curve,def.points.length*2,def.width*.52,12,false),new THREE.MeshToonMaterial({color:0xffc96a,emissive:0xffb641,emissiveIntensity:.3,transparent:true,opacity:.14,side:THREE.DoubleSide,depthWrite:false}),0,0,0,1,1,1,'amber-honey-glass-tube');glass.castShadow=false;
+    }
     if(def.doubleHelix){
       const companion=getCompanionChute(def),companionGeometry=createChuteShellGeometry(companion);
       const cp=companionGeometry.attributes.position,colors=[];
@@ -653,8 +879,10 @@ export function buildV3World(track,group,dynamic,materials) {
     // Grounded oak chute has a hollow bark trunk, its front cut away to reveal the helix.
     if(def.material==='oak'){
       const b=boundsOf(def.points),cx=def.center?.x??(b.minX+b.maxX)/2,cz=def.center?.z??(b.minZ+b.maxZ)/2,r=((def.radius||Math.max((b.maxX-b.minX)/2,(b.maxZ-b.minZ)/2))+def.width*.5+1.15)/.92;
-      mesh(chuteGroup,new THREE.CylinderGeometry(r*.92,r,b.maxY-b.minY+5,18,1,true,.1,Math.PI*1.45),mat(0x956440),cx,(b.maxY+b.minY)/2,cz,1,1,1,'hollow-giant-oak-trunk');
-      for(let i=0;i<5;i++){const a=i*Math.PI*.4;const canopy=ball(chuteGroup,0x83bb6c,cx+Math.cos(a)*r*.5,b.maxY+r*.35+1.5,cz+Math.sin(a)*r*.5,r*.7,1,.5,1);canopy.name='oak-canopy-leaf-cluster';}
+      const flagship=track.flagship==='B',height=flagship?42:b.maxY-b.minY+5;
+      const trunk=mesh(chuteGroup,new THREE.CylinderGeometry(r*.92,r,height,24,1,true,.1,Math.PI*1.45),mat(0x956440),cx,flagship?21:(b.maxY+b.minY)/2,cz,1,1,1,'hollow-giant-oak-trunk');
+      trunk.userData.ancientOakHeight=flagship?42:height;
+      for(let i=0;i<5;i++){const a=i*Math.PI*.4;const canopy=ball(chuteGroup,[0x83bb6c,0x96c979,0x75ac63][i%3],cx+Math.cos(a)*r*.7,flagship?40:b.maxY+r*.35+1.5,cz+Math.sin(a)*r*.7,flagship?10:r*.7,1,flagship?.2:.5,1);canopy.name='oak-canopy-leaf-cluster';}
     }
     if(def.material==='rainbow'&&def.turns>=2){
       const accents=def.points.map((p,i)=>{const f=frame(def.points,i);return{x:p.x-f.nx*(def.width*.75),y:p.y+def.width*.75,z:p.z-f.nz*def.width*.75};});lineTube(chuteGroup,accents,.13,0xffe499);
@@ -662,7 +890,10 @@ export function buildV3World(track,group,dynamic,materials) {
     dynamic.chutes.push({def,mesh:chuteGroup,rings,chevrons});
   }
   for(const def of track.props||[]){const prop=createFairytaleProp(def,surfaceSupport(track,def)?.route);group.add(prop.mesh);dynamic.fairytaleProps.push(prop);}
-  if(track.worldType==='grounded_nature')groundedWorld(track,group);
+  if(track.flagship==='A')flagshipKitchen(track,group,dynamic);
+  else if(track.flagship==='B')flagshipOak(track,group,dynamic);
+  else if(track.flagship==='C')flagshipCosmos(track,group,dynamic);
+  else if(track.worldType==='grounded_nature')groundedWorld(track,group);
   else if(track.worldType==='indoor_home')indoorWorld(track,group,track.name.includes('厨房'));
   else if(track.worldType==='town_street')townWorld(track,group,null,track.name.includes('钟楼'));
   else if(track.worldType==='sky_floating')cloudSea(track,group,dynamic);
@@ -678,6 +909,7 @@ export function buildV3World(track,group,dynamic,materials) {
   addFallEnvironment(track,group);
   addActLandmarks(track,group,dynamic);
   enforceSceneryClearance(track,group,dynamic);
+  addWarpPortals(track,group,dynamic);
   addDiegeticBorders(track,group,dynamic);
   addDioramaBackdrops(track,group,dynamic);
   const structures=new Set(['sunlit-room-wall','sunlit-room-side-wall','sunlit-window','giant-furniture-table','kitchen-cabinet','giant-purple-armchair','tall-magical-bookshelf','golden-telescope','half-timbered-house','gilded-clocktower','hollow-giant-oak-trunk','oak-canopy-leaf-cluster','storybook-tree','snowy-pine','winter-fireplace','starry-observatory-dome','observatory-goal-dome']);
@@ -693,7 +925,8 @@ function addActLandmarks(track,parent,dynamic) {
   const signatures=['flower-windmill','cushion-spool','bakery-sign','pasture-acorn','sugar-cake','copper-clock','cloud-shrine','aurora-veil','stellar-astrolabe','festival-crown'];
   dynamic.landmarkSpinners=[];
   for(const act of (track.acts||[]).slice(1)){
-    const route=track.routes.find(r=>act.routeIds.includes(r.id));if(!route)continue;
+    const route=track.routes.find(r=>act.routeIds.includes(r.id))
+      ||track.chutes.find(c=>act.pathIds?.includes(c.id));if(!route)continue;
     const p=route.points[0],f=frame(route.points,0),side=act.role==='microcontrol'?-1:1;
     const g=new THREE.Group();g.name=`signature-${signatures[track.index]}-${act.id}`;g.userData.stageSignature=signatures[track.index];g.userData.decorativeProp=true;g.userData.motionRadius=.3;
     g.position.set(p.x+f.nx*(route.width/2+6)*side,p.y-1,p.z+f.nz*(route.width/2+6)*side);parent.add(g);
@@ -997,6 +1230,28 @@ function addFallEnvironment(track,group) {
 }
 
 export function animateFairytaleScenery(dynamic,elapsed,dt) {
+  for(const pair of dynamic.warpPortals||[]){
+    pair.pulse=Math.max(0,pair.pulse-dt*2.2);
+    for(const end of pair.ends){
+      end.runes.rotation.z=elapsed*.48;
+      end.core.material.opacity=.32+Math.sin(elapsed*2.4)*.06+pair.pulse*.22;
+      end.halo.material.emissiveIntensity=.7+Math.sin(elapsed*3)*.16+pair.pulse;
+      end.spirals.forEach((line,i)=>line.rotation.z=elapsed*(i%2?-.8:1.05)+i*Math.PI*.5);
+      for(const spark of end.sparks.children){
+        const seed=spark.userData.seed,t=(elapsed*.4+seed/18)%1,a=seed*2.399+elapsed*1.8;
+        spark.position.set(Math.cos(a)*end.r*(1-t*.65),.18+t*3.8,Math.sin(a)*end.r*(1-t*.65));
+        spark.scale.setScalar(Math.sin(Math.PI*t)*(.8+pair.pulse));
+      }
+    }
+  }
+  for(const train of dynamic.toyTrains||[]){
+    // Oscillate along the separate toy rails, leaving the player's bridge free.
+    const phase=elapsed*2*train.speed/train.length+Math.PI/2;
+    const distance=(.5-.5*Math.cos(phase))*train.length;
+    const p=samplePath(train.points,distance);train.mesh.position.set(p.x,p.y,p.z);
+    train.mesh.rotation.y=Math.atan2(p.tx,p.tz)+(Math.sin(phase)<0?Math.PI:0);
+    for(const wheel of train.wheels)wheel.rotation.x=distance/.32;
+  }
   for(const entry of dynamic.checkpoints||[]){
     entry.pulse=Math.max(0,entry.pulse-dt*1.6);
     if(entry.active){entry.crystalMaterial.color.setHex(0xffd36f);entry.crystalMaterial.emissive.setHex(0xffc34c);entry.crystalMaterial.emissiveIntensity=.55+entry.pulse*.8;entry.rune.material.color.setHex(0xffd984);entry.trimMaterial.color.setHex(0xe8c382);}

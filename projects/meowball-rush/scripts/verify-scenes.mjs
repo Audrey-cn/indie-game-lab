@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { createHash } from "node:crypto";
 import { getRouteRibbonRows, getChuteShellRows, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments } from "../src/course-math.mjs";
 import { nearestSceneryClearance } from "../src/scenery-clearance.mjs";
-import { collideRouteGuardrails } from "../src/course-runtime.mjs";
+import { collideRouteGuardrails, sampleRollingRouteSurface, isSurfaceInContactWindow, resolveSphereFloorContact } from "../src/course-runtime.mjs";
 import { animateSpikeTraps } from '../src/spike-traps.mjs';
 import { verifyRibbonMesh, verifyMeshCheckerFixtures, verifyMeshPairSeparation } from "./mesh-checks.mjs";
 import "./verify-fall-feedback.mjs";
@@ -13,6 +13,7 @@ import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleSc
 import { boostRibbonGeometry } from "../src/course-geometry.mjs";
 import { createDirector, updateDirector, triggerSetpiece } from "../src/director.mjs";
 import { createCameraOcclusion, isCameraOccluder } from "../src/camera-occlusion.mjs";
+import { capturePortal } from '../src/portal-runtime.mjs';
 import { createCameraSightline } from "../src/camera-sightline.mjs";
 import { verifyCameraOcclusion } from "./verify-camera-occlusion.mjs";
 import { verifyMushroomContact } from "./verify-mushroom-contact.mjs";
@@ -36,6 +37,31 @@ const close = (actual, expected, label, tolerance = 0.00001) => {
 
 const results = [];
 await verifyCameraOcclusion();
+// An upper deck must fade even when a low under-table camera ray never hits
+// its top. The lower supporting floor must retain its exact material.
+function verifyStackedDeckCutaway(){
+  let samples=0;
+  for(const hz of [120,60,25]){
+    const root=new THREE.Group(),material=new THREE.MeshBasicMaterial({color:0xa47a4e});
+    const lower=new THREE.Mesh(new THREE.BoxGeometry(12,.6,12),material),upper=new THREE.Mesh(new THREE.BoxGeometry(12,.6,12),material);
+    lower.position.y=1.2;upper.position.y=11.7;lower.userData.cameraOcclusionDeck=true;upper.userData.cameraOcclusionDeck=true;root.add(lower,upper);
+    const ball={x:0,y:2.12,z:0,r:.62},pose={x:0,y:5,z:10},safety=createCameraOcclusion(root),dt=1/hz;
+    assert(isCameraOccluder(upper,root),'stacked upper deck cannot participate in fade');
+    safety.update(ball,pose,dt);assert(upper.material.opacity<1&&upper.material.opacity>.16,'upper deck does not ease on underpass');
+    for(let frame=0;frame<hz;frame++){safety.update(ball,pose,dt);samples++;}
+    close(upper.material.opacity,.16,'upper deck cutaway opacity',.001);assert(!upper.material.depthWrite&&upper.material.transparent);
+    assert.equal(lower.material,material,'supporting floor faded with upper deck');
+    safety.reset();ball.y=11.59;
+    for(let frame=0;frame<hz;frame++)safety.update(ball,{x:0,y:13.38,z:10},dt);
+    close(upper.material.opacity,.16,'shallow intersecting upper deck cutaway opacity',.001);
+    assert.equal(lower.material,material,'lower supporting deck faded during shallow cutaway');
+    ball.x=30;safety.update(ball,{x:30,y:5,z:10},dt);assert(upper.material.opacity>.16&&upper.material.opacity<1,'upper deck restores abruptly');
+    for(let frame=0;frame<hz*3;frame++)safety.update(ball,{x:30,y:5,z:10},dt);
+    assert.equal(upper.material,material,'upper deck did not restore original material');safety.dispose();lower.geometry.dispose();upper.geometry.dispose();material.dispose();
+  }
+  console.log(`Passed stacked-tier under-deck cutaway at 120/60/25Hz (${samples} settling frames).`);
+}
+verifyStackedDeckCutaway();
 let cameraSamples = 0, cameraRays = 0, cameraPaths = 0, cameraContainmentChecks = 0, rigidSightIntersections = 0;
 const cameraFailures = [];
 const sightRay = new THREE.Raycaster(), eye = new THREE.Vector3(), focus = new THREE.Vector3();
@@ -113,7 +139,17 @@ function verifyCameraScene(track,group,dynamicMeshes) {
       // a resting path fixture cannot remain embedded inside an opaque hammer.
       if(!ball.chuteRide&&!ball.launchAssist){
         const dx=ball.x-hammer.worldHead.x,dy=ball.y-hammer.worldHead.y,dz=ball.z-hammer.worldHead.z,d=Math.hypot(dx,dy,dz),hit=.62+.92;
-        if(d<hit){const inverse=1/(d||.001);ball.x=hammer.worldHead.x+dx*inverse*(hit+.08);ball.y=hammer.worldHead.y+dy*inverse*(hit+.08);ball.z=hammer.worldHead.z+dz*inverse*(hit+.08);ball.grounded=false;ball.supportRoute=null;ball.supportPlatform=null;}
+        if(d<hit){ball.previousBottom=ball.y-ball.r;const inverse=1/(d||.001);ball.x=hammer.worldHead.x+dx*inverse*(hit+.08);ball.y=hammer.worldHead.y+dy*inverse*(hit+.08);ball.z=hammer.worldHead.z+dz*inverse*(hit+.08);ball.grounded=false;ball.supportRoute=null;ball.supportPlatform=null;
+          resolveSphereFloorContact(ball,hammer.worldHead,hit+.08,q=>{
+            let floor=sampleRollingRouteSurface(track.routes,q);
+            for(const platform of track.platforms){
+              if(['ramp','ice_ramp','trough','elevator'].includes(platform.kind))continue;
+              if(Math.abs(q.x-platform.x)>platform.w/2+q.r*.35||Math.abs(q.z-platform.z)>platform.d/2+q.r*.35||!isSurfaceInContactWindow(q,platform.y))continue;
+              if(!floor||platform.y>floor.y)floor={y:platform.y};
+            }
+            return floor;
+          });
+        }
       }
     }
     for(const pin of dynamicMeshes.rollingPins||[]){const offset=Math.sin(elapsed*pin.def.speed+(pin.def.phase||0))*pin.def.ampZ;pin.mesh.position.z=pin.def.z+offset;pin.roller.rotation.x=offset/.48;}
@@ -156,7 +192,8 @@ function verifyCameraScene(track,group,dynamicMeshes) {
       const t=Math.min(def.flightTime,i/60);return{x:def.x+def.vx*t,y:def.y+def.vy*t-13*t*t,z:def.z+def.vz*t};
     }),
   }));
-  const paths=[...track.routes,...track.chutes,...flights],runs=paths.flatMap(path=>(track.chutes.includes(path)||path.ballistic?[0]:[-.32,0,.32]).map(lane=>({paths:[path],lane})));
+  const portalPaths=(track.portals||[]).map(portal=>({id:portal.id,portal,points:[portal.exit]}));
+  const paths=[...track.routes,...track.chutes,...flights,...portalPaths],runs=paths.flatMap(path=>(track.chutes.includes(path)||path.ballistic||path.portal?[0]:[-.32,0,.32]).map(lane=>({paths:[path],lane})));
   // Preserve one director through the actual itinerary as well as testing
   // independent reset/edge approaches. Launch arcs trigger the same setpiece.
   runs.push({lane:0,paths:track.primaryPath.filter(step=>!step.optional).map(step=>paths.find(path=>path.id===step.id||path.sourceId===step.id)).filter(Boolean)});
@@ -168,7 +205,7 @@ function verifyCameraScene(track,group,dynamicMeshes) {
       const p=path.points[i],prev=path.points[Math.max(0,i-1)],f=path.points[Math.min(path.points.length-1,i+1)];
       const dx=f.x-prev.x,dz=f.z-prev.z,length=Math.hypot(dx,dz)||1,tx=dx/length,tz=dz/length;
       const dt=path.ballistic?1/60:Math.max(1/120,Math.hypot(p.x-prev.x,p.y-prev.y,p.z-prev.z)/8);elapsed+=dt;
-      const data=track.chutes.includes(path)||path.ballistic?null:getRouteRibbonRows(path),side=Math.sign(lane);
+      const data=track.chutes.includes(path)||path.ballistic||path.portal?null:getRouteRibbonRows(path),side=Math.sign(lane);
       // Center a full-radius ball just inside either legal edge. Fixed row
       // columns put a narrow-beam ball halfway over its banked guard/skirt.
       const offset=data?side*Math.max(0,(side<0?data.leftWidths[i]:data.rightWidths[i])-.62)*.9:0;
@@ -194,6 +231,7 @@ function verifyCameraScene(track,group,dynamicMeshes) {
       }
       if(track.chutes.includes(path)){ball.chuteRide={};ball.chuteTangent={x:tx,z:tz};}
       if(path.ballistic)ball.launchAssist={};
+      if(path.portal){capturePortal(ball,path.portal,director);close(director.yaw,path.portal.exit.yaw,`${track.id}/${path.id}: arrival camera yaw`,.00001);}
       frame(ball,elapsed);
       const desired=updateDirector(director,{ball,track,dt,elapsed,forwardInput:1});
       const pose=sightline.resolve(ball,desired,dt);
@@ -203,7 +241,7 @@ function verifyCameraScene(track,group,dynamicMeshes) {
       // itself is covered at 120/60/25Hz in verify-camera-occlusion.
       safety.update(ball,pose,.5);
       const blockers=recordSight(group,pose,ball,`${track.id}/${path.id}[${i}] lane ${lane}`);
-      for(const mesh of blockers)if(isCameraOccluder(mesh,group))assert.fail(`${track.id}: scenery safety missed ${hierarchy(mesh)}`);
+      for(const mesh of blockers)if(isCameraOccluder(mesh,group))assert.fail(`${track.id}/${path.id}[${i}] lane ${lane}: scenery safety missed ${hierarchy(mesh)} ball ${JSON.stringify({x:ball.x,y:ball.y,z:ball.z,support:ball.supportRoute?.id})} pose ${JSON.stringify({x:pose.x,y:pose.y,z:pose.z})}`);
     }
     }
   }
@@ -471,7 +509,56 @@ function verifyCheckpointAndOverlays(track,group,dynamic) {
   for(let i=0;i<geometry.attributes.position.count;i++){const p=geometry.attributes.position;close(p.getY(i),2-p.getZ(i)*.2+.05,'boost slope support',.00001);}
   geometry.dispose();
 }
-const expectedWorlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','starlight_library','grand_medley'];
+function verifyFlagshipStructures(track,group,dynamic){
+  if(!track.flagship)return;
+  assert.deepEqual(dynamic.flagshipStructures?.tiers,track.tiers,`${track.id}: rendered tier metadata differs from playable tiers`);
+  if(track.flagship==='A'){
+    const tabletop=group.getObjectByName('giant-dining-tabletop');assert(tabletop,'missing continuous giant dining table');
+    const bounds=new THREE.Box3().setFromObject(tabletop,true);close(bounds.max.y,12,'tabletop upper tier');
+    assert(bounds.min.y-1.5>=9,'table underside clearance is less than nine metres');
+    const under=track.routes.find(r=>r.section.includes('under'));
+    const station=under.points.find(p=>p.x>bounds.min.x+1&&p.x<bounds.max.x-1&&p.z>bounds.min.z+1&&p.z<bounds.max.z-1);
+    assert(station,'lower route never actually enters dining table footprint');
+    const road=group.getObjectByName(`route-${under.id}`),originalRoad=road.material;
+    for(const hz of [120,60,25])for(const yaw of [0,Math.PI/2,Math.PI,-Math.PI/2]){
+      const safety=createCameraOcclusion(group),ball={...station,y:station.y+.62,r:.62,supportRoute:under};
+      const pose={x:ball.x+Math.sin(yaw)*9,y:ball.y+4,z:ball.z+Math.cos(yaw)*9};
+      for(let i=0;i<hz;i++)safety.update(ball,pose,1/hz);
+      close(tabletop.material.opacity,.16,'actual tabletop underpass cutaway',.001);assert.equal(road.material,originalRoad,'under-table supporting road faded');safety.dispose();
+    }
+    assert(group.getObjectByName('chair-crossbar'),'under-table vignette lacks chair crossbars');
+    assert(group.getObjectByName('floor-cookie-tin'),'under-table vignette lacks cookie-tin maze');
+  }
+  if(track.flagship==='B'){
+    const trunks=[];group.traverse(node=>{if(node.name==='hollow-giant-oak-trunk')trunks.push(node);});
+    assert.equal(trunks.length,1,'flagship tree scene must share one ancient trunk');
+    const leaves=[];group.traverse(node=>{if(node.name==='oak-canopy-leaf-cluster')leaves.push(node);});
+    assert.equal(leaves.length,5);const top=Math.max(...leaves.map(node=>new THREE.Box3().setFromObject(node,true).max.y));
+    close(top,42,'actual oak canopy reaches 42 metres',.05);
+    assert(group.getObjectByName('canopy-treehouse'),'ancient oak lacks treetop house');
+    assert(group.getObjectByName('rushing-valley-waterfall'),'valley lacks waterfall curtain');
+  }
+  if(track.flagship==='C'){
+    assert.equal(dynamic.warpPortals?.length,3,'missing three visual paired portals');let portalAnimationTime=1;
+    for(const pair of dynamic.warpPortals){
+      assert(track.portals.includes(pair.def));assert.equal(pair.ends.length,2,'portal pair lacks entry or exit');
+      for(const [index,end] of pair.ends.entries()){
+        assert(isAttached(end.mesh,group));const at=index?pair.def.exit:pair.def.entry;
+        close(end.mesh.position.x,at.x,'portal visual X');close(end.mesh.position.y,at.y+.08,'portal visual Y');close(end.mesh.position.z,at.z,'portal visual Z');
+        assert(end.core.material.transparent&&end.core.material.opacity>.15&&end.core.material.opacity<.8,'portal pool is not translucent');
+        assert.equal(end.core.material.color.getHex(),pair.def.color,'paired portal loses its distinct color');
+        assert(end.halo.material.emissiveIntensity>.2,'portal halo lacks glow');
+        assert(end.runes.children.length>=8&&end.sparks.children.length>=12&&end.spirals.length>=2,'portal lacks runes, rising sparkles or swirl');
+        close(end.plane.rotation.x,index?0:-Math.PI/2,'entry pool / exit ring orientation');
+        const before=end.runes.rotation.z;portalAnimationTime+=.7;animateFairytaleScenery(dynamic,portalAnimationTime,1/60);assert.notEqual(end.runes.rotation.z,before,'portal rune halo does not rotate');
+      }
+    }
+    const train=dynamic.toyTrains?.[0];assert(train&&train.wheels.length>=8,'toy skyway lacks sculpted animated pastel train');
+    animateFairytaleScenery(dynamic,1,1/60);const before=train.mesh.position.clone();animateFairytaleScenery(dynamic,2,1/60);assert(train.mesh.position.distanceTo(before)>1,'toy train remains static');
+  }
+}
+
+const expectedWorlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','cosmic_warp','grand_medley'];
 assert.equal(TRACKS.length, 10, 'v3 needs all ten approved stages');
 const stageArguments=process.argv.filter(arg=>arg.startsWith('--stage=')).map(arg=>Number(arg.slice(8)));
 assert(stageArguments.every(stage=>Number.isInteger(stage)&&stage>=1&&stage<=10),'scene stage must be1..10');
@@ -485,6 +572,7 @@ for (const [stage, track] of TRACKS.entries()) {
   verifyHazardEntries(track, dynamicMeshes);
   verifyCheckpointAndOverlays(track,group,dynamicMeshes);
   group.updateMatrixWorld(true);
+  verifyFlagshipStructures(track,group,dynamicMeshes);
   let meshes = 0, vertices = 0;
   group.traverse((node) => {
     assert.ok(node.matrixWorld.elements.every(Number.isFinite), `${track.id}: invalid transform`);
@@ -669,4 +757,4 @@ console.log(JSON.stringify({cameraSamples,cameraRays,cameraPaths,cameraContainme
 assert.equal(cameraFailures.length,0,`camera LOS: ${JSON.stringify(cameraFailures.slice(0,12))}`);
 console.log(JSON.stringify({checkedBorders,checkedBackdrops,checkedSceneryVertices,checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
 console.table(results);
-console.log(`Passed v3.2 Node structural and geometry checks for ${selectedStages.size} scenes. WebGL visual appearance remains unverified.`);
+console.log(`Passed v4.0 Node structural and geometry checks for ${selectedStages.size} scenes. WebGL visual appearance remains unverified.`);

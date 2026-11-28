@@ -1,10 +1,20 @@
 import * as THREE from 'three';
+import { nearestRouteSurface } from './course-math.mjs';
 
 // Only authored large scenery structures participate. General scenery names,
 // small decorative props and legacy mushroom tags do not imply fade eligibility.
 // Descendants inherit a structure marker so its outlines fade with the surface.
 export function isCameraOccluder(mesh, root) {
   if (!mesh.isMesh) return false;
+  // Flagship decks opt in explicitly. The supporting tier is protected in
+  // update(); the very same geometry becomes a cutaway from a lower tier.
+  let deck = false;
+  for (let node = mesh; node; node = node.parent) {
+    if (node.userData.cameraOcclusionIgnore) return false;
+    if (node.userData.cameraOcclusionDeck) deck = true;
+    if (node === root) break;
+  }
+  if (deck) return true;
   let scenery = false;
   for (let node = mesh; node; node = node.parent) {
     if (node.userData.cameraOcclusionIgnore || node.userData.courseRibbon
@@ -22,7 +32,8 @@ export function createCameraOcclusion(root) {
   const right = new THREE.Vector3(), up = new THREE.Vector3(), point = new THREE.Vector3();
   const sphere = new THREE.Sphere(), bounds = new THREE.Box3(), hits = [];
   const view = new THREE.PerspectiveCamera(), frustum = new THREE.Frustum(), projection = new THREE.Matrix4();
-  const fading = new Map(), blocked = new Set(), candidates = [];
+  const fading = new Map(), blocked = new Set(), candidates = [], supportingGuards = new Set();
+  const deckMeshes = new Map();
   const offsets = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1],
     [.707, .707], [-.707, .707], [.707, -.707], [-.707, -.707]];
   let meshes = [];
@@ -31,12 +42,16 @@ export function createCameraOcclusion(root) {
     return true;
   };
   function refresh() {
-    meshes = [];
+    meshes = []; deckMeshes.clear();
     root.traverse(mesh => {
       if (!isCameraOccluder(mesh, root)) return;
       if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
       if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
       meshes.push(mesh);
+      for (let node = mesh; node; node = node.parent) {
+        if (node.userData.cameraOcclusionDeck) { deckMeshes.set(mesh, node); break; }
+        if (node === root) break;
+      }
     });
   }
   function restore(mesh, entry) {
@@ -55,7 +70,7 @@ export function createCameraOcclusion(root) {
     camera.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
     direction.subVectors(camera, origin);
     const distance = direction.length();
-    blocked.clear(); candidates.length = 0;
+    blocked.clear(); candidates.length = 0; supportingGuards.clear();
     if (distance > .01) {
       direction.divideScalar(distance);
       raycaster.set(origin, direction); raycaster.near = .01; raycaster.far = distance;
@@ -67,20 +82,40 @@ export function createCameraOcclusion(root) {
       frustum.setFromProjectionMatrix(projection.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse));
       // Broad phase uses cached local bounds, so triangle raycasts only touch
       // props near the small view cone surrounding the ball silhouette.
+      const supportCeiling = ball.y - radius + .55;
       for (const mesh of meshes) {
         if (!visible(mesh)) continue;
+        bounds.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
+        const deck = deckMeshes.get(mesh);
+        if (deck) {
+          const route = deck.userData.route;
+          const support = route ? nearestRouteSurface([route], ball.x, ball.z, Infinity) : null;
+          // Never fade the deck the ball is riding, even at a bank or ramp.
+          const supporting = route && route === ball.supportRoute || support && support.y <= supportCeiling;
+          const ownGuard = supporting && (mesh.userData.routeBody || mesh.userData.structuralGuard
+            || mesh.name === 'chute-half-pipe-shell' && ball.chuteRide);
+          if (supporting && !ownGuard || !support && bounds.max.y <= supportCeiling) continue;
+          // A close banked guard may hide the bubble from its own legal edge
+          // station. Cut away just that guard on actual ray contact, while the
+          // supporting ribbon retains its original material and shadows.
+          if (ownGuard) supportingGuards.add(mesh);
+          const overhead = support ? support.y > supportCeiling : bounds.min.y > supportCeiling;
+          // Under-table cutaways are independent of the current camera angle:
+          // the top, underside and bevel remain clear throughout an orbit.
+          if (overhead && ball.x >= bounds.min.x - radius && ball.x <= bounds.max.x + radius
+            && ball.z >= bounds.min.z - radius && ball.z <= bounds.max.z + radius) blocked.add(mesh);
+        }
         sphere.copy(mesh.geometry.boundingSphere).applyMatrix4(mesh.matrixWorld);
         sphere.radius += radius;
         if (!raycaster.ray.intersectsSphere(sphere)
           || origin.distanceTo(sphere.center) - sphere.radius > distance) continue;
         candidates.push(mesh);
-        bounds.copy(mesh.geometry.boundingBox).applyMatrix4(mesh.matrixWorld);
         // Bounds conservatively cover the entire silhouette cone, including
         // thin twigs between rays and closed props enclosing either endpoint.
         // Limited extra fading at a bounding-box corner is preferable to
         // leaving any opaque fragment over the ball between sampled rays.
-        if (frustum.intersectsBox(bounds) || bounds.containsPoint(camera)
-          || bounds.containsPoint(origin)) blocked.add(mesh);
+        if (!supportingGuards.has(mesh) && (frustum.intersectsBox(bounds) || bounds.containsPoint(camera)
+          || bounds.containsPoint(origin))) blocked.add(mesh);
       }
       right.crossVectors(direction, THREE.Object3D.DEFAULT_UP);
       if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
@@ -110,7 +145,7 @@ export function createCameraOcclusion(root) {
     for (const [mesh, entry] of fading) {
       // Both directions ease continuously; a newly crossed wall must not flash
       // transparent in one frame. The camera pose stays entirely with director.
-      const target = blocked.has(mesh) ? .18 : 1;
+      const target = blocked.has(mesh) ? (deckMeshes.has(mesh) ? .16 : .18) : 1;
       entry.factor += (target - entry.factor) * (1 - Math.exp(-(target < 1 ? 10 : 6) * Math.max(0, dt)));
       if (entry.factor > .998) { restore(mesh, entry); continue; }
       entry.materials.forEach((material, i) => {

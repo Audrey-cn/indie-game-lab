@@ -202,8 +202,10 @@ export function getRouteRibbonRows(route) {
 export function getSlowZoneDistanceRows(route) {
   const {rows,columns}=getRouteRibbonRows(route),right=route.slowZone?.drySide===1;
   return rows.map(row=>{
-    const left=row[0],edge=row[columns],width=Math.hypot(edge.x-left.x,edge.z-left.z);
-    return row.map((_,j)=>(right?1-j/columns:j/columns)*width);
+    // Tapered bends can give the two halves different widths. Column index
+    // is not a metric coordinate; measure each rendered vertex from its edge.
+    const edge=row[right?columns:0];
+    return row.map(p=>Math.hypot(p.x-edge.x,p.z-edge.z));
   });
 }
 export function getChuteShellRows(chute) {
@@ -324,6 +326,8 @@ export function nearestRouteSurface(routes, x, z, y = Infinity, contact = null) 
     const v = ((q.b.x - q.a.x) * dz - dx * (q.b.z - q.a.z)) / q.den;
     if (u < -1e-6 || v < -1e-6 || u + v > 1 + 1e-6) continue;
     const floor = q.a.y + q.slopeX * dx + q.slopeZ * dz;
+    if (contact?.verticalWindow && (floor < contact.verticalWindow.min - 1e-6
+      || floor > contact.verticalWindow.max + 1e-6)) continue;
     const bottom = contact?.bottom ?? y - 0.55;
     const crossed = !!contact && contact.previousBottom >= floor - 0.02 && bottom <= floor;
     const following = !!contact?.grounded && contact.supportRoute === route && Math.abs(floor - bottom) < 0.8;
