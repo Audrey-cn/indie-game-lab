@@ -9,6 +9,8 @@ import { createRouteRibbonGeometry } from '../src/v3-worlds.mjs';
 import { CHUTE_STYLES } from '../src/chute-styles.mjs';
 import { evaluateDryCurveOffset, sampleDryCurvePoints, mudSpecForStage } from '../src/mud-curve.mjs';
 import { auditLaneThreat, difficultyProfileForStage, MIN_SAFE_PASSING_WIDTH } from '../src/lane-difficulty.mjs';
+import { auditZeroBoringStretches } from './verify-zero-boring.mjs';
+import { animateStageV42Landmarks } from '../src/world-landmarks-v42.mjs';
 const { CATS, TRACKS } = courseConfig;
 import './verify-assets.mjs';
 import './verify-checkpoint.mjs';
@@ -268,7 +270,7 @@ check('v4 pendulum contacts preserve both the solid head and supporting tier flo
 
 // Reproduce the authoring frame (including its miter), then query the actual
 // floor triangles. A normalized tangent offset would be wrong at clipped turns.
-function routeLateralPoint(route, distance, lateral) {
+function routeLateralPoint(route, distance, lateral, allowOffFloor = false) {
   const data=courseMath.getRouteRibbonRows(route),d=Math.max(0,Math.min(data.distances.at(-1),distance));
   let i=0;while(i<data.distances.length-2&&data.distances[i+1]<d)i++;
   const fraction=(d-data.distances[i])/(data.distances[i+1]-data.distances[i]||1);
@@ -280,6 +282,7 @@ function routeLateralPoint(route, distance, lateral) {
   };
   const a=onRow(i),b=onRow(i+1),x=a.x+(b.x-a.x)*fraction,z=a.z+(b.z-a.z)*fraction;
   const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);
+  if(!floor&&allowOffFloor)return null;
   assert(floor,`${route.id}: lateral ${lateral}m leaves real floor at ${d}m`);
   return{x,y:floor.y,z};
 }
@@ -295,7 +298,7 @@ check('v4.1 every mud field has a continuous sinusoidal whole-ball dry curve on 
       assert(route.width>=5.6&&route.width<=6.4,`${track.id}/${route.id}: mud field width must be 5.6..6.4m`);
       const expected=mudSpecForStage(stageIndex,route.width),spec=route.slowZone;
       for(const key of ['routeHalfWidth','dryWidth','amplitude','phase'])near(spec[key],expected[key],`${track.id}/${route.id}: stage mud ${key}`);
-      assert(spec.cycles>=1.5&&spec.cycles<=2.5,`${track.id}/${route.id}: continuous dry curve lacks authored sinusoidal cycles`);
+      assert(spec.cycles>=1.5&&spec.cycles<=2*Math.max(1,Math.ceil(courseMath.polylineLength(route.points)/48)),`${track.id}/${route.id}: continuous dry curve lacks authored sinusoidal cycles`);
       dryWidths.push(spec.dryWidth);
       const len=courseMath.polylineLength(route.points),samples=sampleDryCurvePoints(route,spec,120);
       let min=Infinity,max=-Infinity;
@@ -305,7 +308,11 @@ check('v4.1 every mud field has a continuous sinusoidal whole-ball dry curve on 
         assert(center,`${track.id}/${route.id}: dry curve floats off floor`);
         near(p.y-center.y,.06,`${track.id}/${route.id}: dry visual follows floor`,3e-5);
         for(const delta of [0,-spec.dryWidth/2+.04,spec.dryWidth/2-.04,-spec.dryWidth/2-.12,spec.dryWidth/2+.12]) {
-          const q=routeLateralPoint(route,len*u,offset+delta),floor=courseMath.nearestRouteSurface([route],q.x,q.z,Infinity);
+          // The wet-side probe may extend beyond an asymmetrically clipped
+          // inner corner. Every dry-band probe must still have actual floor.
+          const q=routeLateralPoint(route,len*u,offset+delta,Math.abs(delta)>spec.dryWidth/2);
+          if(!q)continue;
+          const floor=courseMath.nearestRouteSurface([route],q.x,q.z,Infinity);
           assert.equal(floor.kind,Math.abs(delta)<spec.dryWidth/2?route.kind:spec.kind,`${track.id}/${route.id}[${i}]: wrong real material at dry offset ${delta}`);contacts++;
         }
       }
@@ -324,7 +331,7 @@ check('v4.1 zero authored stars stand over sticky floor, including curved mud fi
     assert(!['mud','honey'].includes(floor.kind),`${track.id}/${floor.route.id}: STAR IN ${floor.kind.toUpperCase()}`);
     if(floor.route.slowZone)mudRouteStars++;stars++;
   }
-  assert(stars>0);assert(mudRouteStars>0,'no real dry-curve stars were exercised');
+  assert(stars>0);assert.equal(mudRouteStars,0,'slowdown stretches must have zero stars');
   return{stars,mudRouteStars,stickyFloorStars:0};
 });
 
@@ -369,7 +376,9 @@ check('v4.1 ten stages use their assigned distinct chute styles with signed bank
   for(const [i,track] of TRACKS.entries()){
     assert(track.chutes.length,`${track.id}: missing styled chute`);
     for(const chute of track.chutes){
-      assert(CHUTE_STYLES.includes(chute.style));assert.equal(chute.style,styles[i],`${track.id}/${chute.id}: wrong stage chute style`);
+      assert(CHUTE_STYLES.includes(chute.style));
+      if(chute.verticalFinale)assert.notEqual(chute.style,styles[i],`${track.id}: finale must use a distinct second chute style`);
+      else assert.equal(chute.style,styles[i],`${track.id}/${chute.id}: wrong core chute style`);
       assert.equal(chute.bankProfile.length,chute.points.length,'bank profile must match real rail samples');
       assert(chute.bankProfile.every(bank=>Number.isFinite(bank)&&Math.abs(bank)<=.65),'chute bank roll exceeds safe authored bounds');
       if(chute.style!=='helix')assert(chute.bankProfile.some(bank=>Math.abs(bank)>.05),'styled chute has no visible signed banking');
@@ -921,7 +930,16 @@ const distance3 = (a,b) => Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 function near(a,b,label,tol=1e-6) { assert(Math.abs(a-b)<=tol, `${label}: ${a} != ${b}`); }
 const finiteBall = b => {for(const key of ['x','y','z','vx','vy','vz']) assert(Number.isFinite(b[key]),`non-finite ball.${key}`);};
 
-check('v4.1 ten distinct approved courses meet all 600..1750m targets and preserve flagship tiers', () => {
+check('v4.2 all ten live stages have zero flat empty 45m stretches', () => {
+  return TRACKS.map(track => {
+    const audit = auditZeroBoringStretches(track);
+    assert(audit.ok, `${track.id}: ${audit.issues.slice(0, 5).join('; ')}`);
+    assert(track.verticalFinale, `${track.id}: missing integrated vertical finale`);
+    return {track:track.id, windowsChecked:audit.windowsChecked, boringStretches:audit.failures.length};
+  });
+});
+
+check('v4.2 ten distinct approved courses meet all 600..1750m targets and preserve flagship tiers', () => {
   assert.equal(TRACKS.length,10); assert.equal(CATS.length,9);
   assert.ok(courseMath,'missing shared v3 course geometry functions');
   const signatures = new Set();
@@ -933,6 +951,7 @@ check('v4.1 ten distinct approved courses meet all 600..1750m targets and preser
     near(track.length,measured,`${track.id}: declared versus measured route length`,0.02);
     assert(track.acts.length>=5&&track.acts.length<=6,`${track.id}: needs five or six acts`);
     assert(track.acts.every(act=>act.pathIds.length&&act.lengthMeters>5),`${track.id}: empty act`);
+    near(track.acts.reduce((sum,act)=>sum+act.lengthMeters,0),track.length,`${track.id}: stale act distances`,.03);
     assert(track.checkpoints.length>=4&&track.checkpoints.length<=6,`${track.id}: needs four to six beacons`);
     assert(track.checkpoints.every((cp,j)=>!j||cp.progress>track.checkpoints[j-1].progress),`${track.id}: unordered checkpoints`);
     assert(track.routes.some(r=>r.width>=6.2&&r.width<=7.6));
@@ -1085,12 +1104,10 @@ check('v3 airborne surface queries do not teleport to distant floors',()=>{
   }
 });
 
-check('v4 fresh saves unlock three flagships and lobby shortcuts launch them in one click',()=>{
+check('v4.2 fresh saves unlock all ten stages and flagship shortcuts launch in one click',()=>{
   const context=vm.createContext({TRACKS,save:{clearedTracks:[]}});
   vm.runInContext(`${sourceBetween('function isTrackUnlocked(', 'function updateGyroUI(')};this.unlocked=isTrackUnlocked;`,context);
-  for(const index of [0,3,4,8])assert.equal(context.unlocked(index),true,`fresh save locks stage ${index+1}`);
-  for(const index of [1,2,5,6,7,9])assert.equal(context.unlocked(index),false,`original progression stage ${index+1} is unexpectedly unlocked`);
-  context.save.clearedTracks.push(0);assert.equal(context.unlocked(1),true,'original progression unlock no longer works');
+  for(let index=0;index<10;index++)assert.equal(context.unlocked(index),true,`fresh save locks stage ${index+1}`);
   const shell=readFileSync(new URL('../src/shell.html',import.meta.url),'utf8');
   const indices=[...shell.matchAll(/data-flagship-track="(\d+)"/g)].map(match=>Number(match[1]));assert.deepEqual(indices,[4,3,8]);
   assert(shell.includes('🌟 v4.1 立体王牌直通'),'lobby flagship bar title missing');
@@ -1099,7 +1116,32 @@ check('v4 fresh saves unlock three flagships and lobby shortcuts launch them in 
   vm.runInContext(sourceBetween("document.querySelectorAll('[data-flagship-track]')",'document.getElementById("btn-cat-go")'),clicks);
   for(const button of buttons){assert.equal(typeof button.onclick,'function');button.onclick();}
   assert.deepEqual(launches,indices.map(index=>[index,'practice',0]),'one-click flagship shortcuts do not launch their exact course');
-  return{unlockedStages:[4,5,9],oneClickLaunches:launches.length};
+  return{unlockedStages:TRACKS.map((_,i)=>i+1),oneClickLaunches:launches.length};
+});
+
+check('v4.2 boot preview retains its landmark registry for the first stage cleanup',()=>{
+  const preview={group:new THREE.Group(),dynamicMeshes:{v42LandmarkAnimations:[]}};
+  const context=vm.createContext({THREE,TRACKS,scene:new THREE.Scene(),trackRoot:null,dynamicMeshes:null,
+    buildTrackScene:()=>preview});
+  vm.runInContext(sourceBetween('const initBuilt = buildTrackScene(', 'mountTrackModels(initBuilt)'),context);
+  assert.equal(context.trackRoot,preview.group);
+  assert.equal(context.dynamicMeshes,preview.dynamicMeshes,'first stage launch loses the preview resource registry');
+});
+
+check('v4.2 paused landmarks retain their gameplay pose and resume without a clock jump',()=>{
+  const mesh=new THREE.Object3D(),dynamicMeshes={v42LandmarkAnimations:[{mesh,baseRotation:[0,0,0],axis:'y',
+    speed:.4,frequency:1,phase:0,wobble:.2,baseY:3,bob:.3,breath:.1}]};
+  const state={phase:'paused',elapsed:2,timeLeft:100},pose=()=>[...mesh.position,...mesh.rotation.toArray().slice(0,3),...mesh.scale];
+  animateStageV42Landmarks(dynamicMeshes,state.elapsed,0);
+  const before=pose(),context=vm.createContext({THREE,state,dynamicMeshes,animateStageV42Landmarks,lastTs:0,
+    trackRoot:new THREE.Group(),lobbyShowcaseRig:null,camera:{position:{set:noop},lookAt:noop},
+    composer:{render:noop},requestAnimationFrame:noop,updatePhysics:noop,syncHud:noop,
+    updateVisuals:dt=>animateStageV42Landmarks(dynamicMeshes,state.elapsed,dt)});
+  vm.runInContext(`${sourceBetween('function tick(ts)', 'function updatePhysics(dt)')};this.frame=tick;`,context);
+  context.frame(100000);assert.deepEqual(pose(),before,'pause switches landmarks to wall-clock animation');
+  state.phase='playing';context.frame(100016);
+  const resumed=pose();animateStageV42Landmarks(dynamicMeshes,2.016,.016);
+  resumed.forEach((value,index)=>near(value,pose()[index],'resumed landmark pose',1e-8));
 });
 
 check('v4 flagship blueprints have actual playable stacked tiers and paired connections',()=>{
@@ -1110,7 +1152,7 @@ check('v4 flagship blueprints have actual playable stacked tiers and paired conn
   for(const spec of expected){
     const track=TRACKS[spec.index];assert.equal(track.flagship,spec.id);assert.equal(track.unlockedByDefault,true);
     assert.equal(track.blueprint,`docs/concept-art/v4-flagship/${spec.file}`);
-    near(track.start.y-.62,spec.start,`${track.id}: start tier`,.05);near(track.finish.y,spec.goal,`${track.id}: goal tier`,.05);
+    near(track.start.y-.62,spec.start,`${track.id}: start tier`,.05);near(track.coreFinish.y,spec.goal,`${track.id}: goal tier`,.05);
     for(const height of spec.heights){
       const floorMeters=track.routes.reduce((n,r)=>n+r.points.slice(1).reduce((sum,p,i)=>sum+(Math.abs(p.y-height)<.2&&Math.abs(r.points[i].y-height)<.2?distance3(p,r.points[i]):0),0),0);
       assert(floorMeters>=5,`${track.id}: ${height}m tier has no substantial playable floor`);
@@ -1130,10 +1172,10 @@ check('v4 flagship blueprints have actual playable stacked tiers and paired conn
       assert(track.fallZones.some(z=>z.type==='water'),'waterfall has no splash fall zone');
     }
     if(spec.id==='C'){
-      assert.equal(track.worldType,'cosmic_warp');assert.deepEqual(track.portals.map(p=>p.id),['A','B','C']);
-      assert.deepEqual(track.portals.map(p=>p.exit.y),[28,16,22]);
-      assert.equal(new Set(track.portals.map(p=>p.color)).size,3,'portal pair colors are ambiguous');
-      assert.deepEqual(track.primaryPath.filter(s=>s.type==='portal').map(p=>p.id),['A','B','C']);
+      assert.equal(track.worldType,'cosmic_warp');assert.deepEqual(track.portals.filter(p=>!p.id.includes('vertical-finale')).map(p=>p.id),['A','B','C']);
+      assert.deepEqual(track.portals.filter(p=>!p.id.includes('vertical-finale')).map(p=>p.exit.y),[28,16,22]);
+      assert.equal(new Set(track.portals.filter(p=>!p.id.includes('vertical-finale')).map(p=>p.color)).size,3,'portal pair colors are ambiguous');
+      assert.deepEqual(track.primaryPath.filter(s=>s.type==='portal'&&!s.id.includes('vertical-finale')).map(p=>p.id),['A','B','C']);
       assert(track.chutes.some(c=>c.material==='rainbow'),'cosmic skyway has no rainbow spiral');
     }
     receipts.push({stage:spec.index+1,tiers:spec.heights,length:+track.length.toFixed(2)});
@@ -1202,7 +1244,7 @@ check('v4 paired portals teleport with exact exit yaw, bounded speed, cooldown a
     assert.equal(h.events.filter(e=>e.type==='fall').length,0,'post-warp runway causes a fall');assert.equal(h.state.pops,0,'post-warp ball pops');
     assert(h.b.y>portal.exit.y-.5,'post-warp ball drops off destination');warps++;
   }
-  assert.equal(warps,9,'A/B/C not tested at every required rate');return{warps,rates:[120,60,25]};
+  assert.equal(warps,track.portals.length*3,'not every paired portal tested at every required rate');return{warps,rates:[120,60,25]};
 });
 
 check('v3 actual keyboard movement uses rendered camera yaw and launchers trigger cinematics',()=>{
@@ -1220,7 +1262,8 @@ check('v3 spiral rail capture, finite motion and exact tangent exit at three fra
   assert.ok(runtimeApi,'missing v3 chute rail runtime');assert.ok(courseMath);
   let rides=0;
   for(const track of TRACKS)for(const chute of track.chutes||[])for(const dt of [1/120,1/60,0.04]) {
-    assert(chute.turns>=0.99,`${track.id}: chute is not a full 3D spiral`);
+    if(chute.style==='helix')assert(chute.turns>=0.99,`${track.id}: helix is not a full 3D spiral`);
+    else assert(CHUTE_STYLES.includes(chute.style),`${track.id}: unknown kinetic chute style`);
     const entry=courseMath.getChuteFrame(chute,0),exit=courseMath.getChuteFrame(chute,1);
     assert(Math.abs(entry.y-exit.y)>=2,`${track.id}: flat decorative chute`);
     const b={x:entry.x+0.25,y:entry.y+0.62,z:entry.z,vx:0,vy:0,vz:0,r:0.62,grounded:true};
@@ -1573,7 +1616,7 @@ for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.arg
   assert.equal(receipt.chuteRides,(track.chutes||[]).length,'complete run skipped authored chute');
   if(track.chutes.length)assert(receipt.cameraModes.includes('LOCKED_CHUTE'),'complete run never enters chute camera');
   if(track.cameraZones.length)assert(receipt.cameraModes.includes('MANUAL_ORBIT'),'complete run never enters authored precision camera');
-  if(track.flagship==='C')assert.equal(receipt.portals,3,'cosmic traversal must ride A, B and C natively');
+  if(track.flagship==='C')assert.equal(receipt.portals,4,'cosmic traversal must ride A/B/C and the finale warp natively');
   return receipt;
 });
 

@@ -1,4 +1,4 @@
-// Meowball Rush v4.1.0 — four chute styles, curved dry lines and dense storybook borders.
+// Meowball Rush v4.2.0 — animated storybook landmarks across ten open stages.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -17,6 +17,7 @@ import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, 
 import { advancePortal, updatePortalPhysics, dampPortalSteering } from './portal-runtime.mjs';
 import { applyTimePenalty } from './time-runtime.mjs';
 import { animateSpikeTraps } from './spike-traps.mjs';
+import { animateStageV42Landmarks } from './world-landmarks-v42.mjs';
 import { disposeCourseSceneResources } from './v3-worlds.mjs';
 import { generateClearPoster } from "./poster.mjs";
 import { FALL_MESSAGES, findFallZone, beginFallRecovery, advanceFallRecovery } from './fall-feedback.mjs';
@@ -244,8 +245,7 @@ function getSelectedCat() {
 }
 
 function isTrackUnlocked(idx) {
-  if (idx === 0 || TRACKS[idx]?.unlockedByDefault) return true;
-  return save.clearedTracks.includes(idx - 1);
+  return Number.isInteger(idx) && idx >= 0 && idx < TRACKS.length;
 }
 
 function updateGyroUI() {
@@ -996,6 +996,7 @@ function tick(ts) {
   } else if (trackRoot) {
     // Live 3D Lobby & Cat Wardrobe Showcase Turntable!
     const tSec = ts * 0.001;
+    if (state?.phase !== 'paused') animateStageV42Landmarks(dynamicMeshes, tSec, dt);
     if (lobbyShowcaseRig && !lobbyScreen.hidden) {
       lobbyShowcaseRig.root.visible = true;
       lobbyShowcaseRig.root.position.set(0, 9.75 + Math.sin(tSec * 2.4) * 0.14, 0);
@@ -1528,6 +1529,7 @@ function updatePhysics(dt) {
 
 function updateVisuals(dt) {
   animateSpikeTraps(dynamicMeshes, state.elapsed);
+  animateStageV42Landmarks(dynamicMeshes, state.elapsed, dt);
   updateMagicBursts(state.magicBursts ||= [], dt);
   const b = state.ball;
   updateFallEffects(state.fallEffects, dt);
@@ -2044,6 +2046,7 @@ document.getElementById("btn-mute").onclick = (e) => {
 // Boot with Track 0 preview rendered live behind Lobby (clear low-fog sky)!
 const initBuilt = buildTrackScene(TRACKS[0]);
 trackRoot = initBuilt.group;
+dynamicMeshes = initBuilt.dynamicMeshes;
 scene.background = new THREE.Color(TRACKS[0].skyTop);
 scene.fog = new THREE.Fog(TRACKS[0].fogColor, 64, 185);
 scene.add(trackRoot);

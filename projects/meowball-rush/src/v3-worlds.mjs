@@ -5,6 +5,7 @@ import { routeRibbonGeometry, chuteShellGeometry, routeBodyGeometry, surfaceOver
 import { nearestSceneryClearance, resolveSceneryPosition } from './scenery-clearance.mjs';
 import { buildDryCurveRibbonMesh } from './mud-curve.mjs';
 import { populateForestDensityBorders } from './forest-density-borders.mjs';
+import { populateStageV42Landmarks } from './world-landmarks-v42.mjs';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -27,11 +28,14 @@ function mat(color, glow = 0) {
   return m;
 }
 const borderMaterial = (color, emissive, intensity = 0) => mat(color, intensity);
-// Batches and slowdown overlays are allocated per course build. Their shared
-// primitive geometries and cached toon materials stay alive for other stages.
+// Batches, slowdown overlays and landmarks are allocated per course build.
+// Their shared primitive geometries, gradients and cached base materials stay
+// alive for other stages.
 export function disposeCourseSceneResources(dynamic) {
   const geometries=new Set(),materials=new Set();
   for(const mesh of dynamic?.forestDensityBorders?.userData.batchMeshes||[])geometries.add(mesh.geometry);
+  for(const geometry of dynamic?.v42LandmarkResources?.geometries||[])geometries.add(geometry);
+  for(const material of dynamic?.v42LandmarkResources?.materials||[])materials.add(material);
   for(const entry of dynamic?.slowZones||[])for(const mesh of [entry.pool,entry.dry]) {
     if(!mesh)continue;geometries.add(mesh.geometry);
     for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material])materials.add(material);
@@ -39,7 +43,12 @@ export function disposeCourseSceneResources(dynamic) {
   for(const geometry of geometries)geometry.dispose();
   for(const material of materials)material.dispose();
   if(dynamic?.forestDensityBorders)dynamic.forestDensityBorders.userData.batchMeshes=[];
-  if(dynamic)dynamic.slowZones=[];
+  if(dynamic){
+    dynamic.slowZones=[];
+    dynamic.v42LandmarkResources=null;
+    dynamic.v42LandmarkAnimations=[];
+    dynamic.v42Landmarks=null;
+  }
 }
 function mesh(parent, geometry, material, x=0,y=0,z=0, sx=1,sy=1,sz=1, name='') {
   const m = new THREE.Mesh(geometry, material);
@@ -905,8 +914,9 @@ export function buildV3World(track,group,dynamic,materials) {
       ring.userData.bank=f.roll??0;ring.userData.phase=i/def.points.length*Math.PI*2;ring.userData.baseOpacity=.62;rings.push(ring);
       const star=mesh(chuteGroup,new THREE.OctahedronGeometry(.11,0),mat(0xffe8ad,.8),p.x+up.x*.12,p.y+up.y*.12,p.z+up.z*.12);chevrons.push(star);
     }
-    // Grounded oak chute has a hollow bark trunk, its front cut away to reveal the helix.
-    if(def.material==='oak'){
+    // The original oak helix owns the ancient tree. Later oak-surfaced finale
+    // rails keep their own shape instead of spawning a second 42m trunk.
+    if(def.material==='oak'&&!def.verticalFinale){
       const b=boundsOf(def.points),cx=def.center?.x??(b.minX+b.maxX)/2,cz=def.center?.z??(b.minZ+b.maxZ)/2,r=((def.radius||Math.max((b.maxX-b.minX)/2,(b.maxZ-b.minZ)/2))+def.width*.5+1.15)/.92;
       const flagship=track.flagship==='B',height=flagship?42:b.maxY-b.minY+5;
       const trunk=mesh(chuteGroup,new THREE.CylinderGeometry(r*.92,r,height,24,1,true,.1,Math.PI*1.45),mat(0x956440),cx,flagship?21:(b.maxY+b.minY)/2,cz,1,1,1,'hollow-giant-oak-trunk');
@@ -943,6 +953,19 @@ export function buildV3World(track,group,dynamic,materials) {
   dynamic.forestDensityBorders=populateForestDensityBorders(THREE,track,group,borderMaterial,{isClear:floorFootprintIndex(track)});
   batchForestDensityBorders(group,dynamic.forestDensityBorders);
   addDioramaBackdrops(track,group,dynamic);
+  // Populate after generic prop relocation so the factory's checked animation
+  // envelopes and placement receipts stay at their approved coordinates.
+  const landmarkResources={geometries:new Set(),materials:new Set()};
+  const landmarkMaterial=(color,emissive=0x000000,intensity=0)=>{
+    const material=mat(color,intensity).clone();material.emissive.setHex(emissive);
+    landmarkResources.materials.add(material);return material;
+  };
+  const landmarks=populateStageV42Landmarks(THREE,track,group,dynamic,landmarkMaterial,{isClear:floorFootprintIndex(track)});
+  // Static landmark parts are baked into per-placement merged geometries;
+  // the remaining deforming ribbons also own their geometry. Primitive caches
+  // are never attached here, while cloned materials retain the shared gradient.
+  landmarks.traverse(node=>{if(node.isMesh)landmarkResources.geometries.add(node.geometry);});
+  dynamic.v42LandmarkResources=landmarkResources;
   const structures=new Set(['sunlit-room-wall','sunlit-room-side-wall','sunlit-window','giant-furniture-table','kitchen-cabinet','giant-purple-armchair','tall-magical-bookshelf','golden-telescope','half-timbered-house','gilded-clocktower','hollow-giant-oak-trunk','oak-canopy-leaf-cluster','storybook-tree','snowy-pine','winter-fireplace','starry-observatory-dome','observatory-goal-dome']);
   group.traverse(node=>{if(structures.has(node.name))node.userData.cameraOcclusionStructure=true;if(node.userData.cameraOcclusionStructure)node.userData.occludable=true;});
   const b=boundsOf(allFloorPoints(track),6),n=90,pos=new Float32Array(n*3);
@@ -1087,11 +1110,18 @@ function batchForestDensityBorders(parent,forest) {
     cluster.traverse(node=>{
       if(!node.isMesh)return;before++;originals.push(node);
       const key=`${cluster.userData.routeId}/${cluster.userData.side}/${node.material.uuid}`;
-      if(!buckets.has(key))buckets.set(key,{material:node.material,parts:[],owners:[],vertices:0,routeId:cluster.userData.routeId,side:cluster.userData.side});
+      if(!buckets.has(key)){
+        // Long finales reach kilometre-scale world coordinates. Store each
+        // route's vertices near its own origin so Float32 rounding cannot push
+        // leaves outside the exact footprint already cleared by the factory.
+        const origin=cluster.getWorldPosition(new THREE.Vector3()).applyMatrix4(inverse);
+        const toLocal=new THREE.Matrix4().makeTranslation(-origin.x,-origin.y,-origin.z).multiply(inverse);
+        buckets.set(key,{material:node.material,parts:[],owners:[],vertices:0,origin,toLocal,routeId:cluster.userData.routeId,side:cluster.userData.side});
+      }
       let source=denseBorderIndexed.get(node.geometry);
       if(!source){source=mergeVertices(node.geometry);denseBorderIndexed.set(node.geometry,source);}
       const bucket=buckets.get(key),geometry=source.clone();
-      geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse,node.matrixWorld));
+      geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(bucket.toLocal,node.matrixWorld));
       bucket.owners.push({cluster,firstVertex:bucket.vertices,vertexCount:geometry.attributes.position.count});
       bucket.vertices+=geometry.attributes.position.count;bucket.parts.push(geometry);
     });
@@ -1100,7 +1130,7 @@ function batchForestDensityBorders(parent,forest) {
   const meshes=[];
   for(const bucket of buckets.values()){
     const geometry=mergeGeometries(bucket.parts,false);for(const part of bucket.parts)part.dispose();
-    const batch=mesh(group,geometry,bucket.material,0,0,0,1,1,1,`forest-density-border-${bucket.routeId}-${bucket.side}`);
+    const batch=mesh(group,geometry,bucket.material,bucket.origin.x,bucket.origin.y,bucket.origin.z,1,1,1,`forest-density-border-${bucket.routeId}-${bucket.side}`);
     Object.assign(batch.userData,{occludable:true,cameraOcclusionStructure:true,forestDensityBorderBatch:true,routeId:bucket.routeId,side:bucket.side});
     batch.castShadow=false;meshes.push(batch);
     for(const {cluster,firstVertex,vertexCount}of bucket.owners)cluster.userData.parts.push({mesh:batch,firstVertex,vertexCount});

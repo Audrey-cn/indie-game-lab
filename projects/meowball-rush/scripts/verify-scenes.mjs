@@ -8,6 +8,7 @@ import { evaluateDryCurveOffset, sampleDryCurvePoints } from "../src/mud-curve.m
 import { nearestSceneryClearance } from "../src/scenery-clearance.mjs";
 import { collideRouteGuardrails, sampleRollingRouteSurface, isSurfaceInContactWindow, resolveSphereFloorContact, fairytalePropPosition } from "../src/course-runtime.mjs";
 import { animateSpikeTraps } from '../src/spike-traps.mjs';
+import { animateStageV42Landmarks } from '../src/world-landmarks-v42.mjs';
 import { verifyRibbonMesh, verifyMeshCheckerFixtures, verifyMeshPairSeparation } from "./mesh-checks.mjs";
 import "./verify-fall-feedback.mjs";
 import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleScenery, activateCheckpoint, disposeCourseSceneResources } from "../src/v3-worlds.mjs";
@@ -130,6 +131,7 @@ function verifyCameraScene(track,group,dynamicMeshes) {
   const resetPickups=()=>{for(const star of dynamicMeshes.stars){star.collected=false;star.mesh.visible=true;}};
   const frame=(ball,elapsed)=>{
     animateSpikeTraps(dynamicMeshes,elapsed);
+    animateStageV42Landmarks(dynamicMeshes,elapsed,1/60);
     animateFairytaleScenery(dynamicMeshes,elapsed,1/60);
     for(const gear of dynamicMeshes.gears)gear.mesh.rotation.y=gear.def.omega*elapsed;
     for(const hammer of dynamicMeshes.hammers){
@@ -252,6 +254,7 @@ function verifyCameraScene(track,group,dynamicMeshes) {
 const motifHashes=new Set(),edgeProfiles=new Set(),stageSignatures=new Set();
 let verifiedTriangles=0,intersectionPairs=0,crossShellPairs=0,crossRoutePairs=0,crossSurfacePairs=0,seamCount=0,closedGuardEnds=0,checkedScenery=0;
 let disposedCourseGeometries=0,disposedCourseMaterials=0,preservedForestMaterials=0;
+let checkedV42Landmarks=0,checkedV42AnimatedParts=0,disposedV42Geometries=0,disposedV42Materials=0;
 verifyMeshCheckerFixtures();
 // The original reflected-strand defect requires an actual helix. Stage07 now
 // uses a rollercoaster, so retain that regression against the ancient-oak coil.
@@ -504,8 +507,50 @@ function isAttached(node, root) {
   for (let p = node; p; p = p.parent) if (p === root) return true;
   return false;
 }
+function verifyStageV42Landmarks(track,group,dynamic) {
+  const landmarks=dynamic.v42Landmarks,placements=landmarks?.userData.placements;
+  assert(landmarks?.isGroup&&isAttached(landmarks,group),`${track.id}: missing live v4.2 landmark group`);
+  assert.equal(landmarks.userData.stageId,track.id,`${track.id}: landmark stage identity`);
+  assert(Array.isArray(placements)&&placements.length>0,`${track.id}: live v4.2 landmark layer is empty`);
+  assert.equal(landmarks.userData.landmarkCount,placements.length,`${track.id}: landmark count receipt differs from actual placements`);
+  assert.equal(placements.length,landmarks.children.length,`${track.id}: landmark count differs from attached groups`);
+  assert.deepEqual(new Set(placements.map(p=>p.mesh)),new Set(landmarks.children),`${track.id}: landmark receipts differ from attached groups`);
+  const resources=dynamic.v42LandmarkResources,liveGeometries=new Set(),liveMaterials=new Set();
+  assert(resources?.geometries instanceof Set&&resources.materials instanceof Set,`${track.id}: landmark ownership registry missing`);
+  for(const placement of placements) {
+    assert(isAttached(placement.mesh,landmarks)&&isVisible(placement.mesh),`${track.id}: landmark placement is detached or hidden`);
+    let meshes=0;
+    placement.mesh.traverse(node=>{if(node.isMesh){meshes++;liveGeometries.add(node.geometry);for(const material of Array.isArray(node.material)?node.material:[node.material])liveMaterials.add(material);}});
+    assert(meshes>0,`${track.id}/${placement.kind}: landmark has no rendered geometry`);
+  }
+  assert.deepEqual(resources.geometries,liveGeometries,`${track.id}: landmark allocated geometry registry differs from live meshes`);
+  for(const material of liveMaterials)assert(resources.materials.has(material),`${track.id}: live landmark material is not owned by its course`);
+  assert(liveGeometries.size>0&&liveMaterials.size>0,`${track.id}: landmark layer has no real geometry or materials`);
+  const animations=dynamic.v42LandmarkAnimations;
+  assert(Array.isArray(animations),`${track.id}: landmark animation registry missing`);
+  const snapshot=entry=>[...entry.mesh.position.toArray(),...entry.mesh.quaternion.toArray(),...entry.mesh.scale.toArray(),...(entry.ribbon?.geometry.attributes.position.array||[])];
+  for(const entry of animations)assert(isAttached(entry.mesh,landmarks)&&isVisible(entry.mesh),`${track.id}: landmark animation targets a detached or hidden node`);
+  animateStageV42Landmarks(dynamic,0,0);
+  const initial=animations.map(snapshot),moved=animations.map(()=>false);
+  for(const elapsed of [1.3,2.7]) {
+    animateStageV42Landmarks(dynamic,elapsed,1/60);
+    animations.forEach((entry,index)=>{
+      const current=snapshot(entry);assert(current.every(Number.isFinite),`${track.id}: landmark animation has non-finite transforms or vertices`);
+      if(current.some((value,i)=>Math.abs(value-initial[index][i])>1e-7))moved[index]=true;
+    });
+  }
+  assert(moved.every(Boolean),`${track.id}: registered landmark animation remains static`);
+  // Garden furniture and the copper-pot hood deliberately have no moving parts.
+  if(!['garden','clockwork'].includes(track.id))assert(animations.length>0,`${track.id}: moving landmark stage has no live animation`);
+  animateStageV42Landmarks(dynamic,0,0);
+  checkedV42Landmarks+=placements.length;checkedV42AnimatedParts+=animations.length;
+}
 function verifyCourseResourceDisposal(track,dynamic) {
   const geometries=new Set(),materials=new Set(),cachedMaterials=new Set();
+  const landmarkResources=dynamic.v42LandmarkResources;
+  assert(landmarkResources?.geometries.size>0&&landmarkResources.materials.size>0,`${track.id}: disposal proof has no allocated landmark resources`);
+  for(const geometry of landmarkResources.geometries)geometries.add(geometry);
+  for(const material of landmarkResources.materials)materials.add(material);
   for(const mesh of dynamic.forestDensityBorders.userData.batchMeshes) {
     geometries.add(mesh.geometry);
     for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material])cachedMaterials.add(material);
@@ -515,7 +560,7 @@ function verifyCourseResourceDisposal(track,dynamic) {
     for(const material of Array.isArray(mesh.material)?mesh.material:[mesh.material])materials.add(material);
   }
   assert(geometries.size>0&&materials.size>0&&cachedMaterials.size>0,`${track.id}: disposal proof has no actual allocated course resources`);
-  for(const material of materials)assert(!cachedMaterials.has(material),`${track.id}: owned slowdown material aliases a cached forest material`);
+  for(const material of materials)assert(!cachedMaterials.has(material),`${track.id}: owned course material aliases a cached forest material`);
   const counts=new Map([...geometries,...materials,...cachedMaterials].map(resource=>[resource,0])),listeners=new Map();
   for(const resource of counts.keys()) {
     const listener=()=>counts.set(resource,counts.get(resource)+1);
@@ -526,11 +571,15 @@ function verifyCourseResourceDisposal(track,dynamic) {
       disposeCourseSceneResources(dynamic);
       for(const resource of [...geometries,...materials])assert.equal(counts.get(resource),1,`${track.id}: per-course ${resource.isMaterial?'material':'geometry'} was not disposed exactly once after cleanup call${call+1}`);
       for(const material of cachedMaterials)assert.equal(counts.get(material),0,`${track.id}: course cleanup disposed a cached forest toon material`);
+      assert.equal(dynamic.v42Landmarks,null,`${track.id}: disposed landmark group remains registered`);
+      assert.equal(dynamic.v42LandmarkResources,null,`${track.id}: disposed landmark resources remain registered`);
+      assert.deepEqual(dynamic.v42LandmarkAnimations,[],`${track.id}: disposed landmark animations remain registered`);
     }
   } finally {
     for(const [resource,listener] of listeners)resource.removeEventListener('dispose',listener);
   }
   disposedCourseGeometries+=geometries.size;disposedCourseMaterials+=materials.size;preservedForestMaterials+=cachedMaterials.size;
+  disposedV42Geometries+=landmarkResources.geometries.size;disposedV42Materials+=landmarkResources.materials.size;
   return geometries;
 }
 function checkGeometry(geometry, label, strict = false) {
@@ -680,7 +729,9 @@ function verifyFlagshipStructures(track,group,dynamic){
     assert(group.getObjectByName('rushing-valley-waterfall'),'valley lacks waterfall curtain');
   }
   if(track.flagship==='C'){
-    assert.equal(dynamic.warpPortals?.length,3,'missing three visual paired portals');let portalAnimationTime=1;
+    assert.equal(dynamic.warpPortals?.length,track.portals.length,'missing visual paired portals');
+    for(const id of ['A','B','C'])assert.equal(dynamic.warpPortals.filter(pair=>pair.def.id===id).length,1,`missing preserved flagship portal ${id}`);
+    let portalAnimationTime=1;
     for(const pair of dynamic.warpPortals){
       assert(track.portals.includes(pair.def));assert.equal(pair.ends.length,2,'portal pair lacks entry or exit');
       for(const [index,end] of pair.ends.entries()){
@@ -710,6 +761,7 @@ for (const [stage, track] of TRACKS.entries()) {
   if(!selectedStages.has(stage+1))continue;
   assert.equal(track.worldType, expectedWorlds[stage], `${track.id}: wrong blueprint environment`);
   const { group, dynamicMeshes } = buildTrackScene(track);
+  verifyStageV42Landmarks(track,group,dynamicMeshes);
   assert.equal(dynamicMeshes.checkpoints?.length, track.checkpoints.length, `${track.id}: checkpoint beacon registration missing`);
   verifyMushroomContact(dynamicMeshes);
   verifyHazardEntries(track, dynamicMeshes);
@@ -762,7 +814,8 @@ for (const [stage, track] of TRACKS.entries()) {
   for (const entry of dynamicMeshes.chutes) {
     assert.ok(track.chutes.includes(entry.def), `${track.id}: orphan chute definition`);
     assert.ok(isAttached(entry.mesh, group), `${track.id}: detached chute`);
-    assert.equal(entry.def.style,expectedChuteStyles[stage],`${track.id}: wrong authored chute style`);
+    const expectedStyle=entry.def.verticalFinale?track.verticalFinale?.segments.find(segment=>segment.id==='B')?.style:expectedChuteStyles[stage];
+    assert.equal(entry.def.style,expectedStyle,`${track.id}: wrong authored ${entry.def.verticalFinale?'finale':'core'} chute style`);
     renderedChuteStyles.add(entry.def.style);
     assert.equal(entry.def.bankProfile.length,entry.def.points.length,`${track.id}: signed bank profile does not align with chute rows`);
     let translucent = 0, surfaceMeshes = 0;
@@ -804,7 +857,7 @@ for (const [stage, track] of TRACKS.entries()) {
       const companionTopology=verifyRibbonMesh(companion.geometry,`${track.id}/${entry.def.id}: companion`,chuteMeshOptions(getCompanionChute(entry.def)));verifiedTriangles+=companionTopology.triangles;intersectionPairs+=companionTopology.intersectionPairs;
       crossShellPairs+=verifyMeshPairSeparation(shell.geometry,companion.geometry,`${track.id}: primary/companion`);
     }
-    if(entry.def.material==='oak'){
+    if(entry.def.material==='oak'&&!entry.def.verticalFinale){
       const trunk=entry.mesh.getObjectByName('hollow-giant-oak-trunk'),position=trunk.geometry.attributes.position;
       let minRadius=Infinity;for(let i=0;i<position.count;i++)minRadius=Math.min(minRadius,Math.hypot(position.getX(i),position.getZ(i)));
       assert.ok(minRadius>=entry.def.radius+entry.def.width/2+1,`${track.id}: tapered oak housing intersects the chute corridor`);
@@ -812,6 +865,7 @@ for (const [stage, track] of TRACKS.entries()) {
       const top=Math.max(...entry.def.points.map(p=>p.y));
       for(const canopy of canopies)assert.ok(new THREE.Box3().setFromObject(canopy,true).min.y>=top+1.5-1e-5,`${track.id}: actual oak leaves intrude into upper chute clearance`);
     }
+    if(entry.def.verticalFinale)assert(!entry.mesh.getObjectByName('hollow-giant-oak-trunk'),`${track.id}: finale rail duplicates the flagship tree`);
     if (entry.def.material !== 'oak') assert.ok(translucent, `${track.id}: missing translucent chute material`);
     assert.ok(entry.rings?.length >= 3, `${track.id}: missing animated chute sparkle rings`);
     const bounds = new THREE.Box3().setFromObject(entry.mesh, true);
@@ -936,6 +990,6 @@ if(selectedStages.size===10){assert.ok(closedGuardEnds>10,'guard transition cap 
 if(selectedStages.size===10)assert.deepEqual([...renderedChuteStyles].sort(),['banked_slalom','corkscrew_drop','helix','rollercoaster'],'all ten stages must visibly use all four chute styles');
 console.log(JSON.stringify({cameraSamples,cameraRays,cameraPaths,cameraContainmentChecks,rigidSightIntersections,cameraFailures:cameraFailures.length,firstFailures:cameraFailures.slice(0,20)}));
 assert.equal(cameraFailures.length,0,`camera LOS: ${JSON.stringify(cameraFailures.slice(0,12))}`);
-console.log(JSON.stringify({checkedBorders,checkedForestClusters,checkedDryCurves,checkedBankedRows,checkedBackdrops,checkedSceneryVertices,checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,disposedCourseGeometries,disposedCourseMaterials,preservedForestMaterials,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
+console.log(JSON.stringify({checkedBorders,checkedForestClusters,checkedDryCurves,checkedBankedRows,checkedBackdrops,checkedSceneryVertices,checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,disposedCourseGeometries,disposedCourseMaterials,preservedForestMaterials,checkedV42Landmarks,checkedV42AnimatedParts,disposedV42Geometries,disposedV42Materials,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
 console.table(results);
-console.log(`Passed v4.1 Node structural and geometry checks for ${selectedStages.size} scenes. WebGL visual appearance remains unverified.`);
+console.log(`Passed v4.2 Node structural and geometry checks for ${selectedStages.size} scenes. WebGL visual appearance remains unverified.`);

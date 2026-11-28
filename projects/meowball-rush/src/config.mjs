@@ -1,9 +1,10 @@
 import { polylineLength, computeLaunchVelocity, prepareRouteGeometry, samplePath, nearestRouteSurface } from "./course-math.mjs";
 import { createStyledChute } from './chute-styles.mjs';
-import { mudSpecForStage, sampleDryCurveStars } from './mud-curve.mjs';
+import { buildVerticalSetpieceFinale } from './setpiece-finale-builder.mjs';
+import { mudSpecForStage } from './mud-curve.mjs';
 import { difficultyProfileForStage, placeLaneBlockingHazards } from './lane-difficulty.mjs';
 
-// Meowball Rush v4.1.0 — kinetic chutes, winding dry lines and real lane choices.
+// Meowball Rush v4.2.0 — vertical setpiece finales and living storybook worlds.
 
 export const CATS = [
   {
@@ -320,9 +321,9 @@ function livingRoom() {
 }
 function bakeryStreet() {
   const t=makeStage(2,'honey','03 · 鹅卵石面包老街','town_street','鸭宝游行 · 双拱运河S桥 · 喷泉环岛与石沿','stage03-bakery-street');
-  route(t,'downhill-street','cobblestone_street','stone',6,[P(0,10,0),P(0,9,-7),P(-5,7,-15),P(-9,6,-22)]);
+  route(t,'downhill-street','cobblestone_street','stone',6,[P(0,10,0),P(0,9,-7),P(-9,7,-15),P(-9,6,-22)]);
   prop(t,'ducklings',P(-7,6.5,-18.5),{r:1.5,patrol:2.4,speed:1.4});
-  route(t,'twin-arches','canal_bridges','stone',4.6,[P(-9,6,-22),P(-5,6.7,-27),P(3,7.5,-28),P(9,6.7,-31),P(9,6,-38),P(1,7.4,-43),P(-3,6,-49)]);
+  route(t,'twin-arches','canal_bridges','stone',4.6,[P(-9,6,-22),P(-9,6.7,-27),P(3,7.5,-28),P(9,6.7,-31),P(9,6,-38),P(1,7.4,-43),P(-3,6,-49)]);
   const mainExit=P(8,6,-63);
   route(t,'fountain-roundabout','fountain_roundabout','stone',5,[P(-3,6,-49),P(-6,6,-55),P(-2,6,-61),mainExit]);
   route(t,'stone-curb','narrow_stone_curb','stone',2.1,[mainExit,P(18,6,-62),P(23,6,-56)]);orbit(t,P(16,6,-62),8);
@@ -401,8 +402,8 @@ function sweetKitchen() {
 }
 function clocktowerRoofs() {
   const t=makeStage(5,'pendulum','06 · 钟楼运河与屋顶','town_street','瓦屋弯道 · 烟囱暖流捷径 · 齿轮钟摆与窗沿','stage06-clocktower-rooftops');
-  route(t,'roof-bank','terracotta_rooftops','wood',5.4,[P(0,14,0),P(-3,13,-8),P(0,12,-17),P(9,12,-24)],{bank:.5});
-  route(t,'balcony-eaves','forked_balcony','wood',2.5,[P(9,12,-24),P(19,12,-22),P(25,12.5,-28),P(24,13,-36)]);orbit(t,P(15,12,-23),8);
+  route(t,'roof-bank','terracotta_rooftops','wood',5.4,[P(0,14,0),P(-3,13,-8),P(0,12,-24),P(9,12,-24)],{bank:.5});
+  route(t,'balcony-eaves','forked_balcony','wood',2.5,[P(9,12,-24),P(19,12,-24),P(25,12.5,-28),P(24,13,-36)]);orbit(t,P(15,12,-23),8);
   route(t,'chimney-shortcut','chimney_updraft','wood',2.7,[P(13,16,-30),P(17,16,-34),P(20,16,-36)],{secret:true,walls:false,detached:true});
   launch(t,'wind_cloud',P(20,16,-36),P(24,13,-36),.88,{optional:true,variant:'chimney',r:.65});
   route(t,'clock-gear-deck','clocktower_gear_deck','brass',7.5,[P(24,13,-36),P(27,13,-44),P(22,13,-50),P(14,13,-51)]);
@@ -966,8 +967,11 @@ function finishAuthoredStage(t) {
     }
     return length;
   };
+  // Reserve a complete finale without squeezing tight legacy bends below
+  // their physical lane/guard clearance (the indoor and ice loops need room).
+  const finaleBudget=[380,305,350,0,0,380,464,320,0,506][t.index];
   let lo=.05,hi=12;
-  for(let i=0;i<60;i++){const mid=(lo+hi)/2;if(measured(mid)<COURSE_LENGTH_TARGETS[t.index])lo=mid;else hi=mid;}
+  for(let i=0;i<60;i++){const mid=(lo+hi)/2;if(measured(mid)<COURSE_LENGTH_TARGETS[t.index]-finaleBudget)lo=mid;else hi=mid;}
   const scale=(lo+hi)/2;
   const seen=new WeakSet();
   const scalePoint=(p)=>{if(p&&typeof p==='object'&&!seen.has(p)&&Number.isFinite(p.x)&&Number.isFinite(p.z)){seen.add(p);p.x*=scale;p.z*=scale;}};
@@ -1035,77 +1039,39 @@ function finishAuthoredStage(t) {
   return t;
 }
 
-// Extend the flagship's last act on its arriving tangent. Its original tiers,
-// portals, launches and landmark anchors remain exactly where they were built.
-function extendFlagshipJourney(t) {
-  const deficit=COURSE_LENGTH_TARGETS[t.index]-t.length;
-  if(deficit<=0)return;
-  const previous=t.routes.filter(r=>!r.secret).at(-1),origin={...t.finish};
-  const a=previous.points.at(-2),b=previous.points.at(-1),n=Math.hypot(b.x-a.x,b.z-a.z)||1;
-  const fx=(b.x-a.x)/n,fz=(b.z-a.z)/n,nx=-fz,nz=fx;
-  const path=span=>Array.from({length:Math.ceil(span)+1},(_,i)=>{
-    const forward=span*i/Math.ceil(span),side=7*Math.sin(forward/32)**2;
-    return P(origin.x+fx*forward+nx*side,origin.y,origin.z+fz*forward+nz*side);
-  });
-  let lo=0,hi=deficit;
-  for(let i=0;i<40;i++){const mid=(lo+hi)/2;if(polylineLength(path(mid))<deficit)lo=mid;else hi=mid;}
-  const points=path((lo+hi)/2),count=Math.ceil(deficit/48),kind=previous.kind;
-  for(let i=0;i<count;i++) {
-    const from=Math.round((points.length-1)*i/count),to=Math.round((points.length-1)*(i+1)/count);
-    const id=`${t.id}-finale-journey-${i+1}`;
-    const r={id,section:'extended_finale_journey',kind,width:[6.4,4.35,3.25,4.35][i%4],points:points.slice(from,to+1),
-      walls:true,actIndex:5,extension:true,journeyExtension:true,surfacePattern:previous.surfacePattern,
-      edgeStyle:previous.edgeStyle,surfaceColor:previous.surfaceColor,accentColor:previous.accentColor};
-    if(i===0)r.slowZone={kind:t.worldType==='indoor_home'?'honey':'mud'};
-    t.routes.push(r);t.primaryPath.push({type:'route',id,actIndex:5});
-    t.acts[5].routeIds.push(id);t.acts[5].pathIds.push(id);t.acts[5].lengthMeters+=polylineLength(r.points);
-  }
-  t.originalFinish={...origin};t.finish={...points.at(-1)};
-  t.platforms=t.platforms.filter(p=>p.role!=='finish');plaza(t,t.finish,kind,9,9,'finish');
-  t.length=t.lengthMeters=[...t.routes.filter(r=>!r.secret),...t.chutes].reduce((sum,p)=>sum+polylineLength(p.points),0);
-}
-
-function integrateV41Stage(t) {
-  const styleParameters=[{radius:2,sway:.3,waves:2.5},{sway:1},{radius:2,sway:.3,waves:2.5},null,null,{radius:16},
+function integrateV42Stage(t) {
+  const styleParameters=[{radius:2,sway:.3,waves:2.5},{sway:1},{radius:2,sway:.3,waves:2.5},null,null,{radius:10},
     {radius:4,sway:2,waves:2},{sway:6},{},{}][t.index];
   if(styleParameters)for(const c of t.chutes) {
     Object.assign(c,createStyledChute({...c,...styleParameters,start:c.points[0],end:c.points.at(-1),steps:288}));
     delete c.doubleHelix;
   }
-  t.length=t.lengthMeters=[...t.routes.filter(r=>!r.secret),...t.chutes].reduce((sum,p)=>sum+polylineLength(p.points),0);
-  if(t.flagship)extendFlagshipJourney(t);
-  else {
-    // Replacing a coil by a wave changes arc length. Absorb that difference in
-    // the open final promenade while preserving the authored core and mouths.
-    const last=t.routes.filter(r=>!r.secret).at(-1),length=polylineLength(last.points);
-    const desired=length+COURSE_LENGTH_TARGETS[t.index]-t.length;
-    if(desired<=0)throw new Error(`${t.id}: final promenade cannot absorb chute length`);
-    if(desired<length) {
-      const cut=samplePath(last.points,desired);let walked=0;
-      last.points=last.points.filter((p,i,points)=>{if(i)walked+=Math.hypot(p.x-points[i-1].x,p.y-points[i-1].y,p.z-points[i-1].z);return walked<desired;});
-      last.points.push(P(cut.x,cut.y,cut.z));
-    }else {
-      const end=last.points.at(-1),before=last.points.at(-2),n=Math.hypot(end.x-before.x,end.z-before.z)||1;
-      const extra=desired-length,steps=Math.ceil(extra);
-      for(let i=1;i<=steps;i++)last.points.push(P(end.x+(end.x-before.x)/n*extra*i/steps,end.y,end.z+(end.z-before.z)/n*extra*i/steps));
-    }
-    // Arc-length correction can be less than one Float32 row spacing. Keep
-    // the exact finish, merging a sub-5cm terminal span into its predecessor.
-    if(last.points.length>2) {
-      const end=last.points.at(-1),before=last.points.at(-2);
-      if(Math.hypot(end.x-before.x,end.y-before.y,end.z-before.z)<.05)last.points.splice(-2,1);
-    }
-    t.finish={...last.points.at(-1)};
-    for(const p of t.platforms.filter(p=>p.role==='finish'))Object.assign(p,t.finish);
-    const beacon=t.landmarks.find(p=>p.type==='finale_beacon');if(beacon)Object.assign(beacon,t.finish);
-    t.length=t.lengthMeters=[...t.routes.filter(r=>!r.secret),...t.chutes].reduce((sum,p)=>sum+polylineLength(p.points),0);
+  if(t.index===7) {
+    // Round the icy return after normalization so the old hairpin's later
+    // guardrail cannot cross its approach. Keep both connecting tangents.
+    const r=t.routes.find(r=>r.id==='frozen-lake-crescent');
+    const a=r.points[0],b=r.points[1],d=r.points.at(-1),c=r.points.at(-2);
+    const ni=Math.hypot(b.x-a.x,b.z-a.z),no=Math.hypot(d.x-c.x,d.z-c.z);
+    const u={x:a.x+(b.x-a.x)/ni*35,z:a.z+(b.z-a.z)/ni*35};
+    const v={x:d.x-(d.x-c.x)/no*35,z:d.z-(d.z-c.z)/no*35};
+    r.points=Array.from({length:201},(_,i)=>{
+      const q=i/200,p=1-q;
+      return P(p*p*p*a.x+3*p*p*q*u.x+3*p*q*q*v.x+q*q*q*d.x,a.y+(d.y-a.y)*q,
+        p*p*p*a.z+3*p*p*q*u.z+3*p*q*q*v.z+q*q*q*d.z);
+    });
   }
+  t.length=t.lengthMeters=[...t.routes.filter(r=>!r.secret),...t.chutes].reduce((sum,p)=>sum+polylineLength(p.points),0);
+  // Preserve the authored core endpoint for flagship tier/blueprint checks.
+  // The finale builder budgets real rolling metres; warp displacement is free.
+  t.finish={...t.routes.filter(r=>!r.secret).at(-1).points.at(-1)};
+  t.coreFinish={...t.finish};
+  buildVerticalSetpieceFinale(t,{targetLength:COURSE_LENGTH_TARGETS[t.index],stageIndex:t.index});
   const difficulty=t.difficultyProfile=difficultyProfileForStage(t.index),progress=t.index/9;
   let precisionIndex=0;
   for(const r of t.routes) {
     if(r.slowZone) {
       r.width=6.4-.8*progress;
-      r.slowZone={...mudSpecForStage(t.index,r.width),kind:r.slowZone.kind,cycles:2};
+      r.slowZone={...mudSpecForStage(t.index,r.width),kind:r.slowZone.kind,cycles:r.slowZone.cycles||2};
     }else if(r.id.endsWith('-adventure-bumper-plaza'))r.width=difficulty.challengeCorridorWidth;
     else if(r.width<=3.4) {
       r.width=(precisionIndex++%2?3.35:3.25)-.3*progress;
@@ -1116,23 +1082,40 @@ function integrateV41Stage(t) {
   // Fresh arrays also invalidate arc-length caches populated during authoring.
   for(const r of [...t.routes,...t.chutes])r.points=r.points.map(p=>({...p,x:Math.fround(p.x),y:Math.fround(p.y),z:Math.fround(p.z)}));
   for(const c of t.chutes)c.receiving={...c.points.at(-1)};
+  for(const portal of t.portals||[])for(const mouth of [portal.entry,portal.exit])
+    for(const axis of ['x','y','z'])mouth[axis]=Math.fround(mouth[axis]);
+  t.finish={...t.routes.filter(r=>!r.secret).at(-1).points.at(-1)};
   prepareRouteGeometry(t.routes,t.chutes);
+  // The late worlds retain long scenic runs. Rainbow gates turn those runs
+  // into a rolling rhythm at 28m intervals, with force along the actual floor.
+  if(t.index>=5)for(const r of t.routes.filter(r=>!r.verticalFinale&&!r.secret&&!r.slowZone&&r.width>5.5)) {
+    const length=polylineLength(r.points);
+    for(let d=14;d<length-3;d+=28) {
+      const p=samplePath(r.points,d),n=Math.hypot(p.tx,p.tz)||1;
+      t.boosts.push({id:`${r.id}-rhythm-boost-${Math.round(d)}`,x:p.x,y:nearestRouteSurface([r],p.x,p.z,Infinity)?.y??p.y,z:p.z,
+        w:3.2,d:3.2,fx:p.tx/n*4,fz:p.tz/n*4,routeId:r.id,role:'scenic-rhythm'});
+    }
+  }
   // Replace side-only plates on challenge roads with real one-lane bodies.
   // Existing signature launch props and world mechanisms keep their handlers.
   const corridors=t.routes.filter(r=>!r.secret&&!r.slowZone&&r.width<=4.5);
   const corridorIds=new Set(corridors.map(r=>r.id));
   for(const key of ['spikes','bumpers','hammers','rollingPins'])t[key]=t[key].filter(h=>!corridorIds.has(h.routeId));
+  t.props=t.props.filter(h=>h.kind!=='critter'||!corridorIds.has(h.routeId));
   const candidates=[];
   for(const [index,r] of corridors.entries()) {
     const kinds=['spike','pendulum','bumper','critter'];
     const count=Math.max(1,Math.floor((polylineLength(r.points)-8)/difficulty.minHazardSpacing)+1);
-    candidates.push(...placeLaneBlockingHazards(r,{stageIndex:t.index,count,kinds:[...kinds.slice(index%4),...kinds.slice(0,index%4)]}));
+    const finaleKind=r.finaleSegment==='C'?['pendulum','spike','bumper','critter'][Number(r.id.at(-1))-1]:null;
+    const placed=placeLaneBlockingHazards(r,{stageIndex:t.index,count,
+      kinds:finaleKind?[finaleKind]:[...kinds.slice(index%4),...kinds.slice(0,index%4)]});
+    candidates.push(...placed.filter(h=>r.finaleSegment!=='C'||!r.id.endsWith('-1')||h.along>=12));
   }
   // Stage-wide density must increase in the actual level, including compact
   // flagship cores and their longer finales, rather than only in metadata.
   const target=Math.ceil(t.length*(.008+.0016*t.index));
   if(candidates.length<target)throw new Error(`${t.id}: insufficient safe lane slots (${candidates.length}/${target})`);
-  const selected=new Set(['spike','pendulum','bumper','critter'].map(kind=>candidates.find(h=>h.kind===kind)).filter(Boolean));
+  const selected=new Set(t.routes.filter(r=>r.finaleSegment==='C').map(r=>candidates.find(h=>h.routeId===r.id)).filter(Boolean));
   for(let i=0;selected.size<target&&i<target;i++)selected.add(candidates[Math.floor((i+.5)*candidates.length/target)]);
   for(const h of candidates){if(selected.size===target)break;selected.add(h);}
   t.laneHazards=candidates.filter(h=>selected.has(h));
@@ -1155,10 +1138,14 @@ function integrateV41Stage(t) {
   // the visible ribbon and physics. Never retain their old center-road candy.
   t.stars=[];
   for(const r of t.routes.filter(r=>!r.secret)) {
-    const stars=r.slowZone?sampleDryCurveStars(r,r.slowZone,4):[samplePath(r.points,polylineLength(r.points)*.55)].map(p=>({...p,y:p.y+1.05}));
+    const stars=r.slowZone?[]:[samplePath(r.points,polylineLength(r.points)*.55)].map(p=>({...p,y:p.y+1.05}));
     t.stars.push(...stars.map(p=>({...p,routeId:r.id})));
   }
   t.sections=t.routes.filter(r=>!r.secret).map(r=>({id:r.id,name:r.section,kind:r.kind,start:{...r.points[0]},end:{...r.points.at(-1)},center:{...r.points[Math.floor(r.points.length/2)]},...(r.slowZone?{slowZone:{...r.slowZone}}:{})}));
+  for(const [index,act] of t.acts.entries())act.lengthMeters=t.primaryPath
+    .filter(step=>!step.optional&&step.actIndex===index)
+    .reduce((sum,step)=>sum+(step.type==='route'?polylineLength(t.routes.find(r=>r.id===step.id).points)
+      :step.type==='chute'?polylineLength(t.chutes.find(c=>c.id===step.id).points):0),0);
   // Rebuild distance-based recovery so the extended final act has beacons too.
   const recoveryCandidates=[];let distance=0;
   for(const step of t.primaryPath) {
@@ -1182,7 +1169,7 @@ function integrateV41Stage(t) {
   return t;
 }
 
-export const TRACKS = [dawnValley(),livingRoom(),bakeryStreet(),treePasture(),sweetKitchen(),clocktowerRoofs(),skyIslands(),frostAttic(),starlightLibrary(),grandFestival()].map(finishAuthoredStage).map(integrateV41Stage);
+export const TRACKS = [dawnValley(),livingRoom(),bakeryStreet(),treePasture(),sweetKitchen(),clocktowerRoofs(),skyIslands(),frostAttic(),starlightLibrary(),grandFestival()].map(finishAuthoredStage).map(integrateV42Stage);
 
 export const DEFAULT_SAVE = {
   schemaVersion: 3,
