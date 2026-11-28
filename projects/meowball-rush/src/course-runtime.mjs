@@ -1,4 +1,78 @@
-import { polylineLength, samplePath, computeLaunchVelocity, getRibbonBoundarySegments } from './course-math.mjs';
+import { polylineLength, samplePath, computeLaunchVelocity, getRibbonBoundarySegments, nearestRouteSurface } from './course-math.mjs';
+
+export const SPIKE_TIMING=Object.freeze({telegraph:.55,activeDuration:1.1,retractDuration:1.8});
+// Visuals and collision share this clock. phase is a time offset in seconds;
+// the entire retracted interval is harmless, including the brass floor plate.
+export function spikeState(def,elapsed) {
+  const telegraph=def.telegraph??SPIKE_TIMING.telegraph;
+  const activeDuration=def.activeDuration??SPIKE_TIMING.activeDuration;
+  const retractDuration=def.retractDuration??SPIKE_TIMING.retractDuration;
+  const period=telegraph+activeDuration+retractDuration;
+  const time=elapsed+(def.phase||0),cycle=Math.floor(time/period+1e-10);
+  const cycleTime=Math.max(0,time-cycle*period);
+  const warning=cycleTime<telegraph-1e-10,active=!warning&&cycleTime<telegraph+activeDuration-1e-10;
+  // A quick, visible rise/retraction occurs inside the active window. Its
+  // collision follows the same tip height; warning never deals damage.
+  const activeTime=cycleTime-telegraph;
+  const extension=active?Math.min(1,activeTime/.09,(activeDuration-activeTime)/.1):0;
+  return {phase:warning?'telegraph':active?'active':'retracted',warning,active,
+    extension:Math.max(0,extension),cycle,cycleTime,period,
+    warningProgress:warning?cycleTime/telegraph:0};
+}
+
+export function updateSpikePhysics(track,ball,elapsed,dt,onEvent=()=>{},previous=null) {
+  if(ball.chuteRide||ball.launchAssist||ball.popTimer>0||ball.fallRecovery)return false;
+  ball.spikeContacts||=new Map();ball.spikeWarnings||=new Map();
+  let contacted=false;
+  for(const prop of track.spikes||[]) {
+    const status=spikeState(prop,elapsed),key=prop.id||prop;
+    let dx=ball.x-prop.x,dz=ball.z-prop.z,distance=Math.hypot(dx,dz);
+    if(status.warning&&distance<(prop.warningRadius??12)&&Math.abs(ball.y-ball.r-prop.y)<4&&ball.spikeWarnings.get(key)!==status.cycle) {
+      ball.spikeWarnings.set(key,status.cycle);
+      onEvent({type:'spike_warning',prop,position:{x:prop.x,y:prop.y+.1,z:prop.z},penalty:0});
+    }
+    if(!status.active||status.extension<=0)continue;
+    const tip=prop.y+(prop.height??1.05)*status.extension;
+    if(ball.y-ball.r>tip||ball.y+ball.r<prop.y)continue;
+    const radius=(prop.r??.8)+ball.r;
+    if(distance>=radius) {
+      // A25Hz frame can step across the thin chord of a grazing circle even
+      // though its travel is much shorter than the trap diameter. Solve the
+      // swept entry instead of relying on either endpoint to overlap.
+      if(!previous)continue;
+      const earlier=spikeState(prop,elapsed-dt);
+      if(!earlier.active||earlier.cycle!==status.cycle)continue;
+      const sx=previous.x-prop.x,sz=previous.z-prop.z,mx=ball.x-previous.x,mz=ball.z-previous.z;
+      const a=mx*mx+mz*mz,b=2*(sx*mx+sz*mz),c=sx*sx+sz*sz-radius*radius;
+      const discriminant=b*b-4*a*c;
+      if(a<1e-12||c<=0||discriminant<0)continue;
+      const fraction=(-b-Math.sqrt(discriminant))/(2*a);
+      if(fraction<0||fraction>1)continue;
+      dx=sx+mx*fraction;dz=sz+mz*fraction;distance=Math.hypot(dx,dz);
+    }
+    let nx,nz;
+    if(distance>1e-8){nx=dx/distance;nz=dz/distance;}
+    else {
+      const speed=Math.hypot(ball.vx,ball.vz),t=ball.routeTangent||{x:0,z:-1};
+      nx=speed>1e-8?-ball.vx/speed:-t.x;nz=speed>1e-8?-ball.vz/speed:-t.z;
+      const norm=Math.hypot(nx,nz)||1;nx/=norm;nz/=norm;
+    }
+    const previousX=ball.x,previousZ=ball.z;
+    ball.x=prop.x+nx*(radius+1e-5);ball.z=prop.z+nz*(radius+1e-5);
+    // Keep the rebound strictly horizontal. A trap never injects an artificial
+    // jump or gives the bubble the supporting surface of a spike tip.
+    if(ball.supportRoute?.walls&&ball.grounded)collideRouteGuardrails(ball,ball.supportRoute,previousX,previousZ);
+    if(ball.spikeContacts.get(key)!==status.cycle) {
+      const normalSpeed=ball.vx*nx+ball.vz*nz,outward=Math.max(5.8,-normalSpeed*.82);
+      ball.vx+=(outward-normalSpeed)*nx;ball.vz+=(outward-normalSpeed)*nz;
+      ball.spikeContacts.set(key,status.cycle);
+      onEvent({type:'spike',prop,position:{x:prop.x+nx*(prop.r??.8),y:prop.y+.65,z:prop.z+nz*(prop.r??.8)},
+        normal:{x:nx,z:nz},impact:Math.max(0,-normalSpeed),penalty:5});
+    }
+    contacted=true;
+  }
+  return contacted;
+}
 
 // Guardrails are vertical constraints. Their visible top/bevel is never a
 // supporting surface: this response changes XZ only, including on a bank.
@@ -259,6 +333,8 @@ export function fairytalePropPosition(def, elapsed) {
 }
 const MOVING_CRITTERS=new Set(['ducklings','sheep','snow_bunny','snow_bunnies','penguin','penguins']);
 const isMovingCritter=prop=>MOVING_CRITTERS.has(prop.type);
+const BOUNCY_PROPS=new Set(['pinball_bumper','bouncy_mushroom','bakery_barrel','cheese_wheel','toy_block_bumper']);
+const isBouncyBody=prop=>isMovingCritter(prop)||prop.bouncy===true||BOUNCY_PROPS.has(prop.type);
 function nearestCenterline(route,x,z) {
   let best=null,distance=0;
   for(let i=1;i<route.points.length;i++) {
@@ -270,15 +346,67 @@ function nearestCenterline(route,x,z) {
   }
   return best||{squared:0,distance:0};
 }
+
+// A radial bumper response followed by a rail response can alternate forever
+// in the gap between them. Reconcile the final constraints on a nearby exposed
+// arc, retaining the player's velocity and choosing forward travel on a tie.
+// This is position correction only: feedback/impulses stay in the hit handler.
+export function reconcileBouncyBodies(track,ball) {
+  if(ball.chuteRide||ball.launchAssist||ball.popTimer>0||ball.fallRecovery)return false;
+  const bodies=(track.bumpers||[]).filter(def=>ball.y+ball.r>=def.y&&ball.y-ball.r<=def.y+1.5)
+    .map(def=>({def,radius:def.r+ball.r+.00002}));
+  const overlaps=p=>bodies.some(({def,radius})=>Math.hypot(p.x-def.x,p.z-def.z)<radius-1e-6);
+  if(!overlaps(ball))return false;
+  const route=ball.grounded?ball.supportRoute:null,origin={x:ball.x,y:ball.y,z:ball.z};
+  const edges=route?.walls?getRibbonBoundarySegments(route):[];
+  const candidates=[];
+  const add=(x,z)=>{
+    if(Math.hypot(x-origin.x,z-origin.z)>3.2)return;
+    if(overlaps({x,z}))return;
+    let floor=null;
+    if(route) {
+      floor=nearestRouteSurface([route],x,z,Infinity);
+      if(!floor||Math.abs(floor.y+ball.r-origin.y)>.8)return;
+      for(const edge of edges) {
+        const dx=edge.b.x-edge.a.x,dz=edge.b.z-edge.a.z,len2=dx*dx+dz*dz;
+        const u=((x-edge.a.x)*dx+(z-edge.a.z)*dz)/(len2||1);
+        if(u<0||u>1)continue;
+        const y=edge.a.y+(edge.b.y-edge.a.y)*u;
+        if(Math.abs(floor.y-y)>1.25)continue;
+        if((x-edge.a.x)*edge.nx+(z-edge.a.z)*edge.nz>-ball.r+1e-7)return;
+      }
+    }
+    candidates.push({x,y:floor?floor.y+ball.r:origin.y,z});
+  };
+  // These local arcs are closer than pushing through a bumper to the middle
+  // of the lane.64 samples bound the correction to a small fraction of a ball.
+  for(const {def,radius}of bodies)for(let i=0;i<64;i++) {
+    const angle=i*Math.PI/32;
+    add(def.x+Math.cos(angle)*radius,def.z+Math.sin(angle)*radius);
+  }
+  if(route) {
+    const nearest=nearestCenterline(route,ball.x,ball.z),length=polylineLength(route.points);
+    for(let offset=0;offset<=3;offset+=.25)for(const side of[-1,1]) {
+      const p=samplePath(route.points,Math.max(0,Math.min(length,nearest.distance+offset*side)));
+      add(p.x,p.z);
+    }
+  }
+  if(!candidates.length)return false;
+  const speed=Math.hypot(ball.vx,ball.vz),intent=speed>.1?{x:ball.vx/speed,z:ball.vz/speed}:ball.routeTangent||{x:0,z:-1};
+  const score=p=>(p.x-origin.x)**2+(p.z-origin.z)**2-.0001*((p.x-origin.x)*intent.x+(p.z-origin.z)*intent.z);
+  candidates.sort((a,b)=>score(a)-score(b));
+  Object.assign(ball,candidates[0]);
+  return true;
+}
 export function collideFairytaleCritters(track,ball,elapsed,onEvent=()=>{}) {
   if(ball.chuteRide||ball.launchAssist||ball.popTimer>0)return false;
   ball.propCooldowns||=new Map();let contacted=false;
   for(const prop of track.props||[]) {
-    if(!isMovingCritter(prop)||Math.abs(ball.y-ball.r-prop.y)>1)continue;
+    if(!isBouncyBody(prop)||Math.abs(ball.y-ball.r-prop.y)>1)continue;
     const pos=fairytalePropPosition(prop,elapsed),radius=(prop.r||1.2)+ball.r;
     let dx=ball.x-pos.x,dz=ball.z-pos.z,distance=Math.hypot(dx,dz);
     if(distance>=radius)continue;
-    const patrolVx=Math.cos(elapsed*(prop.speed||.8)+(prop.phase||0))*(prop.speed||.8)*(prop.patrol||1.5);
+    const patrolVx=isMovingCritter(prop)?Math.cos(elapsed*(prop.speed||.8)+(prop.phase||0))*(prop.speed||.8)*(prop.patrol||1.5):0;
     let nx=dx/(distance||1),nz=dz/(distance||1);
     if(distance<1e-8) {const relative=Math.hypot(ball.vx-patrolVx,ball.vz);nx=relative>1e-8?-(ball.vx-patrolVx)/relative:-(ball.routeTangent?.x||0);nz=relative>1e-8?-ball.vz/relative:-(ball.routeTangent?.z||-1);}
     const previousX=ball.x,previousZ=ball.z;
@@ -304,14 +432,14 @@ export function collideFairytaleCritters(track,ball,elapsed,onEvent=()=>{}) {
     const key=prop.id||prop;
     if(!ball.propCooldowns.has(key)) {
       ball.propCooldowns.set(key,.7);
-      onEvent({type:'patrol',prop,position:{x:pos.x+nx*(prop.r||1.2),y:prop.y+.6,z:pos.z+nz*(prop.r||1.2)},normal:{x:nx,z:nz},impact:Math.max(0,-normalSpeed)});
+      onEvent({type:isMovingCritter(prop)?'patrol':'bounce',prop,position:{x:pos.x+nx*(prop.r||1.2),y:prop.y+.6,z:pos.z+nz*(prop.r||1.2)},normal:{x:nx,z:nz},impact:Math.max(0,-normalSpeed)});
     }
     contacted=true;
   }
   // A later animal can project into an earlier one. Reconcile the complete
   // final set along the route rather than leaving the last projection solid
   // only for the final animal in iteration order.
-  const animals=(track.props||[]).filter(prop=>isMovingCritter(prop)&&Math.abs(ball.y-ball.r-prop.y)<=1)
+  const animals=(track.props||[]).filter(prop=>isBouncyBody(prop)&&Math.abs(ball.y-ball.r-prop.y)<=1)
     .map(prop=>({prop,pos:fairytalePropPosition(prop,elapsed),radius:(prop.r||1.2)+ball.r}));
   const clear=p=>animals.every(a=>Math.hypot(p.x-a.pos.x,p.z-a.pos.z)>=a.radius+1e-6);
   if(contacted&&!clear(ball)&&ball.supportRoute) {
@@ -350,7 +478,7 @@ export function updateFairytalePhysics(track, ball, elapsed, dt, onEvent = () =>
   if (ball.chuteRide || ball.launchAssist || ball.popTimer > 0) return;
   collideFairytaleCritters(track,ball,elapsed,onEvent);
   for (const prop of track.props || []) {
-    if(isMovingCritter(prop))continue;
+    if(isBouncyBody(prop))continue;
     const key = prop.id || prop;
     if (ball.propCooldowns.has(key)) continue;
     const pos = fairytalePropPosition(prop, elapsed);

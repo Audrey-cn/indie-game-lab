@@ -265,6 +265,23 @@ class MeowAudio {
     [659.25, 880, 1174.66].forEach((f, i) => this.bell(f, 0.35, 0.1, i * 0.055));
   }
 
+  playSpikeWarning() {
+    this.noiseBurst(.12, .07, 3200, true);
+    this.tone(880, 1320, .1, 'triangle', .065);
+  }
+
+  playSpikeHit() {
+    this.noiseBurst(.09, .18, 2400, true);
+    this.tone(980, 160, .14, 'sawtooth', .1);
+    this.bell(1760, .16, .07);
+  }
+
+  playTimePenalty(seconds = 5) {
+    this.tone(seconds >= 8 ? 420 : 560, 110, .23, 'triangle', .16);
+    this.bell(330, .19, .08, .06);
+    this.bell(220, .22, .07, .14);
+  }
+
   playFinish() {
     [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98].forEach((f, i) => this.bell(f, 0.55, 0.12, i * 0.065));
   }

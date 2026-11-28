@@ -1,6 +1,6 @@
 import { polylineLength, computeLaunchVelocity, prepareRouteGeometry, samplePath, nearestRouteSurface } from "./course-math.mjs";
 
-// Meowball Rush v3.1.1 — ten four-act courses, from a gentle meadow to the royal finale.
+// Meowball Rush v3.2.0 — ten six-act adventures, from the first meadow slide to the royal medley.
 
 export const CATS = [
   {
@@ -180,7 +180,7 @@ export const CATS = [
 // Each stage is authored independently from its approved top/side-view blueprint.
 // Explicit pacing targets preserve a readable opening and a substantial final cup.
 // Each course adds new playable sections before normalization; these are not stretched copies.
-export const COURSE_LENGTH_TARGETS = [165, 195, 235, 280, 330, 390, 460, 540, 625, 740];
+export const COURSE_LENGTH_TARGETS = [450, 520, 600, 690, 790, 900, 1010, 1120, 1230, 1350];
 // Reserve the default camera boom as well as the physical rolling corridor.
 // Longer player-controlled orbit views use the runtime scenery cutaway.
 export const SCENERY_CAMERA_REACH = 14;
@@ -210,7 +210,7 @@ function makeStage(index, id, name, worldType, subtitle, blueprint) {
   return { id, name, worldType, subtitle, blueprint: `docs/concept-art/v3-blueprints/${blueprint}.jpg`, diff: Math.min(5, 1 + Math.floor(index / 2)),
     ...(worldType === 'indoor_home' ? HOME : worldType === 'starlight_library' || worldType === 'hybrid_winter' ? NIGHT : DAY),
     routes: [], platforms: [], chutes: [], props: [], cameraZones: [], primaryPath: [], landmarks: [],
-    boosts: [], mushrooms: [], gears: [], hammers: [], rollingPins: [], bumpers: [], steamVents: [], stars: [], checkpoints: [], tips: [],
+    boosts: [], mushrooms: [], gears: [], hammers: [], rollingPins: [], spikes: [], bumpers: [], steamVents: [], stars: [], checkpoints: [], tips: [],
     bonusTime: 65 + index * 12, deathY: -16, cameraSceneryReach: SCENERY_CAMERA_REACH, index };
 }
 function route(t, id, section, kind, width, controls, extra = {}) {
@@ -529,18 +529,131 @@ function addCourseFinale(t) {
   landmark(t,'finale_beacon',{...t.finish},{label:COURSE_IDENTITIES[t.index].acts[3]});
 }
 
+// Two new acts carry their own geometry and mechanics. They leave the original
+// signature deck on its arriving tangent and keep advancing away from the core,
+// so extending play time never duplicates a floor or creates intersecting rails.
+const ADVENTURE_ACT_NAMES = [
+  ['彩虹丘与柳叶旋滑','木桩微操与花田冲线'],
+  ['玩具弹簧与书脊山丘','积木窄廊与窗光巡游'],
+  ['风车面包与运河旋滑','桶阵石街与钟声冲线'],
+  ['蘑菇山丘与牧场弹珠','树篱窄道与牧羊庆典'],
+  ['奶酪弹珠与饼干山丘','香料窄廊与甜点冲刺'],
+  ['铜钟摆与坡屋顶集市','钟楼窄脊与晚霞冲线'],
+  ['云垫弹珠与彩虹丘','星云微操与风车巡游'],
+  ['雪松弹珠与冰雪山丘','雪桥微操与暖灯冲线'],
+  ['书页山丘与星辉钟摆','书脊微操与观星巡游'],
+  ['十界弹珠与庆典山丘','皇家微操与星冠冲线'],
+];
+function addAdventureActs(t) {
+  const previous=t.routes.filter(r=>!r.secret).at(-1),origin={...t.finish};
+  const end=previous.points.at(-1),before=previous.points.at(-2),norm=Math.hypot(end.x-before.x,end.z-before.z)||1;
+  const fx=(end.x-before.x)/norm,fz=(end.z-before.z)/norm,nx=-fz,nz=fx;
+  const at=(forward,side=0,rise=0)=>P(origin.x+fx*forward+nx*side,origin.y+rise,origin.z+fz*forward+nz*side);
+  const indoor=t.worldType==='indoor_home',kind=indoor?'wood':t.index===7?'ice':t.index>=8?'crystal':t.worldType==='town_street'?'stone':'grass';
+  const add=(suffix,width,controls,act,extra={})=>route(t,`${t.id}-adventure-${suffix}`,suffix,kind,width,controls,{extension:true,adventureAct:act,...extra});
+  add('rolling-hills',6.8,[origin,at(12,0,.2),at(25,3,1.7),at(41,-2,2.6),at(58,0,1.2)],4);
+  add('momentum-lane',4.4,[at(58,0,1.2),at(72,-3,1.2),at(88,-1,1.2),at(103,0,1.2)],4);
+  let next=at(103,0,1.2);
+  if(t.index===0||t.index===2) {
+    // Stage 01's welcoming mini-slide and Stage 03's bakery spiral introduce a
+    // visible capture mouth, smooth height drop and a generous receiving deck.
+    const angle=Math.atan2(-fx,fz),radius=t.index===0?3.8:4.8,turns=1;
+    const center=P(next.x+fx*5-radius*Math.cos(angle),next.y,next.z+fz*5-radius*Math.sin(angle));
+    const c=chute(t,`${t.id}-garden-spiral`,t.index===0?'rainbow':'glass',center,radius,t.index===0?2.0:3.4,turns,angle);
+    // A gentle real downhill runway starts the ride. Besides adding momentum,
+    // this avoids coplanar Float32 slivers where the road's eight-column mouth
+    // meets the sixteen-column bowl at an oblique world-space angle.
+    for(let i=1;i<c.points.length;i++)c.points[i].y-=.035*Math.min(1,i/2);
+    for(let i=c.points.length-2;i<c.points.length;i++)c.points[i].y-=.035*(i-(c.points.length-3))/2;
+    c.drop+=.07;c.receiving={...c.points.at(-1)};
+    // Re-author after the chute exists so route() supplies the same tangent
+    // runway and eased cross-section used by every other helical entrance.
+    // Replacing only an endpoint leaves an oblique final deck row crossing the
+    // rising shell even when the center vertex itself is perfectly shared.
+    t.routes.pop();t.primaryPath.pop();
+    add('momentum-lane',4.4,[at(58,0,1.2),at(72,-3,1.2),at(88,-1,1.2),{...c.points[0]}],4);
+    ride(t,c);next={...c.receiving};
+    const exit=c.points.at(-1),prior=c.points.at(-2),n=Math.hypot(exit.x-prior.x,exit.z-prior.z)||1;
+    // A separate runout follows the rail tangent before returning to the new
+    // adventure's overall outward heading. This avoids a sharp mouth seam.
+    const runout=P(exit.x+(exit.x-prior.x)/n*12,exit.y,exit.z+(exit.z-prior.z)/n*12);
+    const offset=P(next.x+fx*26,next.y,next.z+fz*26);
+    add('slide-runout',6.8,[next,runout,offset],4);next=offset;
+  }
+  // The final act has an unguarded wooden/cloud/stone precision passage between
+  // two broad rooms. Its 2.8m nominal width always exceeds the full ball diameter.
+  const local=(f,s=0,y=0)=>P(next.x+fx*f+nx*s,next.y+y,next.z+fz*f+nz*s);
+  add('bumper-plaza',7.2,[next,local(15,0,.2),local(30,3,.7),local(44,0,.5)],5);
+  add('precision-passage',2.8,[local(44,0,.5),local(57,0,.5),local(70,0,.5)],5,{walls:false,kind:indoor?'wood':t.index>=6?'cloud':'wood'});
+  add('festival-sprint',6.8,[local(70,0,.5),local(84,-2,.2),local(100,1,.8),local(115,0,1.3)],5);
+  t.finish={...local(115,0,1.3)};
+  landmark(t,'act_gate',{...next},{label:ADVENTURE_ACT_NAMES[t.index][1]});
+}
+
+function authorAdventureMechanics(t) {
+  for(const r of t.routes) {
+    if(['mud','honey'].includes(r.kind)) {
+      const sticky=r.kind;r.kind=t.worldType==='indoor_home'?'wood':'grass';
+      r.slowZone={kind:sticky,drySide:t.index%2?1:-1,dryWidth:1.5};
+    }
+  }
+  const lane=t.routes.find(r=>r.id===`${t.id}-adventure-momentum-lane`);
+  // Sticky patches are optional skill choices on the *same* supported floor.
+  // Their dry outer strip is continuous through the patch, never isolated stones.
+  lane.slowZone={kind:t.worldType==='indoor_home'?'honey':'mud',drySide:t.index%2?1:-1,dryWidth:1.5};
+  const hills=t.routes.find(r=>r.id===`${t.id}-adventure-rolling-hills`),plazaRoute=t.routes.find(r=>r.id===`${t.id}-adventure-bumper-plaza`);
+  const floor=(r,d,offset=0)=>{
+    const p=samplePath(r.points,polylineLength(r.points)*d),n=Math.hypot(p.tx,p.tz)||1;
+    const x=p.x-p.tz/n*offset,z=p.z+p.tx/n*offset;
+    return {...p,x,z,y:nearestRouteSurface([r],x,z,Infinity)?.y??p.y};
+  };
+  for(const [r,d] of [[hills,.27],[plazaRoute,.72]]) {
+    const p=floor(r,d),force=t.index===0?4.5:5.4;
+    t.boosts.push({id:`${t.id}-rainbow-boost-${t.boosts.length}`,x:p.x,y:p.y,z:p.z,w:Math.min(3.8,r.width-1),d:2.4,fx:p.tx*force,fz:p.tz*force,routeId:r.id,role:'adventure-rainbow'});
+  }
+  // Keep deliberate bouncy props distinct from the smooth rail constraint.
+  const variant=t.worldType==='indoor_home'?(t.index===4?'cheese':'toy'):t.worldType==='town_street'?'barrel':'mushroom';
+  for(const [fraction,side] of [[.28,-1],[.6,1]]) {
+    const p=floor(plazaRoute,fraction,side*2.2);
+    t.bumpers.push({id:`${t.id}-bouncy-${t.bumpers.length}`,x:p.x,y:p.y,z:p.z,r:.62,bounce:6,variant,routeId:plazaRoute.id});
+  }
+  // A small side plate keeps the open center line readable. Traps only occupy
+  // one choice of lane and always leave room to wait, weave or pass safely.
+  const spikeCount=t.index<2?1:2;
+  for(let i=0;i<spikeCount;i++) {
+    const p=floor(plazaRoute,.42+i*.18,(i%2?1:-1)*2.25);
+    t.spikes.push({id:`${t.id}-spikes-${i}`,x:p.x,y:p.y,z:p.z,r:.7,phase:t.index*.37+i*1.1,telegraph:.55,activeDuration:1.1,retractDuration:1.8,routeId:plazaRoute.id});
+  }
+  if(t.index>=2) {
+    const p=floor(hills,.64,2.9);
+    t.hammers.push({id:`${t.id}-adventure-pendulum`,x:p.x,y:p.y+3.7,z:p.z,len:3.1,speed:1.15+t.index*.025,amp:.34,phase:Math.PI/2,axis:'z',variant:t.index>=6?'flail':'pendulum',routeId:hills.id});
+    const q=floor(plazaRoute,.18,-2.65);
+    t.rollingPins.push({id:`${t.id}-adventure-rolling-pin`,x:q.x,y:q.y+.53,z:q.z,width:1.45,r:.48,speed:1.1,phase:t.index*.6,ampZ:.25,routeId:plazaRoute.id});
+  }
+  // Fresh, gentle optional launches are early-course set pieces as well as
+  // physical bouncy obstacles; the library keeps its three distinct book hops.
+  if(t.index!==8) {
+    const r=t.routes.find(r=>r.id===`${t.id}-adventure-rolling-hills`),a=floor(r,.09),b=floor(r,.16);
+    const type=t.index===1||t.index===4?'toaster':t.index===6?'wind_cloud':'willow_branch';
+    const helper=prop(t,type,P(a.x,a.y,a.z),{target:P(b.x,b.y,b.z),flightTime:.62,r:.62,optional:true,adventureAct:4});
+    Object.assign(helper,computeLaunchVelocity(helper,helper.target,helper.flightTime));
+    // Optional helper sits on the continuous floor and therefore does not add
+    // a phantom mandatory gap to the itinerary.
+  }
+}
+
 function authorCoursePacing(t) {
   const identity=COURSE_IDENTITIES[t.index], core=t.routes.filter(r=>!r.secret&&!r.extension);
   const coreActs=[
     [0,1,2],[0,0,1,2],[0,1,1,2,2],[0,1,2],[0,1,2,2],
     [0,0,1,2,2],[0,0,1,2,2],[0,1,2,2],[0,1,1,1,1,2,2],[0,0,1,1,2,2],
   ][t.index];
-  t.visualIdentity={...identity,palette:[...identity.palette]};
+  t.visualIdentity={...identity,acts:[...identity.acts,...ADVENTURE_ACT_NAMES[t.index]],palette:[...identity.palette]};
   Object.assign(t,COURSE_LIGHTING[t.index]);
-  t.acts=identity.acts.map((name,i)=>({id:`${t.id}-act-${i+1}`,name,role:['opening','signature','microcontrol','finale'][i],routeIds:[],pathIds:[]}));
+  t.acts=[...identity.acts,...ADVENTURE_ACT_NAMES[t.index]].map((name,i)=>({id:`${t.id}-act-${i+1}`,name,role:['opening','signature','microcontrol','celebration','adventure','finale'][i],routeIds:[],pathIds:[]}));
   for(const r of t.routes) {
     const index=core.indexOf(r);
-    r.actIndex=r.extension?3:r.secret?1:coreActs[index];
+    r.actIndex=r.adventureAct??(r.extension?3:r.secret?1:coreActs[index]);
     r.surfacePattern=identity.surfacePattern;
     r.edgeStyle=identity.edgeStyle;
     r.surfaceColor=identity.palette[0];
@@ -550,7 +663,7 @@ function authorCoursePacing(t) {
   let actIndex=0;
   for(const step of t.primaryPath) {
     if(step.type==='route')actIndex=t.routes.find(r=>r.id===step.id).actIndex;
-    else if(step.type==='chute')actIndex=1;
+    else if(step.type==='chute')actIndex=t.chutes.find(c=>c.id===step.id)?.id.includes('garden-spiral')?4:1;
     else if(step.type==='launch') {
       const p=t.props.find(p=>p.id===step.id);
       if(!step.optional&&(p.type==='toaster'||p.variant==='library_jump'))actIndex=1;
@@ -572,11 +685,11 @@ function authorCoursePacing(t) {
       progress+=local;
     } else if(step.type==='chute') {
       const c=t.chutes.find(c=>c.id===step.id);progress+=polylineLength(c.points);
-      candidates.push({...c.receiving,progress,actIndex:1});
+      candidates.push({...c.receiving,progress,actIndex:c.id.includes('garden-spiral')?4:1});
     }
   }
   t.checkpoints=[];
-  for(const fraction of [.28,.53,.78]) {
+  for(const fraction of [.16,.32,.49,.66,.83]) {
     const available=candidates.filter(p=>!t.checkpoints.some(cp=>Math.abs(cp.progress-p.progress)<t.length*.1));
     const candidate=available.reduce((best,p)=>!best||Math.abs(p.progress-t.length*fraction)<Math.abs(best.progress-t.length*fraction)?p:best,null);
     if(candidate)t.checkpoints.push({...candidate});
@@ -584,8 +697,8 @@ function authorCoursePacing(t) {
   t.checkpoints.sort((a,b)=>a.progress-b.progress);
   const narrowLength=t.routes.filter(r=>!r.secret&&r.width<=2.6).reduce((sum,r)=>sum+polylineLength(r.points),0);
   const stickyTime=t.routes.reduce((sum,r)=>sum+polylineLength(r.points)*(r.kind==='honey'?.7:r.kind==='mud'?.45:0),0);
-  t.parSeconds=Math.ceil(t.length/(3.8+t.index*.04)+18+t.chutes.length*4+narrowLength*.12+stickyTime);
-  t.bonusTime=Math.ceil(t.parSeconds*1.25+20);
+  t.parSeconds=Math.round(160+t.index*(135/9));
+  t.bonusTime=Math.round(210+t.index*(150/9));
 }
 
 function authorFallZones(t) {
@@ -691,6 +804,9 @@ function authorDetachedShortcut(t,scale) {
 
 function finishAuthoredStage(t) {
   addCourseFinale(t);
+  addAdventureActs(t);
+  // Preserve broad rooms, medium rolling lanes and readable precision links.
+  for(const r of t.routes){if(r.width<3.1)r.width=Math.max(2.7,Math.min(3,r.width+0.4));else if(r.width<5.2)r.width=Math.max(4,Math.min(4.8,r.width));else r.width=Math.max(6.2,Math.min(7.6,r.width));}
   if(t.index===1) {
     const seen=new WeakSet(),height=p=>{if(p&&typeof p==='object'&&Number.isFinite(p.y)&&!seen.has(p)){seen.add(p);p.y=4+(p.y-4)*.8;}};
     for(const list of [t.routes,t.chutes])for(const p of list){for(const point of p.points)height(point);height(p.center);height(p.receiving);if(p.drop)p.drop*=.8;}
@@ -728,7 +844,7 @@ function finishAuthoredStage(t) {
   if(t.index===3)insertSurfaceStretch(t,'clover-pasture-loop','mud',8);
   if(t.index===4)insertSurfaceStretch(t,'sugar-cookie-slalom','honey',11);
   primaryRoutes=t.routes.filter(r=>!r.secret);
-  for(const r of primaryRoutes.filter(r=>r.width<=2.6)){
+  for(const r of primaryRoutes.filter(r=>r.width<=3.0)){
     for(let i=0;i<r.points.length;i+=Math.max(1,Math.floor(r.points.length/4))){
       const p=r.points[i];
       if(!t.cameraZones.some(z=>Math.hypot(p.x-z.x,p.z-z.z)<z.r*.65&&p.y>=z.minY&&p.y<=z.maxY))orbit(t,{...p},7);
@@ -764,9 +880,14 @@ function finishAuthoredStage(t) {
   authorClimbAssists(t);
   // Detached landing mouths must use the exact Float32 center vertex rendered
   // by Three.js; a double endpoint can otherwise sit a micron beyond its cap.
-  for(const r of t.routes.filter(r=>r.detached))for(const p of [r.points[0],r.points.at(-1)])for(const axis of ['x','y','z'])p[axis]=Math.fround(p[axis]);
+  for(const r of [...t.routes,...t.chutes])for(const p of [r.points[0],r.points.at(-1)])for(const axis of ['x','y','z'])p[axis]=Math.fround(p[axis]);
+  for(const c of t.chutes)c.receiving={...c.points.at(-1)};
   prepareRouteGeometry(t.routes,t.chutes);
   authorDetachedShortcut(t,scale);
+  authorAdventureMechanics(t);
+  // Slow-zone attributes and exact Float32 endpoints feed the shared floor cache.
+  prepareRouteGeometry(t.routes,t.chutes);
+  for(const section of t.sections){const r=t.routes.find(r=>r.id===section.id);section.kind=r.kind;if(r.slowZone)section.slowZone={...r.slowZone};}
   t.tips=[{...P(first.x,first.y,first.z),r:4,msg:t.index===0?'🐾 WASD / 方向键推球；拖动视角，轻轻试试花谷弯道！':`✨ ${t.subtitle}`}];
   return t;
 }

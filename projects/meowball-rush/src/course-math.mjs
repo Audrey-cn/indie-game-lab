@@ -196,6 +196,16 @@ export function getRouteRibbonRows(route) {
   if (!data) { data = buildRibbonRows(route); preparedRoutes.set(route, data); }
   return data;
 }
+// Metres from the chosen dry edge at every *rendered* vertex. Interpolating
+// this scalar on the floor triangles gives one exact boundary for a painted
+// honey patch and its physics, including tapered mouths and banked bends.
+export function getSlowZoneDistanceRows(route) {
+  const {rows,columns}=getRouteRibbonRows(route),right=route.slowZone?.drySide===1;
+  return rows.map(row=>{
+    const left=row[0],edge=row[columns],width=Math.hypot(edge.x-left.x,edge.z-left.z);
+    return row.map((_,j)=>(right?1-j/columns:j/columns)*width);
+  });
+}
 export function getChuteShellRows(chute) {
   let data = preparedChutes.get(chute);
   if (!data) { data = buildRibbonRows(chute, {}, true); preparedChutes.set(chute, data); }
@@ -203,13 +213,19 @@ export function getChuteShellRows(chute) {
 }
 // Decorative second strand shares one definition between the renderer and
 // scenery clearance. A pure reflection plus height offset crosses the eased
-// primary helix near its runway; expanding the radius separates the full bowls.
+// primary helix near its runway. Size the second coil from the actual swept
+// footprint, including the scaled tangent mouths, rather than its nominal
+// circular radius: long adventure-course runways extend well beyond that ring.
 export function getCompanionChute(chute) {
   const width=chute.width*.82,center=chute.center;
   const radius=chute.radius||Math.max(.1,Math.min(...chute.points.map(p=>Math.hypot(p.x-center.x,p.z-center.z))));
-  const radialScale=1+(chute.width/2+width/2+1.2)/radius;
-  return {...chute,id:`${chute.id}-companion`,doubleHelix:false,width,radius:radius*radialScale,
-    points:chute.points.map(p=>({x:center.x+(center.x-p.x)*radialScale,y:(p.y??center.y??0)+.65,z:center.z+(center.z-p.z)*radialScale}))};
+  let primaryExtent=radius;
+  for(const row of getChuteShellRows(chute).rows)for(const p of row)
+    primaryExtent=Math.max(primaryExtent,Math.hypot(p.x-center.x,p.z-center.z));
+  const companionRadius=primaryExtent+width/2+1.2,radialScale=companionRadius/radius;
+  const points=chute.points.map(p=>({x:center.x+(center.x-p.x)*radialScale,y:(p.y??center.y??0)+.65,z:center.z+(center.z-p.z)*radialScale}));
+  return {...chute,id:`${chute.id}-companion`,doubleHelix:false,width,radius:companionRadius,
+    center:{...center,y:(center.y??0)+.65},receiving:{...points.at(-1)},points};
 }
 export function getRibbonBoundarySegments(route) {
   let cached=boundarySegments.get(route);if(cached)return cached;
@@ -263,18 +279,21 @@ export function getRouteFloorTriangles(route) {
   let cached = floorMeshes.get(route);
   if (cached) return cached;
   const { rows, columns } = getRouteRibbonRows(route), triangles = [];
-  function add(a, b, c, index) {
+  const dryDistances=route.slowZone?getSlowZoneDistanceRows(route):null;
+  function add(a, b, c, index, dryDistance) {
     const den = (b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z);
     if (Math.abs(den) < 1e-10) return;
-    triangles.push({ a, b, c, den, index,
+    triangles.push({ a, b, c, den, index, dryDistance,
       minX: Math.min(a.x, b.x, c.x), maxX: Math.max(a.x, b.x, c.x),
       minZ: Math.min(a.z, b.z, c.z), maxZ: Math.max(a.z, b.z, c.z),
       slopeX: ((b.y - a.y) * (c.z - a.z) - (c.y - a.y) * (b.z - a.z)) / den,
       slopeZ: ((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / den });
   }
   for (let i = 0; i < rows.length - 1; i++) for (let j = 0; j < columns; j++) {
-    add(rows[i][j], rows[i][j + 1], rows[i + 1][j], i);
-    add(rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j], i);
+    add(rows[i][j], rows[i][j + 1], rows[i + 1][j], i,
+      dryDistances?[dryDistances[i][j],dryDistances[i][j+1],dryDistances[i+1][j]]:null);
+    add(rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j], i,
+      dryDistances?[dryDistances[i][j+1],dryDistances[i+1][j+1],dryDistances[i+1][j]]:null);
   }
   floorMeshes.set(route, triangles);
   return triangles;
@@ -320,6 +339,13 @@ export function nearestRouteSurface(routes, x, z, y = Infinity, contact = null) 
       lateral: (x - px) * -tz + (z - pz) * tx,
       normalX: -tz, normalZ: tx, halfWidth: getRouteRibbonRows(route).halfWidths[q.index] * (1 - t) + getRouteRibbonRows(route).halfWidths[q.index + 1] * t, along: t, segmentIndex: q.index,
       crossed, following };
+    if(route.slowZone && q.dryDistance) {
+      const [a,b,c]=q.dryDistance;
+      candidate.slowZoneDistance=a*(1-u-v)+b*u+c*v;
+      candidate.dryLine=candidate.slowZoneDistance<=route.slowZone.dryWidth+1e-7;
+      candidate.baseKind=route.kind;
+      if(!candidate.dryLine)candidate.kind=route.slowZone.kind;
+    }
     if (isBetter(candidate)) best = candidate;
   }
   return best;

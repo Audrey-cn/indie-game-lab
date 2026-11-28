@@ -1,4 +1,4 @@
-// Meowball Rush v3.1.2 — smooth cameras, solid critters and magic checkpoints.
+// Meowball Rush v3.2.0 — six-act adventures, storybook worlds and timed hazards.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -14,7 +14,9 @@ import { nearestRouteSurface } from './course-math.mjs';
 import { createDirector, updateDirector, cameraRelativeInput, triggerSetpiece, CAMERA_MODES } from './director.mjs';
 import { createCameraOcclusion } from './camera-occlusion.mjs';
 import { createCameraSightline } from './camera-sightline.mjs';
-import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, collideFairytaleCritters, integrateRollingMotion, resolveRollingLanding, resolveHorizontalGuardrail, collideRouteGuardrails } from './course-runtime.mjs';
+import { findChuteEntry, captureChute, advanceChute, launchBall, advanceLaunch, updateFairytalePhysics, collideFairytaleCritters, integrateRollingMotion, resolveRollingLanding, resolveHorizontalGuardrail, collideRouteGuardrails, updateSpikePhysics, reconcileBouncyBodies } from './course-runtime.mjs';
+import { applyTimePenalty } from './time-runtime.mjs';
+import { animateSpikeTraps } from './spike-traps.mjs';
 import { generateClearPoster } from "./poster.mjs";
 import { FALL_MESSAGES, findFallZone, beginFallRecovery, advanceFallRecovery } from './fall-feedback.mjs';
 import { createFallEffect, updateFallEffects } from './fall-effects.mjs';
@@ -122,6 +124,22 @@ function showStarPop(msg) {
 }
 
 let toastTimer = null;
+let penaltyFlashTimer = null;
+function showTimePenalty(seconds) {
+  const layer = document.getElementById('time-penalties');
+  const timer = document.getElementById('timer-box');
+  const popup = document.createElement('span');
+  popup.className = 'time-penalty';
+  popup.textContent = `−${seconds}s!`;
+  layer.appendChild(popup);
+  popup.addEventListener('animationend', () => popup.remove(), {once:true});
+  timer.classList.remove('penalty-flash');
+  void timer.offsetWidth;
+  timer.classList.add('penalty-flash');
+  clearTimeout(penaltyFlashTimer);
+  penaltyFlashTimer = setTimeout(() => timer.classList.remove('penalty-flash'), 550);
+}
+
 function showToast(msg) {
   toastEl.textContent = msg;
   toastEl.hidden = false;
@@ -519,7 +537,7 @@ function mountTrackModels(built) {
     model.scale.setScalar(1.84 / Math.max(size.x, size.y, size.z));
   });
   for (const [key, slots] of [["hazard-bumper", meshes.bumpers], ["hazard-vent", meshes.steamVents]]) {
-    mountHazards(key, slots || [], (model, size, def) => {
+    mountHazards(key, (slots || []).filter(slot => key !== 'hazard-bumper' || !slot.def.variant), (model, size, def) => {
       model.scale.setScalar(2 * def.r / Math.max(size.x, size.z));
     });
   }
@@ -632,6 +650,7 @@ function loadTrack(trackIndex, mode = "tourney", carryTime = 0) {
 
   kittyRig.root.position.set(state.ball.x, state.ball.y, state.ball.z);
   document.getElementById("hud-track").textContent = `🌸 ${track.name}`;
+  document.getElementById('time-penalties').replaceChildren();
   lobbyScreen.hidden = true;
   resultScreen.hidden = true;
   hudEl.hidden = false;
@@ -644,7 +663,13 @@ function showFairytaleEvent(event) {
   const { prop, type } = event;
   const entry = (dynamicMeshes.fairytaleProps || []).find(p => p.def === prop);
   if (entry) entry.pulse = 1;
-  if (type === 'launch') {
+  if (type === 'spike_warning') {
+    sfx.playSpikeWarning();
+  } else if (type === 'spike') {
+    createMagicBurst(trackRoot, state.magicBursts ||= [], event.position, 0xffc564);
+    sfx.playSpikeHit();
+    deductStageTime(5, 'spikes');
+  } else if (type === 'launch') {
     if (state.director) triggerSetpiece(state.director, prop.type === 'toaster' ? 1.5 : 1.2);
     sfx.playBoing();
     showToast(prop.type === 'toaster' ? '🍞 吐司弹射！飞向上层甜点台！' : prop.type === 'willow_branch' ? '🌿 柳枝轻轻托起你！' : '☁️ 云朵打喷嚏，乘风起飞！');
@@ -654,7 +679,7 @@ function showFairytaleEvent(event) {
   } else if (type === 'book_hop') {
     sfx.playBoing();
     showStarPop('📖 魔法书振翅，轻轻跃向下一页！');
-  } else if (type === 'patrol') {
+  } else if (type === 'patrol' || type === 'bounce') {
     sfx.playBoing();
     const at = event.position || entry?.mesh.position || prop;
     createMagicBurst(trackRoot, state.magicBursts ||= [], at, 0xc7eeff);
@@ -808,6 +833,7 @@ function triggerBubblePop(reason = "💥 砰！猫球破啦！") {
   const b = state.ball;
   if (b.popTimer > 0) return;
   state.pops += 1;
+  deductStageTime(8, 'fall');
   b.popTimer = 1.65;
   b.dizzyTimer = 0;
   b.vx *= 0.2;
@@ -826,6 +852,7 @@ function triggerContextualFall(zone) {
   const b = state.ball;
   if (b.fallRecovery || b.popTimer > 0) return;
   state.pops += 1;
+  deductStageTime(8, 'fall');
   state.fallEffects.push(createFallEffect(trackRoot, zone, b));
   beginFallRecovery(b, zone);
   if (zone.type === 'water') sfx.playSplash();
@@ -835,6 +862,14 @@ function triggerContextualFall(zone) {
   const variantMessage = { snow:'❄️ 滚进松软雪堆啦，回到冰桥！',
     awning:'🪁 落到遮阳篷上啦，回到屋顶！', flowerbed:'🌿 滚进街角花坛啦，回到小路！' }[zone.variant];
   showToast(zone.message || variantMessage || FALL_MESSAGES[zone.type]);
+}
+
+function deductStageTime(seconds, reason) {
+  const receipt = applyTimePenalty(state, seconds, reason);
+  if (!receipt.seconds) return;
+  showTimePenalty(receipt.seconds);
+  sfx.playTimePenalty(receipt.seconds);
+  if (receipt.timedOut) finishStage(false);
 }
 
 function finishStage(cleared) {
@@ -1209,7 +1244,8 @@ function updatePhysics(dt) {
   }
 
   updateFairytalePhysics(state.track, b, state.elapsed, dt, showFairytaleEvent);
-  if (b.launchAssist) return;
+  updateSpikePhysics(state.track, b, state.elapsed, dt, showFairytaleEvent, {x:previousX,z:previousZ});
+  if (b.launchAssist || state.phase !== 'playing') return;
 
   // Stage 01 Interactive Tutorial Zone Tips!
   if (state.track.tips && state.track.tips.length > 0) {
@@ -1229,7 +1265,6 @@ function updatePhysics(dt) {
 
   // Swinging Wooden Hammers — Pure Physical Momentum Knockback (No instant-kill!)
   b.hammerHitCd = Math.max(0, (b.hammerHitCd || 0) - dt);
-  if (b.hammerHitCd <= 0) {
     for (const hm of dynamicMeshes.hammers) {
       const dx = b.x - hm.worldHead.x;
       const dy = b.y - hm.worldHead.y;
@@ -1237,14 +1272,22 @@ function updatePhysics(dt) {
       const d = Math.hypot(dx, dy, dz);
       const hitDist = b.r + 0.92;
       if (d < hitDist) {
-        const inv = 1 / (d || 0.001);
-        const nx = dx * inv;
-        const ny = dy * inv;
-        const nz = dz * inv;
+        const relative={x:b.vx-(hm.velX||0),y:b.vy-(hm.velY||0),z:b.vz};
+        const relativeSpeed=Math.hypot(relative.x,relative.y,relative.z);
+        const nx = d>1e-8?dx/d:relativeSpeed>1e-8?-relative.x/relativeSpeed:0;
+        const ny = d>1e-8?dy/d:relativeSpeed>1e-8?-relative.y/relativeSpeed:0;
+        const nz = d>1e-8?dz/d:relativeSpeed>1e-8?-relative.z/relativeSpeed:1;
         // Separate ball out of hammer head
         b.x = hm.worldHead.x + nx * (hitDist + 0.08);
         b.y = hm.worldHead.y + ny * (hitDist + 0.08);
         b.z = hm.worldHead.z + nz * (hitDist + 0.08);
+        b.grounded=false;b.supportPlatform=null;b.supportRoute=null;
+        // A feedback cooldown never removes the pendulum's solid body.
+        if(b.hammerHitCd>0) {
+          const closing=relative.x*nx+relative.y*ny+relative.z*nz;
+          if(closing<0){b.vx-=nx*closing;b.vy-=ny*closing;b.vz-=nz*closing;}
+          continue;
+        }
 
         // Real physical impulse from hammer's instantaneous tangential swing velocity!
         const swingSpd = Math.hypot(hm.velX || 0, hm.velY || 0);
@@ -1259,11 +1302,14 @@ function updatePhysics(dt) {
           b.dizzyTimer = Math.max(b.dizzyTimer, 0.85 / state.cat.stats.dizzyResist);
         }
         sfx.playHammerBonk(swingSpd / 6);
+        createMagicBurst(trackRoot, state.magicBursts ||= [], b, 0xffd486);
+        deductStageTime(5, 'pendulum');
         showToast(swingSpd > 5.5 ? "🔨 咚！被大木锤狠狠锤飞！" : "🔨 咚！擦到木锤弹开了！");
         break;
       }
     }
-  }
+
+  if (state.phase !== 'playing') return;
 
   // Enchanted rolling cylinders: use finite, flat endcaps so the sphere can
   // pass the handles without an invisible full-radius capsule blocking it.
@@ -1309,7 +1355,7 @@ function updatePhysics(dt) {
 
   // Pinball crystals preserve tangential motion and add a bounded radial kick.
   b.bumperHitCd = Math.max(0, (b.bumperHitCd || 0) - dt);
-  if (b.bumperHitCd <= 0) for (const bumper of dynamicMeshes.bumpers || []) {
+  for (const bumper of dynamicMeshes.bumpers || []) {
     const def = bumper.def, dx = b.x - def.x, dz = b.z - def.z;
     const distance = Math.hypot(dx, dz), hitDist = def.r + b.r;
     if (distance >= hitDist || b.y + b.r < def.y || b.y - b.r > def.y + 1.5) continue;
@@ -1320,6 +1366,11 @@ function updatePhysics(dt) {
     const kick = Math.max(0, (def.bounce ?? 6) - inward);
     b.x = def.x + nx * (hitDist + 0.03);
     b.z = def.z + nz * (hitDist + 0.03);
+    // Feedback cooldown never makes the physical body permeable.
+    if (b.bumperHitCd > 0) {
+      if(inward<0){b.vx-=nx*inward;b.vz-=nz*inward;}
+      continue;
+    }
     b.vx += nx * kick;
     b.vz += nz * kick;
     b.bumperHitCd = 0.3;
@@ -1327,6 +1378,7 @@ function updatePhysics(dt) {
     bumper.pulse = 1;
     state.squashVel += 3.2;
     sfx.playBoing();
+    createMagicBurst(trackRoot, state.magicBursts ||= [], {x:def.x,y:def.y+.5,z:def.z}, 0xffe59a);
     showToast("💎 弹珠水晶加速弹射！");
     break;
   }
@@ -1427,6 +1479,7 @@ function updatePhysics(dt) {
   // External impulses share the terminal safety cap; motor cruise is a torque target.
   clampHorizontalSpeed(b, burstMax);
   collideSideRails(b, previousX, previousZ);
+  reconcileBouncyBodies(state.track, b);
   // Rail projection must not put the ball back inside a moving animal.
   collideFairytaleCritters(state.track, b, state.elapsed, showFairytaleEvent);
 
@@ -1438,6 +1491,7 @@ function updatePhysics(dt) {
 }
 
 function updateVisuals(dt) {
+  animateSpikeTraps(dynamicMeshes, state.elapsed);
   updateMagicBursts(state.magicBursts ||= [], dt);
   const b = state.ball;
   updateFallEffects(state.fallEffects, dt);
@@ -1451,7 +1505,7 @@ function updateVisuals(dt) {
   }
   if ((b.grounded || b.chuteRide || b.launchAssist) && actIndex > state.activeAct) {
     state.activeAct = actIndex;
-    showToast(`🎬 第${['一','二','三','四'][actIndex]}幕：${state.track.acts[actIndex].name}`);
+    showToast(`🎬 第${['一','二','三','四','五','六'][actIndex]}幕：${state.track.acts[actIndex].name}`);
   }
   const spd = Math.hypot(b.vx, b.vz);
 

@@ -28,6 +28,7 @@ const moduleAt = async name => existsSync(new URL(`../src/${name}.mjs`, import.m
 const courseMath = await moduleAt('course-math');
 const directorApi = await moduleAt('director');
 const runtimeApi = await moduleAt('course-runtime');
+const timeApi = await moduleAt('time-runtime');
 const fallApi = await moduleAt('fall-feedback');
 const fallEffectsApi = await moduleAt('fall-effects');
 const { Vector3 } = THREE;
@@ -58,14 +59,14 @@ function makeHarness(track, cat = CATS[0]) {
   };
   const events = [];
   const context = vm.createContext({
-    THREE, ...courseMath, ...directorApi, ...runtimeApi, ...fallApi, ...fallEffectsApi, trackRoot: new THREE.Group(), state, dynamicMeshes,
+    THREE, ...courseMath, ...directorApi, ...runtimeApi, ...timeApi, ...fallApi, ...fallEffectsApi, trackRoot: new THREE.Group(), state, dynamicMeshes,
     CATS, TRACKS, Math, console,
     getSideWallOpenings: (...args) => trackBuilder.getSideWallOpenings(...args),
     getEndWallOpenings: (...args) => trackBuilder.getEndWallOpenings(...args),
     gyroEnabled: false, gyroTiltX: 0, gyroTiltZ: 0,
     sfx: new Proxy({}, { get: () => noop }),
     kittyRig: { bubbleMesh: visible(), kitty: visible(), accGroup: visible(), dizzyHalo: visible(), furball: visible() },
-    showToast: noop, showStarPop: noop, activateCheckpoint: noop, createMagicBurst: noop,
+    showToast: noop, showStarPop: noop, showTimePenalty: noop, activateCheckpoint: noop, createMagicBurst: noop,
     finishStage(cleared) { state.phase = 'ended'; state.cleared = cleared; },
   });
   vm.runInContext(`${surfaceCode}\n${popCode}\n${physicsCode}\nthis.updatePhysics = updatePhysics; this.sampleTrackSurface = sampleTrackSurface;`, context);
@@ -107,9 +108,162 @@ function testTrack(platforms, overrides = {}) {
 const flat = { kind: 'grass', x: 0, y: 8, z: 0, w: 600, d: 600, h: 1 };
 const checks = [];
 function check(name, fn) {
+  const filter=process.argv.find(arg=>arg.startsWith('--check='))?.slice(8);
+  if(filter&&!new RegExp(filter,'i').test(name))return;
   try { const receipt = fn(); checks.push({ name, pass: true, ...receipt }); }
   catch (error) { checks.push({ name, pass: false, error: error.message }); }
 }
+
+check('v3.2 periodic spikes telegraph, active hit, safe retraction and contact latch',()=>{
+  assert.equal(typeof runtimeApi.spikeState,'function','missing shared spike cycle');
+  assert.equal(typeof runtimeApi.updateSpikePhysics,'function','missing actual spike collision');
+  const def={id:'timed-spike',x:0,y:8,z:0,r:.8,phase:0};
+  const states=[0,.549,.55,1.649,1.65,3.449,3.45].map(t=>runtimeApi.spikeState(def,t));
+  assert.deepEqual(states.map(s=>s.phase),['telegraph','telegraph','active','active','retracted','retracted','telegraph']);
+  for(const hz of [120,60,25]) {
+    const h=makeHarness(testTrack([flat],{spikes:[def]}));
+    h.b.grounded=true;h.b.vz=-3;
+    h.state.elapsed=.6-1/hz;const before=h.state.timeLeft;h.step(1/hz);
+    near(h.state.timeLeft,before-5-1/hz,'spike penalty applies through browser event handler');
+    assert(Math.hypot(h.b.vx,h.b.vz)>3,'spike lacks elastic horizontal knockback');
+    assert.equal(h.state.pops,0,'spike must rebound without popping');
+    const events=[],b={x:.2,y:8.62,z:0,r:.62,vx:-3,vy:0,vz:0,grounded:true};
+    runtimeApi.updateSpikePhysics({spikes:[def]},b,.6,1/hz,e=>events.push(e));
+    assert.equal(events.filter(e=>e.type==='spike').length,1);assert.equal(events.find(e=>e.type==='spike').penalty,5);
+    b.x=.2;b.z=0;runtimeApi.updateSpikePhysics({spikes:[def]},b,.6+1/hz,1/hz,e=>events.push(e));
+    assert.equal(events.filter(e=>e.type==='spike').length,1,'overlap repeats penalty');
+    for(const elapsed of [.2,2]) {
+      const safe={x:0,y:8.62,z:0,r:.62,vx:0,vy:0,vz:0,grounded:true},safeEvents=[];
+      runtimeApi.updateSpikePhysics({spikes:[def]},safe,elapsed,1/hz,e=>safeEvents.push(e));
+      assert.equal(safeEvents.filter(e=>e.penalty>0).length,0);assert.equal(safe.vx,0);assert.equal(safe.vz,0);
+    }
+  }
+  return{rates:[120,60,25],cycleSeconds:3.45};
+});
+
+check('v3.2 fast grazing spike contacts use swept collision while retracted plates stay safe',()=>{
+  const def={id:'grazing',x:0,y:8,z:0,r:.7};
+  let sweptHits=0;
+  for(const hz of [120,60,25]) {
+    const dt=1/hz,radius=def.r+.62;
+    const x=Math.sqrt(radius**2-(15*dt*.3)**2),previous={x,z:-15*dt/2};
+    const ball={x,y:8.62,z:15*dt/2,r:.62,vx:0,vy:0,vz:15,grounded:true};
+    assert(Math.hypot(previous.x,previous.z)>radius&&Math.hypot(ball.x,ball.z)>radius);
+    const events=[];runtimeApi.updateSpikePhysics({spikes:[def]},ball,.9,dt,e=>events.push(e),previous);
+    assert.equal(events.filter(e=>e.type==='spike').length,1,'active grazing chord tunnels');
+    assert(Math.hypot(ball.vx,ball.vz)>1);near(ball.y,8.62,'spike sweep injects vertical position');near(ball.vy,0,'spike sweep injects jump');sweptHits++;
+    for(const [time,offset] of [[2,0],[.9,.03]]) {
+      const safe={x:x+offset,y:8.62,z:15*dt/2,r:.62,vx:0,vy:0,vz:15,grounded:true},safeEvents=[];
+      runtimeApi.updateSpikePhysics({spikes:[def]},safe,time,dt,e=>safeEvents.push(e),{x:x+offset,z:previous.z});
+      assert.equal(safeEvents.filter(e=>e.type==='spike').length,0,'safe swept path triggers spike');
+    }
+  }
+  return{sweptHits};
+});
+
+check('v3.2 fall costs eight seconds once and penalties immediately trigger timeout',()=>{
+  assert.equal(typeof timeApi?.applyTimePenalty,'function','missing shared penalty clock');
+  for(const hz of [120,60,25]) {
+    const zone={id:'water',type:'water',x:0,z:0,w:20,d:20,y:4,triggerY:4};
+    const h=makeHarness(testTrack([],{fallZones:[zone]}));
+    h.b.y=3;const before=h.state.timeLeft;h.step(1/hz);
+    near(h.state.timeLeft,before-8-1/hz,'fall does not deduct eight seconds');
+    h.step(1/hz);near(h.state.timeLeft,before-8-2/hz,'fall recovery charged twice');
+    const timeout=makeHarness(testTrack([],{fallZones:[zone]}));timeout.state.timeLeft=7;timeout.b.y=3;timeout.step(1/hz);
+    assert.equal(timeout.state.timeLeft,0);assert.equal(timeout.state.phase,'ended');assert.equal(timeout.state.cleared,false);
+    const spike=makeHarness(testTrack([flat],{spikes:[{id:'timeout-spike',x:0,y:8,z:0,r:.8,phase:0}]}));
+    spike.state.timeLeft=4;spike.state.elapsed=.6-1/hz;spike.b.grounded=true;spike.step(1/hz);
+    assert.equal(spike.state.timeLeft,0);assert.equal(spike.state.phase,'ended');assert.equal(spike.state.cleared,false);
+  }
+  const paused={phase:'paused',timeLeft:20};timeApi.applyTimePenalty(paused,8,'fall');assert.equal(paused.timeLeft,20);
+  return{rates:[120,60,25],fallPenalty:8,hazardPenalty:5};
+});
+
+check('v3.2 playful bumper bodies remain solid during boing cooldown',()=>{
+  for(const hz of [120,60,25]) {
+    const def={x:0,y:8,z:0,r:.62,bounce:6},h=makeHarness(testTrack([flat],{start:{x:1,y:8.62,z:0},bumpers:[def]}));
+    h.b.grounded=true;h.b.bumperHitCd=.2;h.b.vx=-3;
+    const y=h.b.y,vy=h.b.vy;h.step(1/hz);
+    assert(Math.hypot(h.b.x,h.b.z)>=def.r+h.b.r,'cooldown makes bumper permeable');
+    near(h.b.y,y,'horizontal bumper changes height');near(h.b.vy,vy,'horizontal bumper adds jump');
+    assert(h.b.vx>=0);assert.equal(h.state.pops,0);
+  }
+  return{rates:[120,60,25]};
+});
+
+check('v3.2 authored rail-side bouncy props cannot pinch or embed the ball',()=>{
+  let cases=0,maxCorrection=0;
+  for(const track of TRACKS)for(const def of track.bumpers)for(const hz of [120,60,25]) {
+    const route=track.routes.find(r=>r.id===def.routeId),rows=courseMath.getRouteRibbonRows(route);
+    const center=route.points.reduce((a,b)=>Math.hypot(b.x-def.x,b.z-def.z)<Math.hypot(a.x-def.x,a.z-def.z)?b:a);
+    const dx=def.x-center.x,dz=def.z-center.z,n=Math.hypot(dx,dz)||1;
+    const x=def.x+dx/n*.75,z=def.z+dz/n*.75;
+    const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);assert(floor);
+    const h=makeHarness(testTrack([],{routes:[route],bumpers:[def],start:{x,y:floor.y+.62,z}}));
+    h.b.grounded=true;h.b.supportRoute=route;h.b.bumperHitCd=.2;
+    h.step(1/hz);
+    assert(Math.hypot(h.b.x-def.x,h.b.z-def.z)>=def.r+h.b.r-1e-6,`${track.id}/${def.id}: rail projection embeds ball inside prop`);
+    assert(h.b.grounded);assert.equal(h.state.pops,0);
+    for(const edge of courseMath.getRibbonBoundarySegments(route)) {
+      const ex=edge.b.x-edge.a.x,ez=edge.b.z-edge.a.z,u=((h.b.x-edge.a.x)*ex+(h.b.z-edge.a.z)*ez)/(ex*ex+ez*ez);
+      if(u<0||u>1)continue;
+      assert((h.b.x-edge.a.x)*edge.nx+(h.b.z-edge.a.z)*edge.nz<=-h.b.r+1e-5,`${track.id}: prop recovery crosses rail`);
+    }
+    maxCorrection=Math.max(maxCorrection,Math.hypot(h.b.x-x,h.b.z-z));cases++;
+  }
+  assert.equal(cases,60);assert(maxCorrection<1.5,'prop correction skips too far along course');
+  return{cases,maxCorrection};
+});
+
+check('v3.2 pendulum hit deducts five seconds once with elastic momentum',()=>{
+  for(const hz of [120,60,25]) {
+    const hammer={x:0,y:12,z:0,len:3.3,speed:1.4,amp:.65,phase:0};
+    const h=makeHarness(testTrack([flat],{start:{x:0,y:8.62,z:.4},hammers:[hammer]}));
+    const before=h.state.timeLeft;h.step(1/hz);
+    near(h.state.timeLeft,before-5-1/hz,'pendulum penalty');
+    assert(h.b.hammerHitCd>0);assert(Math.hypot(h.b.vx,h.b.vz)>3);assert.equal(h.state.pops,0);
+    h.step(1/hz);near(h.state.timeLeft,before-5-2/hz,'pendulum cooldown repeated penalty');
+  }
+  return{rates:[120,60,25],penalty:5};
+});
+
+check('v3.2 pendulums remain solid during hit cooldown including coincident centers',()=>{
+  for(const hz of [120,60,25])for(const z of [0,.04]) {
+    const hammer={x:0,y:12,z:0,len:3.3,speed:0,amp:0,phase:0};
+    const h=makeHarness(testTrack([],{start:{x:0,y:8.7,z},hammers:[hammer]}));
+    h.b.hammerHitCd=.2;h.b.vz=-2;const before=h.state.timeLeft;
+    h.step(1/hz);
+    const head=h.dynamicMeshes.hammers[0].worldHead;
+    assert(Math.hypot(h.b.x-head.x,h.b.y-head.y,h.b.z-head.z)>=1.54,'cooldown makes pendulum permeable');
+    near(h.state.timeLeft,before-1/hz,'cooldown charges another penalty');
+    assert.equal(h.state.pops,0);
+  }
+  return{cases:6};
+});
+
+check('v3.2 every slowdown leaves a whole-ball dry skill line on its actual floor',()=>{
+  let zones=0,contacts=0;
+  for(const track of TRACKS) {
+    assert(track.routes.some(r=>r.slowZone),`${track.id}: no optional sticky skill challenge`);
+    for(const route of track.routes) {
+      assert(!['mud','honey'].includes(route.kind),`${track.id}/${route.id}: unavoidable full-width slowdown`);
+      if(!route.slowZone)continue;zones++;
+      assert(route.slowZone.dryWidth>=1.24&&route.slowZone.dryWidth<=1.6);
+      const data=courseMath.getRouteRibbonRows(route),side=route.slowZone.drySide;
+      for(let i=1;i<data.rows.length-1;i+=5) {
+        const row=data.rows[i],a=row[side===1?data.columns:0],b=row[side===1?0:data.columns];
+        const width=Math.hypot(b.x-a.x,b.z-a.z);assert(width>=route.slowZone.dryWidth+.7);
+        for(const inset of [.13,.75,1.37,1.7]) {
+          const u=inset/width,x=a.x+(b.x-a.x)*u,z=a.z+(b.z-a.z)*u;
+          const floor=courseMath.nearestRouteSurface([route],x,z,Infinity);
+          assert(floor,`${track.id}/${route.id}: dry lane floats off floor`);
+          assert.equal(floor.kind,inset<1.5?route.kind:route.slowZone.kind,`${track.id}/${route.id}: wrong material at ${inset}m from dry edge`);contacts++;
+        }
+      }
+    }
+  }
+  return{zones,contacts};
+});
 
 check('rolling pin elastic rebound and contact cooldown', () => {
   const receipts = [];
@@ -182,7 +336,9 @@ check('bumper radial elastic rebound and contact cooldown', () => {
     protectedContact.b.vx = -side * 4;
     protectedContact.b.bumperHitCd = 0.2;
     protectedContact.step(dt);
-    assert(side * protectedContact.b.vx < -3, `dt=${dt}: bumper reapplied impulse during cooldown`);
+    assert(Math.abs(protectedContact.b.vx)<.001, `dt=${dt}: bumper cooldown should cancel inward penetration without another kick`);
+    assert(Math.hypot(protectedContact.b.x-bumper.x,protectedContact.b.z-bumper.z)>=bumper.r+protectedContact.b.r, 'cooldown removes solid bumper body');
+    assert.equal(protectedContact.dynamicMeshes.bumpers[0].pulse,0,'cooldown repeats boing feedback');
     assert(Math.abs(protectedContact.b.bumperHitCd - (0.2 - dt)) < 1e-8, `dt=${dt}: bumper cooldown does not count down in seconds`);
     const readyContact = makeHarness(fixture);
     readyContact.b.vx = -side * 4; readyContact.b.bumperHitCd = dt * 0.5; readyContact.step(dt);
@@ -621,7 +777,7 @@ check('elevator riding full sine cycle', () => {
 const names = ['01 · 晨曦花谷学园','02 · 魔女客厅大冒险','03 · 鹅卵石面包老街','04 · 树洞与胖云牧场','05 · 厨房甜点大作战','06 · 钟楼运河与屋顶','07 · 浮空云海跳岛','08 · 冬日暖炉与冰川阁楼','09 · 星光书塔螺旋升空','10 · 魔女大庆典总决赛'];
 const worlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','starlight_library','grand_medley'];
 const distance3 = (a,b) => Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
-const near = (a,b,label,tol=1e-6) => assert(Math.abs(a-b)<=tol, `${label}: ${a} != ${b}`);
+function near(a,b,label,tol=1e-6) { assert(Math.abs(a-b)<=tol, `${label}: ${a} != ${b}`); }
 const finiteBall = b => {for(const key of ['x','y','z','vx','vy','vz']) assert(Number.isFinite(b[key]),`non-finite ball.${key}`);};
 
 check('v3 ten distinct blueprint courses and measured progressive lengths', () => {
@@ -634,7 +790,18 @@ check('v3 ten distinct blueprint courses and measured progressive lengths', () =
     assert.ok(track.routes?.length,`${track.id}: missing continuous 3D routes`);
     const measured=track.routes.filter(r=>!r.secret).reduce((n,r)=>n+courseMath.polylineLength(r.points),0)+(track.chutes||[]).reduce((n,c)=>n+courseMath.polylineLength(c.points),0);
     near(track.length,measured,`${track.id}: declared versus measured route length`,0.02);
-    if(i) {const growth=track.length/TRACKS[i-1].length;assert(growth>=1.10 && growth<=1.30,`${track.id}: length growth ${growth} outside v3.1 progressive growth`);}
+    assert(track.acts.length>=5&&track.acts.length<=6,`${track.id}: needs five or six acts`);
+    assert(track.acts.every(act=>act.pathIds.length&&act.lengthMeters>5),`${track.id}: empty act`);
+    assert(track.checkpoints.length>=4&&track.checkpoints.length<=6,`${track.id}: needs four to six beacons`);
+    assert(track.checkpoints.every((cp,j)=>!j||cp.progress>track.checkpoints[j-1].progress),`${track.id}: unordered checkpoints`);
+    assert(track.routes.some(r=>r.width>=6.2&&r.width<=7.6));
+    assert(track.routes.some(r=>r.width>=4&&r.width<=4.8));
+    assert(track.routes.some(r=>r.width>=2.6&&r.width<=3));
+    assert(track.routes.some(r=>!r.walls)&&track.routes.some(r=>r.walls));
+    assert(track.bonusTime>=210&&track.bonusTime<=360);
+    assert(track.spikes.length&&track.bumpers.length&&track.boosts.length,`${track.id}: missing action setpieces`);
+    if(i>=2)assert(track.hammers.length&&track.rollingPins.length,`${track.id}: missing pendulum or rolling pin`);
+    if(i) {const growth=track.length/TRACKS[i-1].length;assert(growth>=1.07 && growth<=1.30,`${track.id}: length growth ${growth} outside v3.2 progressive growth`);}
     signatures.add(JSON.stringify(track.routes.map(r=>r.points.map(p=>[+p.x.toFixed(2),+p.y.toFixed(2),+p.z.toFixed(2)]))));
     for(const route of track.routes) {
       assert(route.width>1.24 && route.points.length>=2,`${track.id}/${route.id}: unusable route dimensions`);
@@ -642,9 +809,9 @@ check('v3 ten distinct blueprint courses and measured progressive lengths', () =
     }
   }
   assert.equal(signatures.size,10,'courses reuse a layout');
-  assert(TRACKS[0].length>=160 && TRACKS[0].length<=170,'tutorial length outside160..170m');
-  // v3.1 authoring scales a multi-act opening to a720m grand finale.
-  assert(TRACKS[9].length>=700 && TRACKS[9].length<=740.1,'finale does not preserve strict progressive growth');
+  assert(TRACKS[0].length>=420 && TRACKS[0].length<=480,'opening adventure length outside420..480m');
+  // v3.2 preserves the measured primary itinerary through a six-act grand finale.
+  assert(TRACKS[9].length>=1250 && TRACKS[9].length<=1450,'finale outside1250..1450m');
   return {lengths:TRACKS.map(t=>+t.length.toFixed(2))};
 });
 
@@ -994,12 +1161,25 @@ check('fresh keyboard, stick and gyro lateral intent cancels chute exit settling
   return{cases:receipts.length,receipts};
 });
 
-function driveCourse(track, { dt=1/120, speed=4.2 }={}) {
+function driveCourse(track, { dt=1/120, speed=[2.9,2.75,3.3,3.6,4.1,5,5.4,6.2,6.4,6.7][track.index] }={}) {
   const h=makeHarness(track), points=[];
   for(const step of track.primaryPath||[]) {
     if(step.type==='route') {
       const r=track.routes.find(r=>r.id===step.id),len=courseMath.polylineLength(r.points);
-      for(let d=0;d<len;d+=0.6)points.push({...courseMath.samplePath(r.points,d),kind:'surface',routeId:r.id,width:r.width,surfaceKind:r.kind});
+      for(let d=0;d<len;d+=0.6) {
+        const p=courseMath.samplePath(r.points,d);
+        if(r.slowZone) {
+          const data=courseMath.getRouteRibbonRows(r);let i=0;
+          while(i<data.distances.length-2&&data.distances[i+1]<d)i++;
+          const fraction=Math.max(0,Math.min(1,(d-data.distances[i])/(data.distances[i+1]-data.distances[i]||1)));
+          const column=r.slowZone.drySide===1?data.columns:0,a=data.rows[i][column],b=data.rows[i+1][column];
+          const edge={x:a.x+(b.x-a.x)*fraction,z:a.z+(b.z-a.z)*fraction};
+          const nx=p.x-edge.x,nz=p.z-edge.z,n=Math.hypot(nx,nz)||1;
+          p.x=edge.x+nx/n*r.slowZone.dryWidth/2;p.z=edge.z+nz/n*r.slowZone.dryWidth/2;
+          p.y=courseMath.nearestRouteSurface([r],p.x,p.z,Infinity)?.y??p.y;
+        }
+        points.push({...p,kind:'surface',routeId:r.id,width:r.width,surfaceKind:r.kind});
+      }
       points.push({...r.points.at(-1),kind:'surface',routeId:r.id,width:r.width,surfaceKind:r.kind});
     }else if(step.type==='chute') {
       const c=track.chutes.find(c=>c.id===step.id);points.push({...c.points[0],kind:'chute',chuteId:c.id},{...c.receiving,kind:'chute_exit',chuteId:c.id});
@@ -1045,22 +1225,22 @@ function driveCourse(track, { dt=1/120, speed=4.2 }={}) {
       }
       if(best<2)target=closest;
     }
-    while(target<points.length-1 && Math.hypot(points[target].x-h.b.x,points[target].z-h.b.z)<(points[target].width<=2.6?.65:.85) && Math.abs(points[target].y-h.b.y+h.b.r)<1.8)target++;
+    while(target<points.length-1 && Math.hypot(points[target].x-h.b.x,points[target].z-h.b.z)<(points[target].width<=3.0?.65:.85) && Math.abs(points[target].y-h.b.y+h.b.r)<1.8)target++;
     const p=points[target];
     let aim=p;
     // Aim ahead on the same floor instead of braking for every60cm sample.
     for(let i=target+1;i<Math.min(points.length,target+7);i++){
       const q=points[i];if(q.kind!=='surface'||q.routeId!==p.routeId)break;
-      if(Math.hypot(q.x-h.b.x,q.z-h.b.z)>(p.width<=2.6?1.15:2.1))break;
+      if(Math.hypot(q.x-h.b.x,q.z-h.b.z)>(p.width<=3.0?1.15:2.1))break;
       aim=q;
     }
     const dx=aim.x-h.b.x,dz=aim.z-h.b.z,distance=Math.hypot(dx,dz);
-    let desiredSpeed=p.width<=2.6?2.1:p.surfaceKind==='ice'?3.2:speed;
+    let desiredSpeed=p.width<=3.0?2.1:p.surfaceKind==='ice'?4.8:speed;
     // Brake before narrow entries, launched gaps and sharp changes of direction.
     for(let i=target;i<Math.min(points.length,target+16);i++){
       const q=points[i],d=Math.hypot(q.x-h.b.x,q.z-h.b.z);
       if(q.kind==='chute_exit'||q.kind==='landing')break;
-      if(q.width<=2.6)desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.1**2+2*3*d));
+      if(q.width<=3.0)desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.1**2+2*3*d));
       if(q.kind==='launch')desiredSpeed=Math.min(desiredSpeed,Math.sqrt(2.2**2+2*3*d));
     }
     if(p.kind==='launch'||p.kind==='chute')desiredSpeed=Math.min(desiredSpeed,Math.max(1.6,distance*2));
@@ -1075,12 +1255,12 @@ function driveCourse(track, { dt=1/120, speed=4.2 }={}) {
     if(h.state.pops)break;
     if(process.argv.includes(`--trace=${track.id}`) && frame%Math.round(1/dt)===0)console.log(JSON.stringify({trace:track.id,t:+h.state.elapsed.toFixed(2),target,p,aim,ax,az,supportRoute:h.b.supportRoute?.id,supportPlatform:h.b.supportPlatform?.role,ball:{x:h.b.x,y:h.b.y,z:h.b.z,grounded:h.b.grounded,vx:h.b.vx,vy:h.b.vy,vz:h.b.vz}}));
   }
-  return {track:track.id,hz:Math.round(1/dt),cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),target,targets:points.length,chuteRides,launches,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
+  return {track:track.id,hz:Math.round(1/dt),cleared:!!h.state.cleared,pops:h.state.pops,seconds:+h.state.elapsed.toFixed(2),remaining:+h.state.timeLeft.toFixed(2),penalties:h.state.timePenaltyTotal||0,target,targets:points.length,chuteRides,launches,cameraModes:[...cameraModes],end:{x:+h.b.x.toFixed(2),y:+h.b.y.toFixed(2),z:+h.b.z.toFixed(2)},events:h.events};
 }
 const rateArgument=process.argv.find(a=>a.startsWith('--route-hz='));
 const routeRates=rateArgument?[Number(rateArgument.split('=')[1])]:[120,60,25];
 for(const hz of routeRates)assert(hz>=25 && hz<=240,'route rate must be25..240Hz');
-for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.argv.some(a=>a.startsWith('--course='))||process.argv.includes(`--course=${t.id}`)))check(`v3.1 input-only complete course at${routeHz}Hz: ${track.id}`,()=>{
+for(const routeHz of routeRates)for(const track of TRACKS.filter(t=>!process.argv.some(a=>a.startsWith('--course='))||process.argv.includes(`--course=${t.id}`)))check(`v3.2 input-only complete course at${routeHz}Hz: ${track.id}`,()=>{
   const receipt=driveCourse(track,{dt:1/routeHz});
   assert(receipt.cleared,`course cannot finish through real movement: ${JSON.stringify(receipt)}`);
   assert.equal(receipt.pops,0,`route pops: ${JSON.stringify(receipt)}`);

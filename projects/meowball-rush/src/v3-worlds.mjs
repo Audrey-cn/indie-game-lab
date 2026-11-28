@@ -3,10 +3,14 @@ import * as THREE from 'three';
 import { getRouteFrame, getRouteRibbonRows, getChuteShellRows, getCompanionChute, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments } from './course-math.mjs';
 import { routeRibbonGeometry, chuteShellGeometry, routeBodyGeometry, surfaceOverlayGeometry } from './course-geometry.mjs';
 import { nearestSceneryClearance, resolveSceneryPosition } from './scenery-clearance.mjs';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const sphereGeo = new THREE.SphereGeometry(1, 12, 8);
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const borderLeafGeo = new THREE.IcosahedronGeometry(1,0);
+const borderConeGeo = new THREE.ConeGeometry(1,1,6);
+const borderCylinderGeo = new THREE.CylinderGeometry(1,1,1,8);
 const _toon = new Map();
 let gradient;
 function mat(color, glow = 0) {
@@ -609,7 +613,12 @@ export function buildV3World(track,group,dynamic,materials) {
       const pad=book(group,p.x,Math.min(...route.points.map(q=>q.y))-.9,p.z,route.width+.12,Math.hypot(b.x-a.x,b.z-a.z),.32,0x9c78bd);
       pad.rotation.y=Math.atan2(b.x-a.x,b.z-a.z);pad.name='floating-spellbook-landing-pages';
     }
-    if(['honey','mud'].includes(route.kind)){
+    if(route.slowZone){
+      const honey=route.slowZone.kind==='honey';
+      const pool=mesh(group,surfaceOverlayGeometry(route,{slowZone:'sticky'}),overlayMaterial(honey?0xd79737:0x906444,coursePattern(honey?'viscous_honey':'viscous_mud'),.88),0,0,0,1,1,1,'viscous-ground-overlay');pool.userData.supportRoute=route;
+      const dry=mesh(group,surfaceOverlayGeometry(route,{slowZone:'dry'}),overlayMaterial(honey?0xffe4b5:0xd9d7aa,coursePattern('wood_grain')),0,0,0,1,1,1,'dry-skill-line');dry.userData.supportRoute=route;
+      dynamic.slowZones??=[];dynamic.slowZones.push({def:route.slowZone,route,pool,dry});
+    }else if(['honey','mud'].includes(route.kind)){
       const pool=mesh(group,surfaceOverlayGeometry(route),overlayMaterial(route.kind==='honey'?0xffc861:0xb18b68,coursePattern(route.kind==='honey'?'viscous_honey':'viscous_mud'),.34),0,0,0,1,1,1,'viscous-ground-overlay');pool.userData.supportRoute=route;
     }
     decorateCourseRoute(group,route);
@@ -669,6 +678,8 @@ export function buildV3World(track,group,dynamic,materials) {
   addFallEnvironment(track,group);
   addActLandmarks(track,group,dynamic);
   enforceSceneryClearance(track,group,dynamic);
+  addDiegeticBorders(track,group,dynamic);
+  addDioramaBackdrops(track,group,dynamic);
   const structures=new Set(['sunlit-room-wall','sunlit-room-side-wall','sunlit-window','giant-furniture-table','kitchen-cabinet','giant-purple-armchair','tall-magical-bookshelf','golden-telescope','half-timbered-house','gilded-clocktower','hollow-giant-oak-trunk','oak-canopy-leaf-cluster','storybook-tree','snowy-pine','winter-fireplace','starry-observatory-dome','observatory-goal-dome']);
   group.traverse(node=>{if(structures.has(node.name))node.userData.cameraOcclusionStructure=true;});
   const b=boundsOf(allFloorPoints(track),6),n=90,pos=new Float32Array(n*3);
@@ -735,6 +746,198 @@ function addActLandmarks(track,parent,dynamic) {
       ball(g,0xd49bd6,0,1.3,0,1.1,1,.75,1);
     }
   }
+}
+
+// Close scenery is checked against the actual ribbon footprint. A nominal
+// centerline radius cannot describe the inside of a tapered or banked bend.
+function floorFootprintIndex(track) {
+  const cells=new Map(),cellSize=8;
+  const register=polygon=>{
+    const xs=polygon.map(p=>p.x),zs=polygon.map(p=>p.z),bounds={minX:Math.min(...xs),maxX:Math.max(...xs),minZ:Math.min(...zs),maxZ:Math.max(...zs)};
+    const entry={polygon,bounds};
+    for(let x=Math.floor(bounds.minX/cellSize);x<=Math.floor(bounds.maxX/cellSize);x++)for(let z=Math.floor(bounds.minZ/cellSize);z<=Math.floor(bounds.maxZ/cellSize);z++){
+      const key=`${x}/${z}`;if(!cells.has(key))cells.set(key,[]);cells.get(key).push(entry);
+    }
+  };
+  for(const path of [...track.routes,...track.chutes,...track.chutes.filter(c=>c.doubleHelix).map(getCompanionChute)]){
+    const data=track.routes.includes(path)?getRouteRibbonRows(path):getChuteShellRows(path),last=data.columns;
+    for(let i=1;i<data.rows.length;i++)register([data.rows[i-1][0],data.rows[i-1][last],data.rows[i][last],data.rows[i][0]]);
+  }
+  for(const p of track.platforms)register([{x:p.x-p.w/2,z:p.z-p.d/2},{x:p.x+p.w/2,z:p.z-p.d/2},{x:p.x+p.w/2,z:p.z+p.d/2},{x:p.x-p.w/2,z:p.z+p.d/2}]);
+  const overlap=(a,b)=>{
+    for(const polygon of [a,b])for(let i=0;i<polygon.length;i++){
+      const p=polygon[i],q=polygon[(i+1)%polygon.length],nx=q.z-p.z,nz=p.x-q.x;
+      if(Math.hypot(nx,nz)<1e-7)continue;
+      const aa=a.map(v=>v.x*nx+v.z*nz),bb=b.map(v=>v.x*nx+v.z*nz);
+      if(Math.max(...aa)<Math.min(...bb)+.00001||Math.max(...bb)<Math.min(...aa)+.00001)return false;
+    }
+    return true;
+  };
+  return footprint=>{
+    const xs=footprint.map(p=>p.x),zs=footprint.map(p=>p.z),checked=new Set();
+    for(let x=Math.floor(Math.min(...xs)/cellSize);x<=Math.floor(Math.max(...xs)/cellSize);x++)for(let z=Math.floor(Math.min(...zs)/cellSize);z<=Math.floor(Math.max(...zs)/cellSize);z++)for(const entry of cells.get(`${x}/${z}`)||[]){
+      if(checked.has(entry))continue;checked.add(entry);
+      if(overlap(footprint,entry.polygon))return false;
+    }
+    return true;
+  };
+}
+
+// Bake small props by color into route-local batches. Their actual transformed
+// vertices are retained in each receipt, so verification need not trust anchors.
+function sceneryBatch(parent,name,glowingColors=new Set()) {
+  const buckets=new Map(),q=new THREE.Quaternion(),matrix=new THREE.Matrix4(),scale=new THREE.Vector3(),position=new THREE.Vector3();
+  return {
+    add(owner,geometry,color,x,y,z,sx,sy,sz,yaw=0){
+      const key=String(color);if(!buckets.has(key))buckets.set(key,{color,parts:[],owners:[]});
+      const bucket=buckets.get(key),part=(geometry.index?geometry.toNonIndexed():geometry.clone());
+      q.setFromAxisAngle(UP,yaw);matrix.compose(position.set(x,y,z),q,scale.set(sx,sy,sz));part.applyMatrix4(matrix);
+      const firstVertex=bucket.parts.reduce((sum,g)=>sum+g.attributes.position.count,0);
+      bucket.parts.push(part);bucket.owners.push({owner,firstVertex,vertexCount:part.attributes.position.count});
+    },
+    flush(){
+      const meshes=[];
+      for(const {color,parts,owners}of buckets.values()){
+        const geometry=mergeGeometries(parts,false);for(const part of parts)part.dispose();
+        const batch=mesh(parent,geometry,mat(color,glowingColors.has(color)?.28:0),0,0,0,1,1,1,name);
+        // This is scenery, never a camera collision surface or a bouncy rail.
+        // Tall roadside frames use the same honest cutaway as room furniture.
+        batch.userData.cameraOcclusionStructure=true;batch.userData.diegeticScenery=true;
+        batch.castShadow=false;meshes.push(batch);
+        for(const {owner,firstVertex,vertexCount}of owners){owner.parts??=[];owner.parts.push({mesh:batch,firstVertex,vertexCount});}
+      }
+      return meshes;
+    },
+  };
+}
+
+function addDiegeticBorders(track,parent,dynamic) {
+  const group=addEnvironment(parent,'close-diegetic-borders'),clear=floorFootprintIndex(track);
+  dynamic.diegeticBorders=[];
+  const nature=track.worldType==='grounded_nature',home=track.worldType==='indoor_home',town=track.worldType==='town_street',winter=track.worldType==='hybrid_winter',library=track.worldType==='starlight_library',finale=track.worldType==='grand_medley';
+  const rect=(x,z,tx,tz,nx,nz,w,d)=>[[-1,-1],[1,-1],[1,1],[-1,1]].map(([a,b])=>({x:x+tx*a*w/2+nx*b*d/2,z:z+tz*a*w/2+nz*b*d/2}));
+  for(const route of track.routes.filter(r=>r.walls)){
+    let serial=0;
+    for(const side of [-1,1]){
+      // Opposite borders must never share a cutaway bounding box enclosing
+      // the road: that would fade both sides even with a clear camera ray.
+      const batch=sceneryBatch(group,`diegetic-border-${route.id}-${side}`,finale?new Set([0xd9b6ed,0x9cd7da,0xffe9ae]):new Set());
+      let walked=0,next=.8;
+      for(const edge of getRibbonBoundarySegments(route).filter(e=>e.side===side)){
+        const dx=edge.b.x-edge.a.x,dz=edge.b.z-edge.a.z,length=Math.hypot(dx,dz);if(length<1e-6)continue;
+        const tx=dx/length,tz=dz/length,nx=edge.nx,nz=edge.nz;
+        while(next<=walked+length){
+          const f=(next-walked)/length;next+=1.05;
+          const y=edge.a.y+(edge.b.y-edge.a.y)*f;
+          const x=edge.a.x+dx*f+nx*.66,z=edge.a.z+dz*f+nz*.66;
+          const footprint=rect(x,z,tx,tz,nx,nz,1.25,.64);
+          if(!clear(footprint))continue;
+          const entry={routeId:route.id,side,type:nature?'hedge-and-moss':home?(track.index===4?'spice-jar-and-tin':'hardcover-and-toy'):town?'bakery-crate-and-flowerbox':winter?'snowdrift':library?'antique-book-rail':finale?'starlight-crystal':'cloud-cushion',center:{x,y,z},footprint,edge:{a:{...edge.a},b:{...edge.b},nx,nz},parts:[]};
+          dynamic.diegeticBorders.push(entry);serial++;
+          const yaw=Math.atan2(-tz,tx),at=(along,out,height)=>({x:x+tx*along+nx*out,y:y+height,z:z+tz*along+nz*out});
+          const add=(geo,color,along,out,height,sx,sy,sz)=>{const p=at(along,out,height);batch.add(entry,geo,color,p.x,p.y,p.z,sx,sy,sz,yaw);};
+          if(nature){
+            add(boxGeo,0x9d9a7a,0,0,.10,.88,.2,.5);
+            if(serial%4===0){for(const a of[-.3,0,.3])add(boxGeo,0xc5a87b,a,0,.34,.12,.5,.19);add(boxGeo,0xb4986b,0,0,.3,.85,.09,.2);}
+            else for(const a of[-.25,.2])add(borderLeafGeo,serial%3?0x6f9d50:0x8caf5c,a,0,.34,.34,.27,.25);
+            if(serial%3===0)add(borderLeafGeo,0xffd479,.18,-.18,.53,.10,.08,.08);
+          }else if(home&&track.index!==4){
+            for(let k=0;k<3;k++){add(boxGeo,[0x9f7caa,0x75a8a5,0xdba36b][(serial+k)%3],(k-1)*.27,0,.27,.23,.48+(k%2)*.1,.43);add(boxGeo,0xf5dfbb,(k-1)*.27,-.23,.27,.16,.36,.025);}
+            if(serial%4===0)add(boxGeo,0xb8d5c0,.25,0,.56,.3,.2,.35);
+          }else if(home){
+            add(boxGeo,0xbe9469,0,0,.08,.9,.16,.5);
+            add(borderCylinderGeo,serial%2?0xc7a777:0xc68971,0,0,.3,.27,.4,.27);add(borderCylinderGeo,0x8b725b,0,0,.52,.29,.05,.29);add(boxGeo,0xffefcd,0,-.28,.31,.3,.16,.025);
+          }else if(town){
+            add(boxGeo,0xa9835e,0,0,.2,.88,.4,.48);add(boxGeo,0xc8a77c,0,-.26,.23,.85,.09,.03);
+            for(const a of[-.25,.22])add(borderLeafGeo,serial%2?0xdca263:0x8eb16a,a,0,.48,.23,.15,.2);
+            if(serial%3===0)add(borderLeafGeo,0xf4b4c6,0,-.08,.61,.13,.1,.1);
+          }else if(winter){
+            add(borderLeafGeo,0xe6f4f4,0,0,.22,.45,.25,.27);add(borderLeafGeo,0xc8e5ed,.2,0,.34,.27,.22,.23);
+          }else if(library){
+            add(boxGeo,0x926e54,0,0,.1,.91,.2,.52);
+            for(let k=0;k<4;k++)add(boxGeo,[0xb29bcd,0x7aabb4,0xd1aa69,0xab7887][(serial+k)%4],(k-1.5)*.2,0,.35,.16,.46,.4);
+            add(boxGeo,0xd1ad6b,0,0,.62,.92,.09,.53);
+          }else if(finale){
+            add(boxGeo,0xc7a66a,0,0,.09,.8,.18,.5);
+            add(borderConeGeo,serial%2?0xd9b6ed:0x9cd7da,0,0,.4,.23,.66,.23);
+            add(borderLeafGeo,0xffe9ae,.28,0,.28,.13,.2,.13);
+          }else{
+            for(const a of[-.22,.22])add(borderLeafGeo,serial%2?0xfff7ed:0xe8e2f8,a,0,.25,.3,.27,.27);
+          }
+          // Real trees and little street fronts frame the road within a few
+          // metres. Their complete footprint is screened against every lane.
+          if(serial%17===0&&(nature||town||winter)){
+            const fx=x+nx*2.4,fz=z+nz*2.4,fp=rect(fx,fz,tx,tz,nx,nz,2.2,1.8);
+            if(clear(fp)){
+              const frameEntry={routeId:route.id,side,type:town?'pastel-street-front':winter?'snowy-pine':'close-oak-pine',center:{x:fx,y,z:fz},footprint:fp,parts:[]};dynamic.diegeticBorders.push(frameEntry);
+              if(town){batch.add(frameEntry,boxGeo,serial%2?0xe4bbad:0xc5d2b0,fx,y+1.45,fz,1.6,2.9,1.3,yaw);const p={x:fx-nx*.67,z:fz-nz*.67};batch.add(frameEntry,boxGeo,0x9ac5d0,p.x,y+1.8,p.z,.7,.7,.025,yaw);batch.add(frameEntry,borderConeGeo,0xc28f78,fx,y+3.15,fz,1.0,.8,.72,yaw);}
+              else{batch.add(frameEntry,boxGeo,0x9c7c55,fx,y+.8,fz,.22,1.6,.22,yaw);if(winter||serial%2)for(let k=0;k<3;k++)batch.add(frameEntry,borderConeGeo,winter?0xd7e8e3:0x6d9967,fx,y+1.3+k*.65,fz,.85-k*.17,1.5,.7-k*.14,yaw);else batch.add(frameEntry,borderLeafGeo,0x82a565,fx,y+2.3,fz,.85,1.1,.7,yaw);}
+            }
+          }
+        }
+        walked+=length;
+      }
+      batch.flush();
+    }
+  }
+  group.userData.borderCount=dynamic.diegeticBorders.length;
+}
+
+function addDioramaBackdrops(track,parent,dynamic) {
+  const group=addEnvironment(parent,'layered-storybook-diorama'),b=boundsOf(allFloorPoints(track)),batches=new Map();
+  dynamic.dioramaBackdrops=[];
+  const nature=track.worldType==='grounded_nature',home=track.worldType==='indoor_home',town=track.worldType==='town_street',winter=track.worldType==='hybrid_winter';
+  const w=b.maxX-b.minX,d=b.maxZ-b.minZ,perimeter=2*(w+d),count=Math.max(12,Math.ceil(perimeter/38));
+  for(let layer=0;layer<2;layer++)for(let i=0;i<count;i++){
+    const s=(i+.35+layer*.45)/count*perimeter,padding=layer?66:36;
+    let x,z,nx,nz,side;
+    if(s<w){x=b.minX+s;z=b.minZ-padding;nx=0;nz=-1;side=0;}
+    else if(s<w+d){x=b.maxX+padding;z=b.minZ+s-w;nx=1;nz=0;side=1;}
+    else if(s<2*w+d){x=b.maxX-(s-w-d);z=b.maxZ+padding;nx=0;nz=1;side=2;}
+    else{x=b.minX-padding;z=b.maxZ-(s-2*w-d);nx=-1;nz=0;side=3;}
+    const key=`${layer}/${side}`;if(!batches.has(key))batches.set(key,sceneryBatch(group,`storybook-diorama-${layer}-${side}`));const batch=batches.get(key);
+    const width=17+(i%3)*3,height=(layer?23:14)+(i%4)*2,depth=2.0,radius=Math.hypot(width*.65,2);
+    // Keep the full silhouette 20-85m outside all courses, even in concave
+    // tracks. Distance is measured to every route, never just its start point.
+    let hit=nearestSceneryClearance(track,{x,z,radius});
+    if(hit.margin>78){x-=hit.nx*(hit.margin-72);z-=hit.nz*(hit.margin-72);}
+    // The longest director boom is below29m, including portrait/max zoom.
+    // Putting the complete silhouette32m out makes a backdrop a genuinely
+    // clear distant object; it never needs a cutaway that could empty the view.
+    const safe=resolveSceneryPosition(track,{x,z,radius:radius+32,name:'diorama-card'});x=safe.x;z=safe.z;
+    hit=nearestSceneryClearance(track,{x,z,radius});if(hit.margin>85)continue;
+    const y=b.minY-3,yaw=Math.atan2(nx,nz)+Math.sin(i*2.4)*.12;
+    const entry={layer,type:nature?'painted-hills-and-windmills':home?'room-bookshelves-windows-curtains':town?'coastal-town-clocktowers':winter?'snowy-mountain-ring':'cloud-peaks-observatory-arches',center:{x,y,z},width,height,depth,radius,clearance:hit.margin,parts:[]};
+    dynamic.dioramaBackdrops.push(entry);
+    const add=(geo,color,lx,yy,lz,sx,sy,sz)=>{const cosine=Math.cos(yaw),sine=Math.sin(yaw);batch.add(entry,geo,color,x+lx*cosine+lz*sine,y+yy,z-lx*sine+lz*cosine,sx,sy,sz,yaw);};
+    if(nature){
+      add(borderLeafGeo,layer?0x9dbfa4:0xabc78b,0,height*.2,0,width*.48,height*.45,.7);
+      add(borderLeafGeo,layer?0x92b5a7:0xbed29f,width*.24,height*.16,.3,width*.3,height*.32,.65);
+      if(i%3===0){add(boxGeo,0xe0ceaa,-width*.17,height*.5,.4,1.5,height*.42,.7);add(borderConeGeo,0xa88e75,-width*.17,height*.77,.4,1.35,2,.8);add(boxGeo,0xf6ead0,-width*.17,height*.66,.9,5,.3,.1);add(boxGeo,0xf6ead0,-width*.17,height*.66,.9,.3,5,.1);}
+    }else if(home){
+      add(boxGeo,layer?0xad9e96:0xc6b4a0,0,height/2,0,width,height,.9);
+      for(let shelf=0;shelf<4;shelf++){
+        add(boxGeo,0xd4c5af,0,(shelf+.4)*height/4,.6,width,.35,.8);
+        for(let k=0;k<5;k++)add(boxGeo,[0x889dac,0xba97a4,0xd0b28c,0x9cae9c][(i+k)%4],(k-2)*width/5,(shelf+.8)*height/4,.7,width/6,height/5,.7);
+      }
+      if(i%3===1){add(boxGeo,0xe9dbc6,0,height*.6,1,width*.56,height*.58,.15);add(boxGeo,0xb9d9dd,0,height*.6,1.1,width*.45,height*.49,.1);add(boxGeo,0xf0e5cd,0,height*.6,1.2,.25,height*.5,.05);for(const side of[-1,1])add(boxGeo,0xc6a9aa,side*width*.25,height*.6,1.25,width*.07,height*.61,.15);}
+      if(i%3===2){add(boxGeo,0xcbbd9d,width*.32,height*.35,1,.3,height*.65,.25);add(borderConeGeo,0xe5d2b0,width*.32,height*.68,1,width*.13,height*.2,.5);add(borderLeafGeo,0xe4d4a6,width*.32,.4,1,width*.12,.35,.55);}
+    }else if(town){
+      for(let k=0;k<3;k++){
+        const bh=height*(.55+(k%2)*.25),bx=(k-1)*width/3;
+        add(boxGeo,[0xc6b9ab,0xb9c9c2,0xd5bcaf][(i+k)%3],bx,bh/2,0,width/3-.5,bh,.8);
+        add(borderConeGeo,0xa28784,bx,bh+1.3,0,width/4,3,.9);
+        for(let row=0;row<3;row++)for(const side of[-1,1])add(boxGeo,0x8dacae,bx+side*width/12,bh*(.2+row*.25),.5,width/17,1.2,.1);
+      }
+      if(i%4===0){add(boxGeo,0xb1aa9c,0,height*.62,.5,2.5,height*1.15,.6);add(borderLeafGeo,0xf1dfb7,0,height*.88,.9,.9,.9,.1);add(boxGeo,0x8b827b,0,height*.91,1.04,.1,.7,.03);add(boxGeo,0x8b827b,.2,height*.88,1.05,.5,.1,.03);}
+    }else{
+      const color=winter?(layer?0xb9cbd6:0xe0e7e8):(layer?0x9b9dbf:0xc6bfd9);
+      for(let k=0;k<3;k++)add(borderConeGeo,color,(k-1)*width*.24,height*(.23+(k%2)*.08),0,width*.31,height*(.6+(k%2)*.18),.9);
+      if(!winter&&i%3===0){for(const side of[-1,1])add(boxGeo,0xb0a8bc,side*width*.23,height*.47,.4,.9,height*.85,.7);add(boxGeo,0xe2d4b3,0,height*.87,.4,width*.5,.7,.7);add(borderLeafGeo,0xe7d9bf,0,height*.93,.4,width*.27,2,.5);}
+    }
+  }
+  for(const batch of batches.values())for(const m of batch.flush()){m.userData.dioramaBackdrop=true;m.userData.cameraOcclusionStructure=false;m.receiveShadow=false;}
+  group.userData.layers=2;group.userData.backdropCount=dynamic.dioramaBackdrops.length;
 }
 
 function enforceSceneryClearance(track,world,dynamic) {

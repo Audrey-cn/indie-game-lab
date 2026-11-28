@@ -1,6 +1,6 @@
 // Three.js adapter. The mathematical sweep is shared with floor/rail collision.
 import * as THREE from 'three';
-import { getRouteRibbonRows, getChuteShellRows, getRibbonBoundarySegments } from './course-math.mjs';
+import { getRouteRibbonRows, getChuteShellRows, getRibbonBoundarySegments, getSlowZoneDistanceRows } from './course-math.mjs';
 
 export function geometryFromRows(data) {
   const { rows, columns, distances } = data, positions = [], uv = [], indices = [];
@@ -137,6 +137,10 @@ export function surfaceOverlayGeometry(route, patch = {}) {
   const local = p => ({ x: (p.x-center.x)*cosine+(p.z-center.z)*sine,
     z: -(p.x-center.x)*sine+(p.z-center.z)*cosine });
   const planes = [p=>p.left-margin,p=>p.right-margin];
+  // Slowdown masks and their dry skill lines use the same barycentric edge
+  // distance as the collision query, including tapered and banked rows.
+  const slowDistances=patch.slowZone && route.slowZone?getSlowZoneDistanceRows(route):null;
+  if(slowDistances)planes.push(p=>patch.slowZone==='dry'?route.slowZone.dryWidth-p.slowDistance:p.slowDistance-route.slowZone.dryWidth);
   if (patch.shape === 'circle') {
     for(let k=0;k<48;k++) { const a=k*Math.PI*2/48;
       planes.push(p=>patch.radius-Math.cos(a)*local(p).x-Math.sin(a)*local(p).z); }
@@ -152,11 +156,11 @@ export function surfaceOverlayGeometry(route, patch = {}) {
         const center=rows[k][columns/2],sign=Math.sign(dx*(center.z-start.z)-dz*(center.x-start.x))||1;
         minimum=Math.min(minimum,(dx*(p.z-start.z)-dz*(p.x-start.x))*sign/length);
       }return minimum;};
-    return {...p,left:Math.min((p.x-a.x)*f.nx+(p.z-a.z)*f.nz,edgeDistance(-1)),right:Math.min((b.x-p.x)*f.nx+(b.z-p.z)*f.nz,edgeDistance(1))};};
+    return {...p,left:Math.min((p.x-a.x)*f.nx+(p.z-a.z)*f.nz,edgeDistance(-1)),right:Math.min((b.x-p.x)*f.nx+(b.z-p.z)*f.nz,edgeDistance(1)),slowDistance:slowDistances?.[i]?.[j]??0};};
   const clip=(polygon,plane)=>{const out=[];for(let k=0;k<polygon.length;k++){
     const a=polygon[k],b=polygon[(k+1)%polygon.length],da=plane(a),db=plane(b);
     if(da>=-1e-8)out.push(a);
-    if((da>=0)!==(db>=0)){const t=da/(da-db),p={};for(const key of ['x','y','z','left','right'])p[key]=a[key]+(b[key]-a[key])*t;out.push(p);}
+    if((da>=0)!==(db>=0)){const t=da/(da-db),p={};for(const key of ['x','y','z','left','right','slowDistance'])p[key]=a[key]+(b[key]-a[key])*t;out.push(p);}
   }return out;};
   for(let i=0;i<rows.length-1;i++)for(let j=0;j<columns;j++)for(const triangle of [
     [vertex(i,j,i),vertex(i,j+1,i),vertex(i+1,j,i)],
@@ -185,6 +189,7 @@ export function surfaceOverlayGeometry(route, patch = {}) {
   geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.setIndex(indices);geometry.computeVertexNormals();
   geometry.userData.floorOffset=offset;geometry.userData.edgeInset=margin;
   geometry.userData.sourceRouteId=route.id;geometry.userData.surfaceOverlay=true;
+  if(slowDistances){geometry.userData.slowZone=patch.slowZone;geometry.userData.dryWidth=route.slowZone.dryWidth;geometry.userData.drySide=route.slowZone.drySide;}
   return geometry;
 }
 

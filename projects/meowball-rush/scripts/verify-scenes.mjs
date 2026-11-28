@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { getRouteRibbonRows, getChuteShellRows, prepareRouteGeometry, nearestRouteSurface, getRibbonBoundarySegments } from "../src/course-math.mjs";
 import { nearestSceneryClearance } from "../src/scenery-clearance.mjs";
 import { collideRouteGuardrails } from "../src/course-runtime.mjs";
+import { animateSpikeTraps } from '../src/spike-traps.mjs';
 import { verifyRibbonMesh, verifyMeshCheckerFixtures, verifyMeshPairSeparation } from "./mesh-checks.mjs";
 import "./verify-fall-feedback.mjs";
 import { createRouteRibbonGeometry, createChuteShellGeometry, animateFairytaleScenery, activateCheckpoint } from "../src/v3-worlds.mjs";
@@ -101,6 +102,7 @@ function verifyCameraScene(track,group,dynamicMeshes) {
   sightMeshes=[];group.traverse(mesh=>{if(mesh.isMesh)sightMeshes.push(mesh);});
   const resetPickups=()=>{for(const star of dynamicMeshes.stars){star.collected=false;star.mesh.visible=true;}};
   const frame=(ball,elapsed)=>{
+    animateSpikeTraps(dynamicMeshes,elapsed);
     animateFairytaleScenery(dynamicMeshes,elapsed,1/60);
     for(const gear of dynamicMeshes.gears)gear.mesh.rotation.y=gear.def.omega*elapsed;
     for(const hammer of dynamicMeshes.hammers){
@@ -228,6 +230,18 @@ function verifyFallback(fallback, anchor, parent, label) {
   assert.ok(visibleGeometry > 0, `${label}: missing visible primitive fallback before GLB load`);
 }
 function verifyHazardEntries(track, dynamicMeshes) {
+  assert.equal(dynamicMeshes.spikes?.length,(track.spikes||[]).length,`${track.id}: missing spike meshes`);
+  for(const entry of dynamicMeshes.spikes||[]) {
+    assert.equal(entry.def,(track.spikes||[]).find(def=>def===entry.def));
+    assert(entry.plate.geometry.attributes.position.count>0);assert.equal(entry.tips.children.length,5);
+    for(const [time,phase,visible] of [[.2,'telegraph',false],[.8,'active',true],[2,'retracted',false]]) {
+      animateSpikeTraps({spikes:[entry]},time-(entry.def.phase||0));
+      assert.equal(entry.phase,phase);assert.equal(entry.tips.visible,visible);
+      assert(entry.ring.material.opacity>0,'trap has no visible warning ring');
+      if(visible)assert(entry.tips.children.every(tip=>tip.scale.y>0&&tip.position.y>entry.def.y));
+    }
+    animateSpikeTraps({spikes:[entry]},0);
+  }
   for (const key of ['rollingPins', 'bumpers', 'steamVents']) {
     assert.ok(Array.isArray(dynamicMeshes[key]), `${track.id}: missing ${key} dynamic registration`);
     assert.equal(dynamicMeshes[key].length, (track[key] || []).length, `${track.id}: ${key} registration count`);
@@ -259,6 +273,93 @@ function verifyHazardEntries(track, dynamicMeshes) {
     verifyFallback(entry.headFallback, entry.modelAnchor, entry.head, `${track.id}: ${entry.def.variant || 'hammer'}`);
     assert.equal(entry.head.parent, entry.pivot, `${track.id}: hammer/flail head must follow pendulum pivot`);
     close(entry.head.position.y, -entry.def.len, `${track.id}: hammer/flail contact center`);
+  }
+}
+
+let checkedBorders=0,checkedBackdrops=0,checkedSceneryVertices=0;
+function verifyWorldLayers(track,group,dynamic) {
+  assert(dynamic.diegeticBorders?.length>100,`${track.id}: sparse close-up diegetic border layer`);
+  assert(dynamic.dioramaBackdrops?.length>=12,`${track.id}: missing surrounding diorama ring`);
+  assert.deepEqual([...new Set(dynamic.dioramaBackdrops.map(entry=>entry.layer))].sort(),[0,1]);
+  const batches=new Set([...dynamic.diegeticBorders,...dynamic.dioramaBackdrops].flatMap(entry=>entry.parts.map(part=>part.mesh)));
+  assert(batches.size<=300,`${track.id}: close/backdrop scenery lost material batching`);
+  assert([...batches].reduce((sum,mesh)=>sum+mesh.geometry.attributes.position.count,0)<=450000,`${track.id}: storybook scenery exceeded geometry budget`);
+  if(track.worldType==='grand_medley')assert(dynamic.diegeticBorders.some(entry=>entry.parts.some(part=>part.mesh.material.emissiveIntensity>.1)),`${track.id}: starlight crystal borders have no actual glow`);
+  // Independent polygon separation test, using the rendered road's actual
+  // cross-sections. Every retained scenery vertex must fit its checked envelope.
+  const floors=track.routes.flatMap(route=>{
+    const data=getRouteRibbonRows(route);
+    return data.rows.slice(1).map((row,i)=>[data.rows[i][0],data.rows[i].at(-1),row.at(-1),row[0]]);
+  });
+  const bounds=polygon=>({minX:Math.min(...polygon.map(p=>p.x)),maxX:Math.max(...polygon.map(p=>p.x)),minZ:Math.min(...polygon.map(p=>p.z)),maxZ:Math.max(...polygon.map(p=>p.z))});
+  const floorBounds=floors.map(bounds);
+  function intersects(a,b) {
+    for(const poly of [a,b])for(let i=0;i<poly.length;i++) {
+      const p=poly[i],q=poly[(i+1)%poly.length],nx=-(q.z-p.z),nz=q.x-p.x;
+      if(Math.hypot(nx,nz)<1e-8)continue;
+      const pa=a.map(v=>v.x*nx+v.z*nz),pb=b.map(v=>v.x*nx+v.z*nz);
+      if(Math.max(...pa)<=Math.min(...pb)+1e-6||Math.max(...pb)<=Math.min(...pa)+1e-6)return false;
+    }
+    return true;
+  }
+  const worldPoint=new THREE.Vector3();
+  for(const entry of dynamic.diegeticBorders) {
+    assert(track.routes.some(route=>route.id===entry.routeId&&route.walls),`${track.id}: border has no guarded source road`);
+    assert(entry.parts.length,`${track.id}: empty border receipt`);
+    const box=bounds(entry.footprint);
+    for(let i=0;i<floors.length;i++) {
+      const b=floorBounds[i];if(b.maxX<box.minX||b.minX>box.maxX||b.maxZ<box.minZ||b.minZ>box.maxZ)continue;
+      assert(!intersects(entry.footprint,floors[i]),`${track.id}/${entry.routeId}: diegetic border intrudes into an actual road quad`);
+    }
+    for(const part of entry.parts) {
+      assert(isAttached(part.mesh,group));assert(isCameraOccluder(part.mesh,group));
+      const vertices=part.mesh.geometry.attributes.position;
+      for(let i=part.firstVertex;i<part.firstVertex+part.vertexCount;i++) {
+        worldPoint.fromBufferAttribute(vertices,i).applyMatrix4(part.mesh.matrixWorld);
+        assert(worldPoint.x>=box.minX-1e-4&&worldPoint.x<=box.maxX+1e-4&&worldPoint.z>=box.minZ-1e-4&&worldPoint.z<=box.maxZ+1e-4,`${track.id}: border vertex leaves verified envelope`);
+        for(let edge=0;edge<4;edge++) {
+          const a=entry.footprint[edge],b=entry.footprint[(edge+1)%4],dx=b.x-a.x,dz=b.z-a.z;
+          const centerCross=dx*(entry.center.z-a.z)-dz*(entry.center.x-a.x);
+          const vertexCross=dx*(worldPoint.z-a.z)-dz*(worldPoint.x-a.x);
+          assert(vertexCross*Math.sign(centerCross)>=-1e-4,`${track.id}: actual border vertex leaves rotated clearance footprint`);
+        }
+        checkedSceneryVertices++;
+      }
+    }
+    if(entry.edge) {
+      const distance=(entry.center.x-entry.edge.a.x)*entry.edge.nx+(entry.center.z-entry.edge.a.z)*entry.edge.nz;
+      assert(distance>.3&&distance<1.2,`${track.id}: border does not hug exposed track edge`);
+    }
+    checkedBorders++;
+  }
+  for(const entry of dynamic.dioramaBackdrops) {
+    let actualRadius=0;
+    for(const part of entry.parts) {
+      const vertices=part.mesh.geometry.attributes.position;
+      for(let i=part.firstVertex;i<part.firstVertex+part.vertexCount;i++) {
+        worldPoint.fromBufferAttribute(vertices,i).applyMatrix4(part.mesh.matrixWorld);
+        actualRadius=Math.max(actualRadius,Math.hypot(worldPoint.x-entry.center.x,worldPoint.z-entry.center.z));checkedSceneryVertices++;
+      }
+    }
+    assert(actualRadius>3&&actualRadius<=entry.radius+1e-4,`${track.id}: backdrop footprint omits actual silhouette`);
+    const clearance=nearestSceneryClearance(track,{x:entry.center.x,z:entry.center.z,radius:actualRadius});
+    assert(clearance.margin>=20-1e-4&&clearance.margin<=85+1e-4,`${track.id}: backdrop outside20..85m route clearance`);checkedBackdrops++;
+  }
+  assert.equal(dynamic.slowZones?.length,track.routes.filter(route=>route.slowZone).length);
+  for(const entry of dynamic.slowZones) {
+    for(const [mesh,kind] of [[entry.dry,entry.route.kind],[entry.pool,entry.def.kind]]) {
+      assert(mesh.geometry.attributes.position.count>0);
+      const vertices=mesh.geometry.attributes.position;
+      for(let i=0;i<vertices.count;i++) {
+        const x=vertices.getX(i),z=vertices.getZ(i);let floor=nearestRouteSurface([entry.route],x,z,Infinity);
+        // BufferGeometry stores Float32. At a finite mouth a rounded endpoint
+        // can lie a few microns outside the double triangle used for queries.
+        if(!floor)for(const [dx,dz] of [[.00003,0],[-.00003,0],[0,.00003],[0,-.00003]]){floor=nearestRouteSurface([entry.route],x+dx,z+dz,Infinity);if(floor)break;}
+        assert(floor,`${track.id}: sticky/dry overlay outside floor`);
+        const boundary=Math.abs(floor.slowZoneDistance-entry.def.dryWidth)<1e-4;
+        assert(boundary||floor.kind===kind,`${track.id}: visible sticky boundary differs from physics`);
+      }
+    }
   }
 }
 verifyHazardEntries(hazardFixture, buildTrackScene(hazardFixture).dynamicMeshes);
@@ -328,6 +429,7 @@ function verifyCheckpointAndOverlays(track,group,dynamic) {
     entry.active=false;entry.pulse=0;entry.crystalMaterial.color.setHex(0xb6c0f5);entry.rune.material.color.setHex(0xc4c6ff);
   }
   group.updateMatrixWorld(true);
+  verifyWorldLayers(track,group,dynamic);
   group.traverse(mesh=>{
     if(!mesh.isMesh||!mesh.geometry.userData.surfaceOverlay)return;
     const meta=mesh.geometry.userData,route=mesh.userData.supportRoute||track.routes.find(r=>r.id===meta.sourceRouteId);
@@ -371,7 +473,11 @@ function verifyCheckpointAndOverlays(track,group,dynamic) {
 }
 const expectedWorlds = ['grounded_nature','indoor_home','town_street','grounded_nature','indoor_home','town_street','sky_floating','hybrid_winter','starlight_library','grand_medley'];
 assert.equal(TRACKS.length, 10, 'v3 needs all ten approved stages');
+const stageArguments=process.argv.filter(arg=>arg.startsWith('--stage=')).map(arg=>Number(arg.slice(8)));
+assert(stageArguments.every(stage=>Number.isInteger(stage)&&stage>=1&&stage<=10),'scene stage must be1..10');
+const selectedStages=new Set(stageArguments.length?stageArguments:TRACKS.map((_,index)=>index+1));
 for (const [stage, track] of TRACKS.entries()) {
+  if(!selectedStages.has(stage+1))continue;
   assert.equal(track.worldType, expectedWorlds[stage], `${track.id}: wrong blueprint environment`);
   const { group, dynamicMeshes } = buildTrackScene(track);
   assert.equal(dynamicMeshes.checkpoints?.length, track.checkpoints.length, `${track.id}: checkpoint beacon registration missing`);
@@ -397,7 +503,7 @@ for (const [stage, track] of TRACKS.entries()) {
     const size=new THREE.Box3().setFromObject(node,true).getSize(new THREE.Vector3());
     assert.ok(size.x>1&&size.y>1&&size.z>.15,`${track.id}: stage signature lacks a visible sculpted silhouette`);
   }});
-  assert.equal(signatureGroups,3,`${track.id}: missing act landmark sculptures`);
+  assert.equal(signatureGroups,track.acts.length-1,`${track.id}: missing act landmark sculptures`);
   assert.ok(Array.isArray(dynamicMeshes.fairytaleProps), `${track.id}: missing interactive prop registration`);
   assert.equal(dynamicMeshes.fairytaleProps.length, (track.props || []).length, `${track.id}: interactive prop count`);
   for (const entry of dynamicMeshes.fairytaleProps) {
@@ -555,13 +661,12 @@ assert.deepEqual(getEndWallOpenings(endDeck, [endDeck, { ...endRoute, y: 4 }], -
 assert.deepEqual(getEndWallOpenings(endDeck, [endDeck], -1, [{ x: -1, y: 2, z: -5, r: 3 }]), [[-2.25, 0.25]]);
 assert.deepEqual(getEndWallOpenings(endDeck, [endDeck], -1, [{ x: -1, y: 4, z: -5, r: 3 }]), []);
 
-assert.equal(stageSignatures.size,10,'all ten stages need distinct sculpted landmark signatures');
-assert.equal(motifHashes.size,10,'all ten stages need distinct rendered motif pixels');
-assert.equal(edgeProfiles.size,10,'all ten stages need distinct physical guard profiles');
-assert.ok(closedGuardEnds>10,'guard transition cap coverage is too small');
-assert.ok(seamCount>40,'seam coverage misses authored section transitions');
+assert.equal(stageSignatures.size,selectedStages.size,'selected stages need distinct sculpted landmark signatures');
+assert.equal(motifHashes.size,selectedStages.size,'selected stages need distinct rendered motif pixels');
+assert.equal(edgeProfiles.size,selectedStages.size,'selected stages need distinct physical guard profiles');
+if(selectedStages.size===10){assert.ok(closedGuardEnds>10,'guard transition cap coverage is too small');assert.ok(seamCount>40,'seam coverage misses authored section transitions');}
 console.log(JSON.stringify({cameraSamples,cameraRays,cameraPaths,cameraContainmentChecks,rigidSightIntersections,cameraFailures:cameraFailures.length,firstFailures:cameraFailures.slice(0,20)}));
 assert.equal(cameraFailures.length,0,`camera LOS: ${JSON.stringify(cameraFailures.slice(0,12))}`);
-console.log(JSON.stringify({checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
+console.log(JSON.stringify({checkedBorders,checkedBackdrops,checkedSceneryVertices,checkedBeacons,checkedOverlayVertices,verifiedTriangles,intersectionPairs,crossShellPairs,crossRoutePairs,crossSurfacePairs,seamCount,closedGuardEnds,checkedScenery,motifs:motifHashes.size,edgeProfiles:edgeProfiles.size,landmarkSignatures:stageSignatures.size}));
 console.table(results);
-console.log(`Passed v3 Node structural and geometry checks for all ${TRACKS.length} scenes. WebGL visual appearance remains unverified.`);
+console.log(`Passed v3.2 Node structural and geometry checks for ${selectedStages.size} scenes. WebGL visual appearance remains unverified.`);

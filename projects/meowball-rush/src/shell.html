@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>魔女猫球 · Meowball Rush v3.1.2</title>
+  <title>魔女猫球 · Meowball Rush v3.2.0</title>
   <style>
     :root {
       --ink: #2b1e3a;
@@ -53,6 +53,11 @@
       text-align: center; box-shadow: 0 5px 0 var(--ink);
     }
     .timer-box.urgent { background: linear-gradient(180deg, #ff7a99, #ff3868); color: #fff; animation: pulse 0.45s infinite alternate; }
+    .timer-box.penalty-flash { animation: penalty-flash .55s ease-out; }
+    #time-penalties { position:absolute; top:105px; left:50%; width:180px; margin-left:-90px; pointer-events:none; text-align:center; }
+    .time-penalty { position:absolute; left:0; right:0; color:#ff444f; font-weight:1000; font-size:32px; -webkit-text-stroke:1px #ffe6a1; text-shadow:0 3px 0 #7d2849,0 0 18px #ffcd67; animation:time-penalty 1s ease-out forwards; }
+    @keyframes time-penalty { 0% { opacity:0; transform:translateY(10px) scale(.6); } 15% { opacity:1; transform:translateY(0) scale(1.18); } 65% { opacity:1; } 100% { opacity:0; transform:translateY(-65px) scale(.9); } }
+    @keyframes penalty-flash { 0%,40% { background:#ff4b55; color:#fff5cc; box-shadow:0 0 25px #ffc65e; } 100% { box-shadow:0 0 0 transparent; } }
     .timer-lbl { font-size: 9px; font-weight: 900; opacity: 0.75; letter-spacing: 0.08em; }
     .timer-val { font-size: 26px; font-weight: 900; line-height: 1.05; font-variant-numeric: tabular-nums; }
     @keyframes pulse { to { transform: scale(1.06); } }
@@ -319,6 +324,7 @@
         <div class="ctrl-hint" id="ctrl-hint">点画面锁鼠标推球(Esc释放) · WASD移动 · R回检查点 · 右键/Q·E转视角 · 滚轮缩放</div>
       </div>
       <div id="camera-hint" hidden>↻ 右键拖动 / Q·E 旋转视角查看落点</div>
+      <div id="time-penalties" aria-live="polite" aria-label="时间惩罚"></div>
     </div>
     <div id="touch-joystick" hidden><div id="joystick-knob"></div></div>
 
@@ -336,7 +342,7 @@
       </div>
 
       <div class="hero-emblem">
-        <span class="badge-tag">MEOWBALL RUSH v3.1.2 · 3D 童话仓鼠球</span>
+        <span class="badge-tag">MEOWBALL RUSH v3.2.0 · 六幕童话大冒险</span>
         <h1 class="lobby-title">魔女猫球</h1>
         <p class="lobby-sub">9 只萌猫 · 10 幕四段式童话冒险 · 蓄势爬坡与环游螺旋！</p>
       </div>

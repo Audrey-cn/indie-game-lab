@@ -4,6 +4,7 @@
 // Drifting Magic Petals, Real-Time Soft Shadows & Hand-Painted Anime Kitten Face!
 import * as THREE from "three";
 import { addV3Platform, buildV3World } from "./v3-worlds.mjs";
+import { addSpikeTraps } from './spike-traps.mjs';
 import { boostRibbonGeometry } from "./course-geometry.mjs";
 export { animateFairytaleScenery, activateCheckpoint } from "./v3-worlds.mjs";
 import cobblePathTexUrl from "./assets/textures/tex-cobble-path.webp";
@@ -1430,6 +1431,8 @@ export function buildTrackScene(track) {
     dynamicMeshes.hammers.push({ pivot, def: hm, head, headFallback, modelAnchor, worldHead: new THREE.Vector3(), velX: 0, velY: 0 });
   }
 
+  addSpikeTraps(track, group, dynamicMeshes);
+
   // Rolling pins move as a unit along Z; both visual sources spin around X.
   for (const def of track.rollingPins || []) {
     const mesh = new THREE.Group();
@@ -1468,6 +1471,23 @@ export function buildTrackScene(track) {
     mesh.position.set(def.x, def.y, def.z);
     const fallback = new THREE.Group();
     fallback.name = "bumper-fallback";
+    if (def.variant) {
+      const radius=def.r, variant=def.variant;
+      fallback.name=`bouncy-${variant}-fallback`;
+      const add=(geo,color,x,y,z)=>{const part=castRec(new THREE.Mesh(geo,toonMat(color)));part.position.set(x,y,z);fallback.add(part);return part;};
+      if(variant==='toy') {
+        add(new THREE.BoxGeometry(radius*1.4,radius*1.2,radius*1.4),0x83cfc1,0,radius*.6,0);
+        for(const x of[-.32,.32])for(const z of[-.32,.32])add(new THREE.CylinderGeometry(radius*.18,radius*.18,radius*.16,8),0xffdb92,x*radius,radius*1.25,z*radius);
+      } else if(variant==='barrel'||variant==='cheese') {
+        add(new THREE.CylinderGeometry(radius*.92,radius*.92,radius*1.25,12),variant==='cheese'?0xffd670:0xb7895f,0,radius*.625,0);
+        for(const y of[.18,1.05])add(new THREE.CylinderGeometry(radius*.96,radius*.96,radius*.09,12),variant==='cheese'?0xeab84f:0x836554,0,radius*y,0);
+        if(variant==='cheese')for(const x of[-.35,.3]){const hole=add(new THREE.SphereGeometry(radius*.14,8,6),0xdba441,x*radius,radius*.7,radius*.86);hole.scale.z=.15;}
+      } else {
+        add(new THREE.CylinderGeometry(radius*.3,radius*.38,radius*.7,10),0xf6dfb5,0,radius*.35,0);
+        const cap=add(new THREE.SphereGeometry(radius*.98,12,8),0xe99bac,0,radius*.85,0);cap.scale.y=.38;
+        for(const x of[-.35,.3]){const spot=add(new THREE.SphereGeometry(radius*.17,8,6),0xffedcf,x*radius,radius*1.14,0);spot.scale.y=.25;}
+      }
+    } else {
     const base = castRec(addOutline(new THREE.Mesh(new THREE.CylinderGeometry(def.r * 0.92, def.r * 0.98, def.r * 0.18, 18), mats.brassDark), 1.015));
     base.position.y = def.r * 0.09;
     fallback.add(base);
@@ -1489,6 +1509,7 @@ export function buildTrackScene(track) {
     star.scale.y = 0.35;
     star.position.y = def.r * 1.055;
     fallback.add(star);
+    }
     mesh.add(fallback);
     const modelAnchor = new THREE.Group();
     modelAnchor.name = "bumper-model-anchor";
